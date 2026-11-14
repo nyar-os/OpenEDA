@@ -1,0 +1,391 @@
+<template>
+    <SiteShell page="roadmap">
+        <div class="page-head">
+            <h1>Roadmap</h1>
+            <p class="lead">
+                The phases below are gates, not marketing dates. A phase is done
+                when its evidence exists; until then, the capability matrix says
+                so.
+            </p>
+        </div>
+
+        <div class="legend">
+            <span class="chip chip--ok">done</span>
+            <span class="chip chip--warn">active</span>
+            <span class="chip chip--idle">planned</span>
+            <span class="legend__note">No public release yet.</span>
+        </div>
+
+        <section class="notice">
+            <b>There are no installers to download.</b>
+            The source builds the schematic document core: create, edit with
+            bounded undo/redo, inspect, save and project to netlist, SVG, BOM or
+            PDF from the command line, SDK and native model. The studio canvas,
+            board layout and KiCad/Gerber exchange are still being built.
+        </section>
+
+        <ol class="phases">
+            <li data-state="done">
+                <span class="phase__id">P0</span>
+                <div>
+                    <div class="phase__head">
+                        <h2>Freeze the model and contracts</h2>
+                        <span class="chip chip--ok">done</span>
+                    </div>
+                    <p>
+                        Design identities, revisions, error codes, the format
+                        registry and one honest capability matrix shared by every
+                        entry point.
+                    </p>
+                </div>
+            </li>
+            <li data-state="done">
+                <span class="phase__id">P1</span>
+                <div>
+                    <div class="phase__head">
+                        <h2>Native document and minimal capture</h2>
+                        <span class="chip chip--ok">done</span>
+                    </div>
+                    <p>
+                        Create, edit and save a <code>.oeda</code> document with
+                        components, nets and wires; the same document reopens at the
+                        committed revision.
+                    </p>
+                </div>
+            </li>
+            <li data-state="done">
+                <span class="phase__id">P2</span>
+                <div>
+                    <div class="phase__head">
+                        <h2>Inspection and projections</h2>
+                        <span class="chip chip--ok">done</span>
+                    </div>
+                    <p>
+                        ERC, net and footprint checks cover unconnected pins, floating
+                        wires, duplicate names, broken nodes and empty sheets. Netlist,
+                        SVG, BOM and one-page PDF projections are supported, with
+                        undo/redo, sheet editing and deeper object edits in place.
+                    </p>
+                </div>
+            </li>
+            <li data-state="active">
+                <span class="phase__id">P3</span>
+                <div>
+                    <div class="phase__head">
+                        <h2>Exchange and fabrication</h2>
+                        <span class="chip chip--warn">active</span>
+                    </div>
+                    <p>
+                        PDF projection works today. KiCad import and export, Gerber and
+                        drill output remain next, each with a per-object support and
+                        loss report.
+                    </p>
+                </div>
+            </li>
+            <li>
+                <span class="phase__id">P4</span>
+                <div>
+                    <div class="phase__head">
+                        <h2>Studio canvas</h2>
+                        <span class="chip chip--idle">planned</span>
+                    </div>
+                    <p>
+                        A real sheet canvas in OpenEDA Studio: selection, placement,
+                        inspection and revision-scoped edits.
+                    </p>
+                </div>
+            </li>
+            <li>
+                <span class="phase__id">P5</span>
+                <div>
+                    <div class="phase__head">
+                        <h2>Agent design loop</h2>
+                        <span class="chip chip--idle">planned</span>
+                    </div>
+                    <p>
+                        Templates, semantic objects, inspection and revisions that
+                        target a single object, with review evidence per sheet.
+                    </p>
+                </div>
+            </li>
+            <li>
+                <span class="phase__id">P6</span>
+                <div>
+                    <div class="phase__head">
+                        <h2>Skills acceptance and releases</h2>
+                        <span class="chip chip--idle">planned</span>
+                    </div>
+                    <p>
+                        Install the skills package in a clean environment, finish
+                        real design tasks, then ship standalone and suite builds
+                        from one engine.
+                    </p>
+                </div>
+            </li>
+        </ol>
+
+        <section class="section">
+            <div class="section-head">
+                <h2>Working today</h2>
+                <p>Available means the repository contains it and a command or test exercises it.</p>
+            </div>
+            <div class="table-wrap">
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>Area</th>
+                            <th>Today</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>Workspace build</td>
+                            <td>The package and site workspaces build and type-check through the repository scripts.</td>
+                            <td><span class="chip chip--ok">available</span></td>
+                        </tr>
+                        <tr>
+                            <td>Native document</td>
+                            <td>Create, save and reopen a JSON <code>.oeda</code> document with validation and atomic writes.</td>
+                            <td><span class="chip chip--ok">available</span></td>
+                        </tr>
+                        <tr>
+                            <td>Schematic editing</td>
+                            <td>Add, move, update and delete components; connect nets, add and delete wires; rename nets; add, rename and delete empty sheets through the model, N-API, SDK and CLI.</td>
+                            <td><span class="chip chip--ok">available</span></td>
+                        </tr>
+                        <tr>
+                            <td>History</td>
+                            <td>Undo and redo restore the newest snapshot. The SDK and studio keep 32 steps per open handle, and the CLI mirrors them in a <code>&lt;file&gt;.history.json</code> sidecar so its commands work across processes. History is never saved into the design and a new edit clears redo.</td>
+                            <td><span class="chip chip--ok">available</span></td>
+                        </tr>
+                        <tr>
+                            <td>Inspection</td>
+                            <td>ERC, net and footprint checks with codes, severity, sheet, object and revision; warnings do not fail the report.</td>
+                            <td><span class="chip chip--ok">available</span></td>
+                        </tr>
+                        <tr>
+                            <td>Projections</td>
+                            <td>Netlist, SVG, BOM CSV and one-page A4 landscape PDF writers produce supported files from the committed revision.</td>
+                            <td><span class="chip chip--ok">available</span></td>
+                        </tr>
+                        <tr>
+                            <td>CLI</td>
+                            <td><code>capabilities</code>, <code>create</code>, <code>open</code>, <code>list</code>, <code>inspect</code>, <code>export</code>, <code>undo</code>, <code>redo</code>, <code>component add/move/update/delete</code>, <code>net connect/rename</code>, <code>wire delete</code>, <code>sheet add/rename/delete</code> and <code>gui</code> are wired to the native host.</td>
+                            <td><span class="chip chip--ok">available</span></td>
+                        </tr>
+                        <tr>
+                            <td>SDK</td>
+                            <td>The <code>Design</code> handle exposes editing, undo/redo, sheet edits, inspection, save and projections without placeholder rejections.</td>
+                            <td><span class="chip chip--ok">available</span></td>
+                        </tr>
+                        <tr>
+                            <td>Capability matrix</td>
+                            <td>Per-format, per-check, per-renderer and per-target status; net/svg/bom/pdf export, svg/pdf renderers and three checks are supported.</td>
+                            <td><span class="chip chip--ok">available</span></td>
+                        </tr>
+                        <tr>
+                            <td>Studio shell</td>
+                            <td>Host RPC, document, sheet and object panels, sheet actions, undo/redo buttons and shortcuts, inspection findings, export panel and diagnostics; the canvas stays offline.</td>
+                            <td><span class="chip chip--ok">available</span></td>
+                        </tr>
+                        <tr>
+                            <td>Skills</td>
+                            <td>Executable command reference, preflight and safety rules for the document core.</td>
+                            <td><span class="chip chip--ok">available</span></td>
+                        </tr>
+                        <tr>
+                            <td>Board engine</td>
+                            <td>Footprints, placement, routing and DRC/clearance/power analysis are not implemented.</td>
+                            <td><span class="chip chip--idle">not implemented</span></td>
+                        </tr>
+                        <tr>
+                            <td>Renderer</td>
+                            <td>No interactive viewport or sheet renderer, so the studio paints no geometry; SVG is written as a file.</td>
+                            <td><span class="chip chip--idle">not implemented</span></td>
+                        </tr>
+                        <tr>
+                            <td>Exchange</td>
+                            <td>Netlist, SVG, BOM and PDF export work; KiCad, Gerber and drill remain declared targets that reject.</td>
+                            <td><span class="chip chip--warn">partial</span></td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <section class="section">
+            <div class="section-head">
+                <h2>Where the tests live</h2>
+            </div>
+            <p>
+                Design corpora, visual baselines, independent round trips, skill
+                tasks and fabrication checks belong to the product test suite. The
+                shared engine keeps only basic smoke checks, so a green framework
+                build is not presented as a finished product.
+            </p>
+        </section>
+
+        <section class="cta-band">
+            <div>
+                <span class="eyebrow">Follow the work</span>
+                <h2>Read the source and the contracts.</h2>
+                <p>Every claim on this site is checkable in the repository.</p>
+            </div>
+            <a class="btn btn--primary" href="https://github.com/nyar-os/OpenEDA" rel="noopener">
+                Open the source repository
+            </a>
+        </section>
+    </SiteShell>
+</template>
+
+<style>
+.legend {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin-top: 26px;
+}
+
+.legend__note {
+    margin-left: 4px;
+    color: var(--oed-muted);
+    font-size: 13.5px;
+}
+
+.notice {
+    margin-top: 18px;
+    padding: 16px 20px;
+    border: 1px solid var(--oed-line);
+    border-left: 3px solid var(--oed-accent);
+    border-radius: var(--oed-radius);
+    background: var(--oed-surface);
+    color: var(--oed-muted);
+    font-size: 14.5px;
+}
+
+.notice b {
+    color: var(--oed-ink);
+}
+
+.phases {
+    display: grid;
+    gap: 12px;
+    margin: 30px 0 0;
+    padding: 0;
+    list-style: none;
+}
+
+.phases li {
+    display: grid;
+    grid-template-columns: 56px 1fr;
+    gap: 14px;
+    padding: 18px 20px;
+    border: 1px solid var(--oed-line);
+    border-radius: var(--oed-radius);
+    background: var(--oed-surface);
+}
+
+.phase__id {
+    color: var(--oed-muted);
+    font-family: "Cascadia Code", "Consolas", monospace;
+    font-size: 18px;
+    font-variant-numeric: tabular-nums;
+}
+
+.phase__head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 12px;
+    margin-bottom: 3px;
+}
+
+.phases h2 {
+    margin: 0;
+    font-size: 19px;
+}
+
+.phases p {
+    margin: 0;
+    color: var(--oed-muted);
+    font-size: 14.5px;
+}
+
+.phases li[data-state="done"] {
+    border-left: 3px solid var(--oed-steel);
+}
+
+.phases li[data-state="done"] .phase__id {
+    color: var(--oed-steel);
+}
+
+.phases li[data-state="active"] {
+    border-left: 3px solid var(--oed-accent);
+    background: linear-gradient(90deg, var(--oed-accent-soft), var(--oed-surface) 55%);
+}
+
+.phases li[data-state="active"] .phase__id {
+    color: var(--oed-accent);
+}
+
+.cta-band {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 20px 32px;
+    margin-top: 40px;
+    padding: 28px 26px;
+    border: 1px solid var(--oed-line);
+    border-radius: var(--oed-radius);
+    background: linear-gradient(115deg, var(--oed-accent-soft), var(--oed-surface) 62%);
+}
+
+.cta-band h2 {
+    margin: 6px 0 8px;
+    font-size: 23px;
+}
+
+.cta-band p {
+    max-width: 520px;
+    margin: 0;
+    color: var(--oed-muted);
+    font-size: 14.5px;
+}
+
+@media (max-width: 900px) {
+    .phases li {
+        grid-template-columns: 44px 1fr;
+    }
+}
+
+@media (max-width: 620px) {
+    .phases li {
+        grid-template-columns: 1fr;
+        gap: 6px;
+        padding: 16px;
+    }
+
+    .cta-band {
+        padding: 22px 18px;
+    }
+
+    .cta-band h2 {
+        font-size: 20px;
+    }
+}
+</style>
+
+<script client>
+export default class RoadmapPage {
+    static meta() {
+        return {
+            title: "Roadmap — OpenEDA",
+            description:
+                "The P0–P6 gates for OpenEDA: model contracts, native document, board checks, exchange, studio canvas, agent loop and releases.",
+        };
+    }
+}
+</script>

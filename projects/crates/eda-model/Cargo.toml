@@ -1,0 +1,18 @@
+[package]
+name = "open-eda-model"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Declared design model contracts for OpenEDA"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = { workspace = true }
+boost-collection = { workspace = true }
+boost-check = { workspace = true }
+boost-session = { workspace = true }
+data-format-sexpr = { workspace = true }
+geometry-planar = { workspace = true }

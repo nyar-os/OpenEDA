@@ -1,0 +1,73 @@
+# @wae/open-eda
+
+TypeScript authoring surface for OpenEDA: one editable design document behind
+schematic capture, board layout, inspection, export and agent authoring. The
+session entry point is `new OpenEDA(options?)`.
+
+## Status
+
+The schematic document core is implemented against the native `open-eda-model`
+crate. `new OpenEDA(options?)` creates a session synchronously, and the returned
+`Design` handle supports:
+
+- `addComponent`, `moveComponent`, `updateComponent`, `deleteComponent`
+- `connectNet`, `renameNet`, `addWire`, `deleteWire`
+- `addJunction`, `addText`
+- `addSheet`, `renameSheet`, `deleteSheet`
+- `undo`, `redo`, with `canUndo`/`canRedo` and a bounded 32-step history
+- `listObjects`, `listComponents`, `listNets`
+- `inspect` with `erc`, `nets` and `footprints`
+- `save` to a native `.oeda` document and reopen it
+- `export` to `net`, `spice`, `svg`, `bom`, `pdf` or `kicad_sch`
+- `OpenEDA.importKicadSch({ source, target? })` from KiCad schematic text or a
+  file path, optionally materializing a native document
+
+| Capability | Status | Notes |
+| --- | --- | --- |
+| `.oeda` create/open/save/edit | supported | sheets, components, nets, wires, undo/redo |
+| checks `erc`, `nets`, `footprints` | supported | `drc`, `clearance` and `power` report `capability/not-implemented` |
+| export `net`, `svg`, `bom`, `pdf` | supported | read-only projections |
+| export `kicad_sch` | supported | KiCad 6/7 S-expression, deterministic identifiers |
+| import `kicad_sch` | supported | symbols, wires and labels; other constructs return loss entries |
+| export `kicad_pcb`, `gbr` | unsupported | declared, not implemented |
+| import `kicad_pcb`, `sch`, `brd`, `gbr`, `step`, ... | unsupported | declared, not implemented |
+| interactive renderer | unsupported | the preview is an SVG projection |
+
+The KiCad importer reports everything outside its subset instead of dropping it:
+junctions, buses, hierarchical sheets, arcs, global and hierarchical labels,
+text, images and unknown root constructs each add a
+`{"code": "kicad/unsupported-element", "detail": "..."}` entry to `losses`.
+Duplicate references and symbols without a reference are reported as
+`kicad/duplicate-reference` and `kicad/missing-reference`.
+
+The package also exports the design types, stable error codes and the format
+registry (`kicad_sch`/`kicad_pcb`/`sch`/`brd`/`net`/`edif`/`spice`/`cir`/`gbr`/
+`drl`/`step`/`svg`/`pdf`/`png`/`bom`).
+
+`drc`, `clearance`, `power`, KiCad board/Gerber exchange and the interactive
+renderer report `capability/not-implemented`. Classification is not a support
+claim: reads, writes and exports are reported by `capabilities()`, never
+inferred from an extension or a method name. Undo history belongs to one open
+handle and is not written into the document, so opening a file starts a fresh
+history. A session created with `new OpenEDA({ history: 'sidecar' })` also keeps
+the same bounded 32-step history in `<file>.history.json` beside the document,
+so `undo`/`redo` work across separate processes; `save()` to a new target clears
+the stale sidecar on that target, and an exhausted direction reports
+`history/empty`. The CLI is a thin shell over this session and enables the
+sidecar.
+
+## Boundaries
+
+- No board parsing, routing, clearance analysis or interactive rendering in this
+  package.
+- No second design model: the CLI, the SDK and the studio consume one revision
+  from `open-eda-model`.
+- Native access goes through the Node-API binding.
+
+## Scripts
+
+```bash
+pnpm --filter @wae/open-eda run typecheck
+pnpm --filter @wae/open-eda run build
+pnpm --filter @wae/open-eda run test
+```

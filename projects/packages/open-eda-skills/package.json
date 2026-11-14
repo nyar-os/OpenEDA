@@ -1,0 +1,27 @@
+{
+    "name": "@wae/open-eda-skills",
+    "version": "0.0.0",
+    "private": true,
+    "description": "Agent skills for OpenEDA: create, edit, template fill, review and delivery",
+    "license": "Apache-2.0",
+    "type": "module",
+    "engines": {
+        "node": ">=18"
+    },
+    "files": [
+        "skills"
+    ],
+    "keywords": [
+        "open-eda",
+        "eda",
+        "schematic",
+        "pcb",
+        "skills",
+        "agent"
+    ],
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/nyar-os/OpenEDA.git",
+        "directory": "projects/packages/open-eda-skills"
+    }
+}

@@ -1,0 +1,315 @@
+<template>
+    <SiteShell page="features">
+        <div class="page-head">
+            <h1>Features</h1>
+            <p class="lead">
+                Three lines share one design document: capture, review and
+                delivery. Nothing here is assumed from a file extension, and the
+                capability matrix is the only claim that counts.
+            </p>
+        </div>
+
+        <section class="section">
+            <div class="section-head">
+                <h2>Contracts</h2>
+                <p>The pieces every surface shares, with the implemented subset stated explicitly.</p>
+            </div>
+            <div class="cards">
+                <article class="contract">
+                    <span class="chip chip--ok">available</span>
+                    <h3>Handles</h3>
+                    <p>
+                        Creating or opening a design returns a handle. Every later
+                        call names that handle, so the studio, CLI and SDK never
+                        guess which document an operation belongs to.
+                    </p>
+                </article>
+                <article class="contract">
+                    <span class="chip chip--ok">available</span>
+                    <h3>Revisions</h3>
+                    <p>
+                        Every successful edit increments the design revision, and
+                        save and export report the revision they used. Multi-writer
+                        revision conflict detection is not implemented yet.
+                    </p>
+                </article>
+                <article class="contract">
+                    <span class="chip chip--ok">available</span>
+                    <h3>Error codes</h3>
+                    <p>
+                        Errors are namespaced and stable. A supported operation
+                        succeeds or reports a specific code; an unimplemented
+                        capability reports <code>capability/not-implemented</code>
+                        rather than a fabricated result.
+                    </p>
+                </article>
+                <article class="contract">
+                    <span class="chip chip--ok">available</span>
+                    <h3>Capability matrix</h3>
+                    <p>
+                        Engine, project operations, formats, checks, renderers and
+                        export targets each report their own status. Unsupported is
+                        a first-class answer.
+                    </p>
+                </article>
+            </div>
+        </section>
+
+        <section class="section">
+            <div class="section-head">
+                <h2>Capture</h2>
+                <span class="chip chip--ok">working</span>
+            </div>
+            <ul>
+                <li>Sheets, components, nets and wires live in one <code>.oeda</code> document.</li>
+                <li>Every sheet and object keeps a deterministic identity and the design keeps a revision.</li>
+                <li>A failed edit is rejected before it changes the document.</li>
+                <li>Undo and redo keep the newest 32 snapshots per open handle; a new edit clears the redo stack.</li>
+                <li>Sheets can be added, renamed and deleted while empty; the last sheet is protected.</li>
+                <li>Components can be moved, updated and deleted; deleting one removes its net nodes and detaches wires.</li>
+                <li>Save writes a temporary file and renames it, so a partial document is never left behind.</li>
+                <li>History lives in memory per handle in the SDK and studio. The CLI keeps the same bounded stacks in a <code>&lt;file&gt;.history.json</code> sidecar and never writes history into the <code>.oeda</code> file.</li>
+            </ul>
+        </section>
+
+        <section class="section">
+            <div class="section-head">
+                <h2>Review</h2>
+                <span class="chip chip--ok">basic</span>
+            </div>
+            <ul>
+                <li>ERC reports duplicate references, duplicate net names and net nodes that point at missing components or pins.</li>
+                <li>ERC warns about pins that no net connects.</li>
+                <li>The nets check reports floating wires, wires that name an undeclared net, single-node nets and empty sheets.</li>
+                <li>The footprints check reports components without a value.</li>
+                <li>Every finding carries its code, severity, sheet, object and revision; only errors fail the report.</li>
+                <li>DRC, clearance and power are reported as unsupported and never as passing.</li>
+            </ul>
+        </section>
+
+        <section class="section">
+            <div class="section-head">
+                <h2>Delivery</h2>
+                <span class="chip chip--ok">netlist, SVG, BOM and PDF</span>
+            </div>
+            <ul>
+                <li>The netlist writer emits <code># OpenEDA netlist v1</code>, then <code>NET</code> and <code>NODE</code> lines.</li>
+                <li>The SVG writer draws a sheet frame, wires and component boxes with reference and value labels.</li>
+                <li>The BOM writer groups components by value and emits <code>Comment,Designator,Quantity</code> with sorted designators.</li>
+                <li>The PDF writer emits a one-page A4 landscape vector document with a cross-reference table, sheet names, component boxes and wires.</li>
+                <li>Every projection is written atomically from the committed revision and reports its byte count and a small artifact summary.</li>
+                <li>KiCad schematic and board, Gerber and drill remain declared targets that reject with <code>capability/not-implemented</code>.</li>
+            </ul>
+        </section>
+
+        <section class="section">
+            <div class="section-head">
+                <h2>Command surface</h2>
+                <p>What each entry point actually does today against the native model.</p>
+            </div>
+            <div class="table-wrap">
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>Surface</th>
+                            <th>What exists today</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td class="cell-mono">CLI</td>
+                            <td>
+                                <code>capabilities</code>, <code>create</code>,
+                                <code>open</code>, <code>list</code>, <code>inspect</code>
+                                and <code>export</code> work; <code>undo</code>,
+                                <code>redo</code>, <code>component add/move/update/delete</code>,
+                                <code>net connect/rename</code>, <code>wire delete</code> and
+                                <code>sheet add/rename/delete</code> edit a document in place.
+                                Unsupported checks and targets reject.
+                            </td>
+                            <td><span class="chip chip--ok">document core</span></td>
+                        </tr>
+                        <tr>
+                            <td class="cell-mono">SDK</td>
+                            <td>
+                                <code>@wae/open-eda</code> exposes create/open, editing with
+                                undo/redo, sheet and object edits, inspection, save and
+                                netlist/SVG/BOM/PDF export with typed errors. The
+                                <code>Design</code> handle is wired to the native model.
+                            </td>
+                            <td><span class="chip chip--ok">document core</span></td>
+                        </tr>
+                        <tr>
+                            <td class="cell-mono">Studio</td>
+                            <td>
+                                The VMZ shell edits through the native host over
+                                JSON-RPC and shows documents, sheets with add/rename/delete,
+                                objects, undo/redo state, checks, findings and export targets
+                                including BOM and PDF. The canvas viewport and its tools are
+                                still disabled.
+                            </td>
+                            <td><span class="chip chip--warn">shell plus document</span></td>
+                        </tr>
+                        <tr>
+                            <td class="cell-mono">Skills</td>
+                            <td>
+                                <code>@wae/open-eda-skills</code> describes the
+                                executable CLI commands, their inputs and the
+                                capabilities that still reject.
+                            </td>
+                            <td><span class="chip chip--ok">usable</span></td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <section class="section">
+            <div class="section-head">
+                <h2>Format honesty</h2>
+                <span class="chip chip--idle">15 declared</span>
+            </div>
+            <p>
+                The format registry classifies KiCad, generic schematic and board,
+                netlist, EDIF, SPICE, Gerber, drill, STEP, SVG, PDF, PNG and BOM files.
+                Classification is not a support claim: an extension may be listed
+                while the capability matrix still reports it as
+                <code>unsupported</code>. BOM and PDF are export-only; neither can be
+                imported or edited.
+            </p>
+            <p class="formats-cell cell-mono">
+                kicad_sch · kicad_pcb · sch · brd · net · edif · spice · cir · gbr · drl · step · svg · pdf · png · bom
+            </p>
+        </section>
+
+        <section class="section">
+            <div class="section-head">
+                <h2>Current state</h2>
+                <span class="chip chip--idle">no public release</span>
+            </div>
+            <p>
+                The native model implements a schematic document core: create and
+                open <code>.oeda</code>, edit sheets, components, nets and wires with
+                bounded undo/redo, run ERC, net and footprint checks, and write
+                netlist, SVG, BOM or PDF. The interactive renderer, board layout,
+                DRC/clearance/power and KiCad, Gerber and drill exchange report
+                <code>capability/not-implemented</code>. This page describes that
+                surface, not a finished product.
+            </p>
+        </section>
+
+        <section class="cta-band">
+            <div>
+                <span class="eyebrow">Order of work</span>
+                <h2>See what is done and what is next.</h2>
+                <p>The roadmap marks each phase with its evidence, not a marketing date.</p>
+            </div>
+            <Link to="RoadmapPage" class="btn btn--primary">
+                Read the roadmap
+            </Link>
+        </section>
+    </SiteShell>
+</template>
+
+<style>
+.cards {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 14px;
+}
+
+.contract {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+    padding: 22px 20px;
+    border: 1px solid var(--oed-line);
+    border-radius: var(--oed-radius);
+    background: var(--oed-surface);
+}
+
+.contract h3 {
+    margin: 2px 0 4px;
+    font-size: 18px;
+}
+
+.contract p {
+    margin: 0;
+    color: var(--oed-muted);
+    font-size: 14px;
+}
+
+.formats-cell {
+    margin: 4px 0 0;
+    padding: 12px 14px;
+    border: 1px solid var(--oed-line);
+    border-radius: 8px;
+    background: var(--oed-surface-2);
+    color: var(--oed-muted);
+    font-size: 12.5px;
+    word-spacing: 4px;
+}
+
+.cta-band {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 20px 32px;
+    margin-top: 40px;
+    padding: 28px 26px;
+    border: 1px solid var(--oed-line);
+    border-radius: var(--oed-radius);
+    background: linear-gradient(115deg, var(--oed-accent-soft), var(--oed-surface) 62%);
+}
+
+.cta-band h2 {
+    margin: 6px 0 8px;
+    font-size: 23px;
+}
+
+.cta-band p {
+    max-width: 520px;
+    margin: 0;
+    color: var(--oed-muted);
+    font-size: 14.5px;
+}
+
+.section ul {
+    max-width: 760px;
+}
+
+@media (max-width: 900px) {
+    .cards {
+        grid-template-columns: 1fr;
+    }
+}
+
+@media (max-width: 620px) {
+    .contract {
+        padding: 18px 16px;
+    }
+
+    .cta-band {
+        padding: 22px 18px;
+    }
+
+    .cta-band h2 {
+        font-size: 20px;
+    }
+}
+</style>
+
+<script client>
+export default class FeaturesPage {
+    static meta() {
+        return {
+            title: "Features — OpenEDA",
+            description:
+                "Capture, review and delivery on one editable design document, with format support disclosed item by item.",
+        };
+    }
+}
+</script>

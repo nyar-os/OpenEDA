@@ -1,0 +1,503 @@
+/**
+ * Authoring types of `@wae/open-eda`.
+ *
+ * This is the frozen P0 shape of the authoring surface: `new OpenEDA(options?)`
+ * creates a session, `create`/`open` return an editable `Design`, and every
+ * design and sheet carries a stable ID plus a revision.
+ *
+ * Geometry never enters this package. Schematics, boards and fabrication data
+ * are described by the engine, not by the TypeScript surface.
+ */
+
+import type { DesignFormat, DesignIntent } from './formats.js';
+
+/** Opaque design identity. */
+export type DesignId = string;
+/** Opaque sheet identity; the index is order only. */
+export type SheetId = string;
+/** Opaque object identity. */
+export type ObjectId = string;
+
+/** Hard limits applied before work starts. */
+export interface ResourceBudgets {
+    readonly maxDocumentBytes?: number;
+    readonly maxObjects?: number;
+    readonly maxSheets?: number;
+}
+
+/** Structured diagnostic emitted during import, inspection, render or export. */
+export interface DesignDiagnostic {
+    readonly code: string;
+    readonly severity: 'info' | 'warning' | 'error';
+    readonly revision: number;
+    readonly sheetId?: SheetId;
+    readonly objectId?: ObjectId;
+    readonly recoverable: boolean;
+    readonly message: string;
+}
+
+/** Where undo history lives between `Design` handles. */
+export type DesignHistoryMode = 'memory' | 'sidecar';
+
+/** Session options. Constructing a session opens no window, file or socket. */
+export interface OpenEDAOptions {
+    /** BCP-47 tag used for diagnostics and default copy. Defaults to `en`. */
+    readonly locale?: string;
+    /**
+     * `memory` keeps the native per-handle history only. `sidecar` additionally
+     * records every replacement of the opened document in `<path>.history.json`,
+     * so `undo`/`redo` survive separate processes.
+     */
+    readonly history?: DesignHistoryMode;
+    readonly budgets?: ResourceBudgets;
+    readonly diagnostics?: (event: DesignDiagnostic) => void;
+}
+
+/** Disclosure level. `partial` always ships a loss path and diagnostic codes. */
+export type SupportLevel = 'supported' | 'partial' | 'unsupported';
+
+/** Inspection rules understood by `design.inspect()`. */
+export type InspectCheck = 'erc' | 'drc' | 'nets' | 'connectivity' | 'footprints' | 'clearance' | 'power';
+
+/** Render targets declared for preview surfaces. */
+export type RenderFormat = 'svg' | 'png' | 'pdf';
+
+/** Exchange targets `design.export()` declares. */
+export type ExportTarget = 'kicad_sch' | 'kicad_pcb' | 'net' | 'spice' | 'gbr' | 'pdf' | 'svg' | 'bom' | 'report';
+
+/** What the installed engine can do, per format. */
+export interface FormatCapability {
+    readonly import: SupportLevel;
+    readonly edit: SupportLevel;
+    readonly export: SupportLevel;
+    /** Codes reported when a `partial` path loses something. */
+    readonly lossCodes: readonly string[];
+}
+
+/** Result of `OpenEDA.capabilities()`. Read this instead of assuming a method works. */
+export interface DesignCapabilities {
+    readonly engine: { readonly package: string; readonly version: string };
+    readonly project: {
+        readonly import: SupportLevel;
+        readonly edit: SupportLevel;
+        readonly export: SupportLevel;
+    };
+    readonly formats: Readonly<Record<DesignFormat, FormatCapability>>;
+    readonly checks: Readonly<Record<InspectCheck, SupportLevel>>;
+    readonly renderers: Readonly<Record<RenderFormat, SupportLevel>>;
+    readonly exportTargets: Readonly<Record<ExportTarget, SupportLevel>>;
+}
+
+/** Options of `OpenEDA.create()`. */
+export interface DesignCreateOptions {
+    readonly title?: string;
+    readonly template?: string;
+}
+
+/**
+ * Input of `OpenEDA.open()`.
+ *
+ * Exactly one of `path` or `project` must be present, so the engine never
+ * guesses whether a string is a file name or serialized content.
+ */
+export type DesignInput =
+    | { readonly path: string; readonly intent?: DesignIntent }
+    | { readonly project: string; readonly intent?: DesignIntent };
+
+/** One sheet of a design summary. */
+export interface DesignSummarySheet {
+    readonly id: SheetId;
+    readonly index: number;
+    /** Sheet name, as shown in the studio. */
+    readonly name: string;
+    /** Alias of {@link name}, kept for callers that already read `title`. */
+    readonly title: string;
+    readonly objects: number;
+    readonly components: number;
+    readonly nets: number;
+    readonly wires: number;
+}
+
+/** Object counts across the whole design. */
+export interface DesignCounts {
+    readonly sheets: number;
+    readonly components: number;
+    readonly nets: number;
+    readonly wires: number;
+}
+
+/** Bounded per-handle undo/redo state. */
+export interface DesignHistory {
+    readonly undo: number;
+    readonly redo: number;
+    /** Snapshots kept per open handle. */
+    readonly limit: number;
+}
+
+/** Summary of one design at its committed revision. */
+export interface DesignSummary {
+    readonly id: DesignId;
+    readonly revision: number;
+    readonly title: string | null;
+    readonly units: string;
+    readonly sheets: readonly DesignSummarySheet[];
+    readonly counts: DesignCounts;
+    readonly canUndo: boolean;
+    readonly canRedo: boolean;
+    readonly history: DesignHistory;
+}
+
+/** One schematic component placed on a sheet. */
+export interface Component {
+    readonly id: ObjectId;
+    /** Reference designator, unique inside the design. */
+    readonly ref: string;
+    readonly value: string;
+    readonly x: number;
+    readonly y: number;
+    readonly rotation: number;
+    readonly pins: readonly string[];
+}
+
+/** One end of a net. */
+export interface NetNode {
+    readonly ref: string;
+    readonly pin: string;
+}
+
+/** One electrical net. */
+export interface Net {
+    readonly id: ObjectId;
+    readonly name: string;
+    readonly nodes: readonly NetNode[];
+}
+
+/** One schematic wire segment. */
+export interface Wire {
+    readonly id: ObjectId;
+    readonly net: string | null;
+    readonly from: readonly [number, number];
+    readonly to: readonly [number, number];
+}
+
+/**
+ * One declared bus: a named group of member nets.
+ *
+ * Buses belong to the design. The netlist expands `DATA` with width 4 into
+ * `DATA0`..`DATA3`, the bus name followed by the 0-based index.
+ */
+export interface Bus {
+    readonly id: ObjectId;
+    readonly name: string;
+    /** Number of member nets; at least 1. */
+    readonly width: number;
+}
+
+/** One schematic junction (connection dot). */
+export interface Junction {
+    readonly x: number;
+    readonly y: number;
+}
+
+/** One free text annotation drawn on a sheet. */
+export interface TextLabel {
+    readonly text: string;
+    readonly x: number;
+    readonly y: number;
+}
+
+/** Input of `design.addComponent()`. */
+export interface ComponentInput {
+    /** Target sheet id or name; the first sheet is used when omitted. */
+    readonly sheet?: SheetId;
+    readonly reference: string;
+    readonly value: string;
+    readonly x: number;
+    readonly y: number;
+    readonly rotation?: number;
+    readonly pins: readonly string[];
+}
+
+/** Input of `design.connectNet()`. */
+export interface ConnectNetInput {
+    readonly sheet?: SheetId;
+    readonly net: string;
+    /** Nodes in `REF.PIN` form. */
+    readonly nodes: readonly string[];
+}
+
+/** Input of `design.addWire()`. */
+export interface WireInput {
+    readonly sheet?: SheetId;
+    readonly net?: string;
+    readonly from: readonly [number, number];
+    readonly to: readonly [number, number];
+}
+
+/** Input of `design.addJunction()`. */
+export interface JunctionInput {
+    readonly sheet?: SheetId;
+    readonly x: number;
+    readonly y: number;
+}
+
+/** Input of `design.addText()`. */
+export interface TextInput {
+    readonly sheet?: SheetId;
+    readonly text: string;
+    readonly x: number;
+    readonly y: number;
+}
+
+/** Input of `design.moveComponent()`. */
+export interface MoveComponentInput {
+    readonly sheet?: SheetId;
+    readonly reference: string;
+    readonly x: number;
+    readonly y: number;
+    /** Rotation in degrees; the current rotation is kept when omitted. */
+    readonly rotation?: number;
+}
+
+/** Input of `design.updateComponent()`; only the value changes. */
+export interface UpdateComponentInput {
+    readonly sheet?: SheetId;
+    readonly reference: string;
+    readonly value: string;
+}
+
+/** Input of `design.renameNet()`. Wires that named the old net follow it. */
+export interface RenameNetInput {
+    readonly sheet?: SheetId;
+    /** Current net id or name. */
+    readonly net: string;
+    /** New net name. */
+    readonly name: string;
+}
+
+/** Input of `design.disconnectNet()`. The net and its wires are kept. */
+export interface DisconnectNetInput {
+    readonly sheet?: SheetId;
+    /** Net id or name. */
+    readonly net: string;
+    /** Nodes in `REF.PIN` form; every node is removed when empty. */
+    readonly nodes: readonly string[];
+}
+
+/** Input of `design.deleteNet()`. */
+export interface DeleteNetInput {
+    readonly sheet?: SheetId;
+    /** Net id or name. */
+    readonly net: string;
+}
+
+/** Counts returned by `design.deriveNets()`. */
+export interface DeriveNetsResult {
+    /** Wire groups that received a net in this call. */
+    readonly assigned: number;
+    /** Net objects created because the label was new. */
+    readonly created: number;
+    /** Connected wire groups found on the sheet. */
+    readonly groups: number;
+}
+
+/** Objects of one open design, read through `design.listObjects()`. */
+export interface DesignObjects {
+    readonly revision: number;
+    readonly design: DesignSummary;
+    readonly components: readonly Component[];
+    readonly nets: readonly Net[];
+    readonly wires: readonly Wire[];
+}
+
+/** One finding of an inspection run. */
+export interface InspectIssue {
+    readonly code: string;
+    readonly severity: 'info' | 'warning' | 'error';
+    readonly revision: number;
+    readonly sheetId?: SheetId;
+    readonly objectId?: ObjectId;
+    readonly recoverable: boolean;
+    readonly message: string;
+}
+
+/** Result of `design.inspect()`. Rules only, never an aesthetic score. */
+export interface InspectReport {
+    readonly revision: number;
+    readonly checkerVersion: string;
+    readonly passed: boolean;
+    readonly issues: readonly InspectIssue[];
+}
+
+/** Options of `design.inspect()`. */
+export interface InspectOptions {
+    readonly checks?: readonly InspectCheck[];
+}
+
+/** Options of `design.save()` (native document, not an exchange format). */
+export interface SaveOptions {
+    readonly target?: string;
+    readonly overwrite?: boolean;
+}
+
+/** Result of `design.save()`. */
+export interface SaveReport {
+    readonly path: string;
+    readonly revision: number;
+    readonly bytes: number;
+}
+
+/** Options of `design.export()`. */
+export interface ExportOptions {
+    readonly format: ExportTarget;
+    readonly target: string;
+    readonly overwrite?: boolean;
+}
+
+/** One construct an export could not represent verbatim. */
+export interface ExportLoss {
+    /** Stable loss code, for example `spice/open-pin`. */
+    readonly code: string;
+    /** Human-readable detail naming what was approximated or left open. */
+    readonly detail: string;
+}
+
+/** Result of `design.export()`. Reports what the target actually kept. */
+export interface ExportReport {
+    readonly revision: number;
+    readonly format: ExportTarget;
+    readonly path: string;
+    readonly bytes: number;
+    /** False for projections such as PDF that cannot be reopened for editing. */
+    readonly editable: boolean;
+    /** Small summary of what the writer emitted; shape depends on the format. */
+    readonly artifact: Readonly<Record<string, string | number>>;
+    /** Losses reported by writers that can approximate, such as SPICE. */
+    readonly losses?: readonly ExportLoss[];
+}
+
+/** Result of `design.undo()` and `design.redo()`. */
+export interface HistoryResult {
+    readonly revision: number;
+    readonly design: DesignSummary;
+    readonly canUndo: boolean;
+    readonly canRedo: boolean;
+}
+
+/**
+ * A design document as stored in a `.oeda` file, returned by the KiCad importer.
+ *
+ * Field names mirror the document schema, including its snake_case counters, so
+ * the object can be written back without translation.
+ */
+export interface ImportedDesign {
+    readonly id: DesignId;
+    readonly title: string | null;
+    readonly revision: number;
+    readonly units: string;
+    readonly sheets: readonly Sheet[];
+    readonly next_component: number;
+    readonly next_net: number;
+    readonly next_wire: number;
+}
+
+/** One construct a KiCad schematic import could not represent. */
+export interface KicadImportLoss {
+    /** Stable loss code, for example `kicad/unsupported-element`. */
+    readonly code: string;
+    /** Human-readable detail naming the construct that was skipped. */
+    readonly detail: string;
+}
+
+/** Input of `OpenEDA.importKicadSch()`. */
+export interface KicadImportOptions {
+    /** KiCad schematic text or a path to a `.kicad_sch` file. */
+    readonly source: string;
+    /** Native `.oeda` document to write when the import should be materialized. */
+    readonly target?: string;
+}
+
+/** Result of `importKicadSch()`. */
+export interface KicadImportResult {
+    /** Imported document, validated against the native schema. */
+    readonly design: ImportedDesign;
+    /** Constructs outside the imported subset; empty when nothing was lost. */
+    readonly losses: readonly KicadImportLoss[];
+}
+
+/** A sheet as returned by the sheet operations. */
+export interface Sheet {
+    readonly id: SheetId;
+    readonly name: string;
+    readonly components: readonly Component[];
+    readonly nets: readonly Net[];
+    readonly wires: readonly Wire[];
+    readonly junctions: readonly Junction[];
+    readonly texts: readonly TextLabel[];
+}
+
+/** An open design document. Every operation keeps its own stable code. */
+export interface Design {
+    readonly id: DesignId;
+    readonly revision: number;
+    readonly summary: DesignSummary;
+    /** True when an earlier snapshot is available on this handle. */
+    readonly canUndo: boolean;
+    /** True when an undo can be reapplied on this handle. */
+    readonly canRedo: boolean;
+    /** Runs the supported rule checks (`erc`, `nets`, `connectivity`, `footprints`, `power`). */
+    inspect(options?: InspectOptions): Promise<InspectReport>;
+    /** Writes the native `.oeda` document; defaults to the path it was opened from. */
+    save(options?: SaveOptions): Promise<SaveReport>;
+    /** Projects the design to `net`, `spice`, `svg`, `bom`, `pdf`, `report` or `kicad_sch`; other targets report `capability/not-implemented`. */
+    export(options: ExportOptions): Promise<ExportReport>;
+    /** Restores the snapshot taken before the newest edit. */
+    undo(): Promise<HistoryResult>;
+    /** Reapplies the snapshot the newest undo displaced. */
+    redo(): Promise<HistoryResult>;
+    /** Adds one component and returns the created object. */
+    addComponent(input: ComponentInput): Promise<Component>;
+    /** Deletes one component; its net nodes are removed and detached wires stay valid. */
+    deleteComponent(reference: string, options?: { readonly sheet?: SheetId }): Promise<void>;
+    /** Connects `REF.PIN` nodes to a net, creating it when needed. */
+    connectNet(input: ConnectNetInput): Promise<Net>;
+    /** Adds one wire segment. */
+    addWire(input: WireInput): Promise<Wire>;
+    /** Adds one junction (connection dot). */
+    addJunction(input: JunctionInput): Promise<Junction>;
+    /** Adds one free text annotation. */
+    addText(input: TextInput): Promise<TextLabel>;
+    /** Moves one component to a new placement and optional rotation. */
+    moveComponent(input: MoveComponentInput): Promise<Component>;
+    /** Replaces the value text of one component. */
+    updateComponent(input: UpdateComponentInput): Promise<Component>;
+    /** Renames a net; wires that named it follow the new name. */
+    renameNet(input: RenameNetInput): Promise<Net>;
+    /** Deletes one wire segment. */
+    deleteWire(wire: ObjectId, options?: { readonly sheet?: SheetId }): Promise<void>;
+    /** Names every connected wire group on a sheet and reports the counts. */
+    deriveNets(sheet?: SheetId): Promise<DeriveNetsResult>;
+    /** Removes `REF.PIN` nodes from a net while keeping the net and its wires. */
+    disconnectNet(input: DisconnectNetInput): Promise<Net>;
+    /** Deletes a net and detaches the wires that named it. */
+    deleteNet(input: DeleteNetInput): Promise<void>;
+    /** Deletes the junction at a 0-based index on a sheet. */
+    deleteJunction(index: number, options?: { readonly sheet?: SheetId }): Promise<void>;
+    /** Moves the junction at a 0-based index to a new placement. */
+    moveJunction(index: number, x: number, y: number, options?: { readonly sheet?: SheetId }): Promise<Junction>;
+    /** Deletes the text annotation at a 0-based index on a sheet. */
+    deleteText(index: number, options?: { readonly sheet?: SheetId }): Promise<void>;
+    /** Moves the text annotation at a 0-based index to a new placement. */
+    moveText(index: number, x: number, y: number, options?: { readonly sheet?: SheetId }): Promise<TextLabel>;
+    /** Adds an empty sheet and returns it. */
+    addSheet(name?: string): Promise<Sheet>;
+    /** Renames one sheet. */
+    renameSheet(sheet: SheetId, name: string): Promise<Sheet>;
+    /** Deletes one empty sheet; the last sheet and sheets with objects are refused. */
+    deleteSheet(sheet: SheetId): Promise<void>;
+    /** Lists components, nets and wires of the open design. */
+    listObjects(): Promise<DesignObjects>;
+    listComponents(): Promise<readonly Component[]>;
+    listNets(): Promise<readonly Net[]>;
+    close(): Promise<void>;
+}
