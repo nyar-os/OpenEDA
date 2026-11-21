@@ -47,7 +47,7 @@ prints exactly which entries are supported.
 | reference annotation `annotate` | supported | renumbers per prefix by sheet and placement order; net nodes follow |
 | BOM variants and DNP | supported | named DNP designator lists and value overrides applied to `bom`/`bom_json` |
 | checks `erc`, `electrical`, `nets`, `connectivity`, `footprints`, `power` | supported | `drc` and `clearance` are unsupported |
-| export `net`, `net_csv`, `spice`, `spice_subckt`, `svg`, `bom`, `bom_json`, `bom_html`, `pdf`, `report`, `json`, `kicad_sch` | supported | read-only projections; `kicad_pcb` and `gbr` are unsupported |
+| export `net`, `net_csv`, `net_hier`, `spice`, `spice_subckt`, `svg`, `bom`, `bom_json`, `bom_html`, `pdf`, `report`, `json`, `kicad_sch` | supported | read-only projections; `kicad_pcb` and `gbr` are unsupported |
 | import `kicad_sch` | supported | symbols, wires, junctions, no-connect flags, text, labels, hierarchical sheet symbols and ports; other constructs are reported as loss entries |
 | KiCad board, Gerber, drill, STEP | unsupported | declared in the capability matrix only |
 | interactive schematic/board renderer | unsupported | the preview is an SVG projection |
@@ -262,6 +262,7 @@ open-eda component pin-type blinker.oeda U1 1 --clear
 # Export supported projections
 open-eda export blinker.oeda --format net --out blinker.net
 open-eda export blinker.oeda --format net_csv --out blinker-nodes.csv
+open-eda export blinker.oeda --format net_hier --out blinker-hier.net
 open-eda export blinker.oeda --format spice --out blinker.cir
 open-eda export blinker.oeda --format spice_subckt --out blinker-lib.cir
 open-eda export blinker.oeda --format svg --out blinker.svg
@@ -284,7 +285,12 @@ open-eda gui
 A native document is UTF-8 JSON with the tag `open-eda-design` and version `1`.
 The netlist writer emits `# OpenEDA netlist v1`, then `BUS <name> <width>` for
 every declared bus, then `NET <name>` followed by `NODE <ref>.<pin>` lines. The
-`net_csv` writer emits the same connectivity as `Sheet,Net,Ref,Pin` rows, with
+`net_hier` writer prefixes every net with its sheet path, using the
+sanitized sheet name as the segment (`NET Main/VCC`); two sheets that sanitize to
+the same segment get a numeric suffix, and a sheet whose name has no usable
+characters falls back to its id. It writes a `SHEET <path>` line before that
+sheet's nets and expands declared buses the same way the flat netlist does.
+The `net_csv` writer emits the same connectivity as `Sheet,Net,Ref,Pin` rows, with
 bus nets expanded into their member names and CSV quoting applied where needed.
 The SPICE writer emits `* OpenEDA SPICE netlist v1`,
 one element line per component, `NC_<ref>_<pin>` nodes for open pins, and

@@ -68,6 +68,7 @@ export type ExportTarget =
     | 'kicad_pcb'
     | 'net'
     | 'net_csv'
+    | 'net_hier'
     | 'spice'
     | 'spice_subckt'
     | 'gbr'

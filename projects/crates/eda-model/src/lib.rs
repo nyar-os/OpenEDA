@@ -58,6 +58,7 @@ const EXPORT_TARGETS: &[&str] = &[
     "kicad_pcb",
     "net",
     "net_csv",
+    "net_hier",
     "spice",
     "spice_subckt",
     "gbr",
@@ -71,8 +72,21 @@ const EXPORT_TARGETS: &[&str] = &[
 ];
 
 /// Export targets this build actually writes.
-const SUPPORTED_EXPORTS: &[&str] =
-    &["kicad_sch", "net", "net_csv", "spice", "spice_subckt", "svg", "pdf", "bom", "bom_json", "bom_html", "report", "json"];
+const SUPPORTED_EXPORTS: &[&str] = &[
+    "kicad_sch",
+    "net",
+    "net_csv",
+    "net_hier",
+    "spice",
+    "spice_subckt",
+    "svg",
+    "pdf",
+    "bom",
+    "bom_json",
+    "bom_html",
+    "report",
+    "json",
+];
 
 /// Tag written into the deterministic JSON document projection.
 const JSON_PROJECTION_FORMAT: &str = "open-eda-projection";
@@ -2208,6 +2222,21 @@ pub fn export_with_variant(handle: u64, format: &str, path: &Path, variant: Opti
             });
             (contents, artifact)
         }
+        "net_hier" => {
+            let artifact = json!({
+                "kind": "net_hier",
+                "sheets": design.sheets.len(),
+                "nets": design.sheets.iter().map(|sheet| sheet.nets.len()).sum::<usize>(),
+                "nodes": design
+                    .sheets
+                    .iter()
+                    .flat_map(|sheet| &sheet.nets)
+                    .map(|net| net.nodes.len())
+                    .sum::<usize>(),
+                "buses": design.buses.len(),
+            });
+            (render_hierarchical_netlist(&design), artifact)
+        }
         "spice" => {
             let (contents, spice_losses) = render_spice(&design);
             losses = spice_losses;
@@ -3503,6 +3532,72 @@ fn render_net_csv(design: &Design) -> (String, usize) {
     (text, rows)
 }
 
+/// Projects one design to a hierarchical netlist whose net names carry the
+/// sheet path.
+///
+/// The document is flat, so every sheet contributes one path segment: its
+/// sanitized name, falling back to the sheet id when the name has no usable
+/// characters. Two sheets that sanitize to the same segment get a numeric
+/// suffix, so `NET <path>/<name>` stays unique. Declared buses are announced
+/// with `BUS <name> <width>` and expanded exactly like the flat netlist.
+fn render_hierarchical_netlist(design: &Design) -> String {
+    let mut text = String::from("# OpenEDA hierarchical netlist v1\n");
+    text.push_str(&format!("# design {} revision {}\n", design.id, design.revision));
+    for bus in &design.buses {
+        text.push_str(&format!("BUS {} {}\n", bus.name, bus.width));
+    }
+    if !design.buses.is_empty() {
+        text.push('\n');
+    }
+    let mut paths: HashSet<String> = HashSet::new();
+    for sheet in &design.sheets {
+        let base = hierarchical_path_segment(&sheet.name, &sheet.id);
+        let mut path = base.clone();
+        let mut suffix = 2;
+        while paths.contains(&path) {
+            path = format!("{base}_{suffix}");
+            suffix += 1;
+        }
+        paths.insert(path.clone());
+        text.push_str(&format!("SHEET {path}\n"));
+        for net in &sheet.nets {
+            let members: Vec<String> = match design.buses.iter().find(|bus| bus.name == net.name) {
+                Some(bus) => (0..bus.width).map(|index| format!("{}{index}", bus.name)).collect(),
+                None => vec![net.name.clone()],
+            };
+            for member in members {
+                text.push_str(&format!("NET {path}/{member}\n"));
+                for node in &net.nodes {
+                    text.push_str(&format!("NODE {}.{}\n", node.reference, node.pin));
+                }
+                text.push('\n');
+            }
+        }
+    }
+    text
+}
+
+/// Turns a sheet name into one path segment; an unusable name falls back to the
+/// sheet id so the prefix is never empty.
+fn hierarchical_path_segment(name: &str, id: &str) -> String {
+    let segment: String = name
+        .chars()
+        .map(
+            |character| {
+                if character.is_ascii_alphanumeric() || character == '_' || character == '-' { character } else { '_' }
+            },
+        )
+        .collect();
+    let trimmed = segment.trim_matches('_');
+    if trimmed.is_empty() {
+        let fallback = id.trim_matches(|character: char| character == '-' || character == '_');
+        if fallback.is_empty() { "sheet".to_string() } else { fallback.to_string() }
+    }
+    else {
+        trimmed.to_string()
+    }
+}
+
 /// Projects one design to a deterministic SPICE netlist plus its losses.
 ///
 /// Element lines follow the reference prefix, pins keep their declared order,
@@ -4485,6 +4580,7 @@ mod tests {
         assert_eq!(matrix["renderers"]["pdf"], "unsupported");
         assert_eq!(matrix["exportTargets"]["net"], "supported");
         assert_eq!(matrix["exportTargets"]["net_csv"], "supported");
+        assert_eq!(matrix["exportTargets"]["net_hier"], "supported");
         assert_eq!(matrix["exportTargets"]["spice"], "supported");
         assert_eq!(matrix["exportTargets"]["spice_subckt"], "supported");
         assert_eq!(matrix["exportTargets"]["svg"], "supported");
@@ -6564,6 +6660,63 @@ mod tests {
              \"Main, A\",DATA0,R1,1\n\
              \"Main, A\",DATA1,R1,1\n"
         );
+        close(handle).expect("close");
+    }
+
+    #[test]
+    fn hierarchical_netlist_prefixes_nets_with_the_sheet_path() {
+        let dir = TempDir::new("net-hier");
+        let first = dir.join("hier.net");
+        let second = dir.join("hier-again.net");
+        let created =
+            create(CreateRequest { title: Some("Blinker".to_string()), rev: None, company: None, date: None, template: None })
+                .expect("create");
+        let handle = created["handle"].as_u64().expect("handle");
+        blinker(handle);
+        rename_sheet(handle, "sheet-1", "Main").expect("rename sheet");
+        add_sheet(handle, Some("Power Supply")).expect("add sheet");
+        add_component(
+            handle,
+            AddComponentRequest {
+                sheet: Some("Power Supply".to_string()),
+                reference: "R2".to_string(),
+                value: "1k".to_string(),
+                x: 0.0,
+                y: 0.0,
+                rotation: 0.0,
+                pins: vec!["1".to_string(), "2".to_string()],
+            },
+        )
+        .expect("add R2");
+        connect_net(
+            handle,
+            ConnectNetRequest {
+                sheet: Some("Power Supply".to_string()),
+                net: "VCC".to_string(),
+                nodes: vec!["R2.1".to_string()],
+            },
+        )
+        .expect("connect Power VCC");
+        add_bus(handle, AddBusRequest { name: "DATA".to_string(), width: 2 }).expect("add bus");
+
+        let report = export(handle, "net_hier", &first).expect("export net_hier");
+        assert_eq!(report["format"], "net_hier");
+        assert_eq!(report["artifact"]["kind"], "net_hier");
+        assert_eq!(report["artifact"]["sheets"], 2);
+        assert_eq!(report["artifact"]["buses"], 1);
+
+        let text = fs::read_to_string(&first).expect("read hierarchical netlist");
+        assert!(text.starts_with("# OpenEDA hierarchical netlist v1\n"));
+        assert!(text.contains("BUS DATA 2\n"));
+        assert!(text.contains("SHEET Main\n"));
+        assert!(text.contains("NET Main/VCC\n"));
+        assert!(text.contains("NODE R1.1\n"));
+        assert!(text.contains("SHEET Power_Supply\n"));
+        assert!(text.contains("NET Power_Supply/VCC\n"));
+        assert!(text.contains("NODE R2.1\n"));
+
+        export(handle, "net_hier", &second).expect("export again");
+        assert_eq!(text, fs::read_to_string(&second).expect("read second"), "export must be byte-stable");
         close(handle).expect("close");
     }
 

@@ -37,7 +37,7 @@ open-eda connectivity <file.oeda>
 open-eda inspect <file.oeda> [--checks erc,electrical,nets,connectivity,footprints,power] [--severity code=level,...] [--waive code[@objectId|@sheetId/objectId],...]
 open-eda diff <left.oeda> <right.oeda>
 open-eda annotate <file.oeda>
-open-eda export <file.oeda> --format net|net_csv|spice|spice_subckt|svg|bom|bom_json|bom_html|pdf|report|kicad_sch --out <file> [--variant <name>]
+open-eda export <file.oeda> --format net|net_csv|net_hier|spice|spice_subckt|svg|bom|bom_json|bom_html|pdf|report|kicad_sch --out <file> [--variant <name>]
 open-eda variant add <file.oeda> --name <name> [--dnp R1,R2] [--values R1=22k]
 open-eda variant list <file.oeda>
 open-eda variant remove <file.oeda> --name <name>
@@ -223,6 +223,10 @@ a footprint and never claims a library part exists outside the document.
 - `net_csv` writes the same connectivity as `Sheet,Net,Ref,Pin` rows; bus nets
   expand into their member names and fields are quoted when the CSV grammar
   needs it.
+- `net_hier` prefixes each net with its sheet path (`NET Main/VCC`). The segment
+  is the sanitized sheet name, a numeric suffix keeps it unique, and a name with
+  no usable characters falls back to the sheet id. A `SHEET <path>` line precedes
+  that sheet's nets, and declared buses expand like the flat netlist.
 - `spice` writes a deterministic `.cir` netlist; open pins become
   `NC_<ref>_<pin>` and are reported with `spice/open-pin`.
 - `spice_subckt` writes one `.SUBCKT <name> <ports>` block per sheet, with the
