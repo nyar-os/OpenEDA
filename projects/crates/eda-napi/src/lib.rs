@@ -279,6 +279,14 @@ fn design_symbols(ctx: CallContext) -> Result<JsValue> {
     respond(&ctx, &report)
 }
 
+/// Reports what each net of one open design connects, plus open pins and totals.
+#[function]
+fn design_connectivity(ctx: CallContext) -> Result<JsValue> {
+    let handle = handle(&ctx, 0)?;
+    let report = open_eda_model::connectivity_report(handle).map_err(fail)?;
+    respond(&ctx, &report)
+}
+
 /// Lists the declared buses of one open design.
 #[function]
 fn design_list_buses(ctx: CallContext) -> Result<JsValue> {
@@ -1213,6 +1221,7 @@ register_module![
     design_remove_bus,
     design_list_buses,
     design_symbols,
+    design_connectivity,
     design_undo,
     design_redo,
     design_add_sheet,

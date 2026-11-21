@@ -123,6 +123,16 @@ test('document core: edit, inspect, save/open round trip and projections', { ski
         assert.equal((await design.listComponents()).length, 2);
         assert.equal((await design.listNets()).length, 2);
 
+        const connectivity = await design.connectivity();
+        assert.equal(connectivity.format, 'open-eda-connectivity');
+        assert.equal(connectivity.totals.nets, 2);
+        assert.equal(connectivity.totals.nodes, 4);
+        assert.deepEqual(
+            connectivity.sheets[0]?.nets.find((net) => net.name === 'VCC')?.pins,
+            ['R1.1', 'C1.1'],
+        );
+        assert.deepEqual(connectivity.sheets[0]?.unconnectedPins, []);
+
         const saved = await design.save({ target: document, overwrite: true });
         assert.ok(saved.bytes > 0);
         assert.ok(fs.readFileSync(document, 'utf8').includes('"open-eda-design"'));

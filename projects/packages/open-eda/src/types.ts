@@ -232,6 +232,65 @@ export interface SymbolLibraryResult {
     };
 }
 
+/** One net listed by `design.connectivity()`. */
+export interface ConnectivityNet {
+    readonly id: ObjectId;
+    readonly name: string;
+    /** Number of connected pins. */
+    readonly nodes: number;
+    /** Connected pins in `REF.PIN` form, in declaration order. */
+    readonly pins: readonly string[];
+    /** True when the net reaches exactly one pin. */
+    readonly singleNode: boolean;
+    /** True when the net declares no pins. */
+    readonly dangling: boolean;
+}
+
+/** Wire-group and junction totals of one sheet. */
+export interface ConnectivitySheetCounts {
+    readonly wires: {
+        readonly segments: number;
+        readonly groups: number;
+        readonly unassigned: number;
+        readonly conflicts: number;
+    };
+    readonly junctions: { readonly total: number; readonly floating: number };
+}
+
+/** One pin no net reaches. */
+export interface UnconnectedPin {
+    readonly ref: string;
+    readonly pin: string;
+}
+
+/** One sheet of `design.connectivity()`. */
+export interface ConnectivitySheet extends ConnectivitySheetCounts {
+    readonly id: SheetId;
+    readonly name: string;
+    readonly nets: readonly ConnectivityNet[];
+    readonly noConnects: number;
+    readonly unconnectedPins: readonly UnconnectedPin[];
+}
+
+/** Result of `design.connectivity()`, tagged `open-eda-connectivity`. */
+export interface ConnectivityReport {
+    readonly format: 'open-eda-connectivity';
+    readonly version: number;
+    readonly revision: number;
+    readonly sheets: readonly ConnectivitySheet[];
+    readonly totals: {
+        readonly nets: number;
+        readonly nodes: number;
+        readonly singleNodeNets: number;
+        readonly danglingNets: number;
+        readonly unconnectedPins: number;
+        readonly wireGroups: number;
+        readonly unassignedWireGroups: number;
+        readonly conflictingWireGroups: number;
+        readonly floatingJunctions: number;
+    };
+}
+
 /** One schematic junction (connection dot). */
 export interface Junction {
     readonly x: number;
@@ -568,6 +627,8 @@ export interface Design {
     listObjects(): Promise<DesignObjects>;
     /** Lists the symbol library the design uses, with pin counts and missing footprints. */
     listSymbols(): Promise<SymbolLibraryResult>;
+    /** Reports what each net connects, the pins no net reaches and the per-sheet wire totals. */
+    connectivity(): Promise<ConnectivityReport>;
     listComponents(): Promise<readonly Component[]>;
     listNets(): Promise<readonly Net[]>;
     close(): Promise<void>;

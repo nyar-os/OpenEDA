@@ -26,6 +26,7 @@ open-eda create --out <file.oeda> [--title <title>] [--overwrite]
 open-eda open <file.oeda>
 open-eda list <file.oeda>
 open-eda symbols <file.oeda>
+open-eda connectivity <file.oeda>
 open-eda inspect <file.oeda> [--checks erc,nets,connectivity,footprints,power]
 open-eda export <file.oeda> --format net|spice|svg|bom|bom_json|pdf|report|kicad_sch --out <file>
 open-eda import <file.kicad_sch> --out <file.oeda> [--overwrite]
@@ -105,6 +106,15 @@ than one sheet. Errors fail the report; warnings are reported but do not.
 `drc` and `clearance` are declared but not implemented; requesting them rejects
 with `capability/not-implemented`. Never describe a design as DRC clean or
 clearance checked.
+
+## Connectivity report
+
+`open-eda connectivity <file.oeda>` lists what each net actually connects: per
+sheet, every net with its node count and `REF.PIN` pin list, the pins no net
+reaches, and the wire-group and junction totals (groups, unassigned groups,
+conflicting groups, floating junctions). The report is read-only, tagged
+`open-eda-connectivity`, and deterministic for one revision; it never assigns
+nets or edits the document.
 
 ## Symbol library
 

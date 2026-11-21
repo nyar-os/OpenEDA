@@ -14,6 +14,7 @@ import type {
     Component,
     ComponentInput,
     ConnectNetInput,
+    ConnectivityReport,
     DeleteNetInput,
     DesignCapabilities,
     DesignCreateOptions,
@@ -253,6 +254,11 @@ export function listObjects(handle: number): DesignObjects {
 /** Lists the symbol library one open design uses. */
 export function symbols(handle: number): SymbolLibraryResult {
     return decode<SymbolLibraryResult>(() => binding('design.symbols').design_symbols(handle));
+}
+
+/** Reports what each net of one open design connects, plus unconnected pins and totals. */
+export function connectivity(handle: number): ConnectivityReport {
+    return decode<ConnectivityReport>(() => binding('design.connectivity').design_connectivity(handle));
 }
 
 /** Adds one component to an open design. */

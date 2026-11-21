@@ -64,6 +64,12 @@ const JSON_PROJECTION_FORMAT: &str = "open-eda-projection";
 /// Version written into the deterministic JSON document projection.
 const JSON_PROJECTION_VERSION: u64 = 1;
 
+/// Tag written into the connectivity report.
+const CONNECTIVITY_REPORT_FORMAT: &str = "open-eda-connectivity";
+
+/// Version written into the connectivity report.
+const CONNECTIVITY_REPORT_VERSION: u64 = 1;
+
 /// Tag written into the deterministic JSON BOM projection.
 const BOM_PROJECTION_FORMAT: &str = "open-eda-bom";
 
@@ -2371,6 +2377,120 @@ fn symbol_library(design: &Design) -> Value {
     })
 }
 
+/// Reports what each net actually connects.
+///
+/// The report is the read-only companion of the `connectivity` check: instead of
+/// findings it lists every net with its node count and `REF.PIN` pin list, the
+/// pins no net reaches, and the wire-group and junction totals per sheet. It
+/// never mutates the document and is deterministic for one revision.
+pub fn connectivity_report(handle: u64) -> Result<Value, ServiceError> {
+    let design = with_session(handle, |session| Ok(session.design.clone()))?;
+    Ok(connectivity_report_of(&design))
+}
+
+fn connectivity_report_of(design: &Design) -> Value {
+    let mut net_total = 0usize;
+    let mut node_total = 0usize;
+    let mut single_node_total = 0usize;
+    let mut dangling_total = 0usize;
+    let mut unconnected_total = 0usize;
+    let mut group_total = 0usize;
+    let mut unassigned_total = 0usize;
+    let mut conflict_total = 0usize;
+    let mut floating_junction_total = 0usize;
+
+    let sheets = design
+        .sheets
+        .iter()
+        .map(|sheet| {
+            let nets = sheet
+                .nets
+                .iter()
+                .map(|net| {
+                    let pins = net.nodes.iter().map(|node| format!("{}.{}", node.reference, node.pin)).collect::<Vec<_>>();
+                    let single_node = net.nodes.len() == 1;
+                    let dangling = net.nodes.is_empty();
+                    net_total += 1;
+                    node_total += pins.len();
+                    single_node_total += usize::from(single_node);
+                    dangling_total += usize::from(dangling);
+                    json!({
+                        "id": net.id,
+                        "name": net.name,
+                        "nodes": pins.len(),
+                        "pins": pins,
+                        "singleNode": single_node,
+                        "dangling": dangling,
+                    })
+                })
+                .collect::<Vec<_>>();
+
+            let mut connected: HashSet<(String, String)> = HashSet::new();
+            for net in &sheet.nets {
+                for node in &net.nodes {
+                    connected.insert((node.reference.clone(), node.pin.clone()));
+                }
+            }
+            let unconnected = sheet
+                .components
+                .iter()
+                .flat_map(|component| {
+                    component
+                        .pins
+                        .iter()
+                        .filter(|pin| !connected.contains(&(component.reference.clone(), (*pin).clone())))
+                        .map(|pin| json!({ "ref": component.reference, "pin": pin }))
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>();
+            unconnected_total += unconnected.len();
+
+            let groups = connectivity::groups(sheet);
+            let unassigned = groups.iter().filter(|group| group.is_unassigned()).count();
+            let conflicts = groups.iter().filter(|group| group.is_conflict()).count();
+            let floating_junctions =
+                connectivity::findings(sheet).iter().filter(|finding| finding.code == connectivity::JUNCTION_FLOATING).count();
+            group_total += groups.len();
+            unassigned_total += unassigned;
+            conflict_total += conflicts;
+            floating_junction_total += floating_junctions;
+
+            json!({
+                "id": sheet.id,
+                "name": sheet.name,
+                "nets": nets,
+                "wires": {
+                    "segments": sheet.wires.len(),
+                    "groups": groups.len(),
+                    "unassigned": unassigned,
+                    "conflicts": conflicts,
+                },
+                "junctions": { "total": sheet.junctions.len(), "floating": floating_junctions },
+                "noConnects": sheet.no_connects.len(),
+                "unconnectedPins": unconnected,
+            })
+        })
+        .collect::<Vec<_>>();
+
+    json!({
+        "format": CONNECTIVITY_REPORT_FORMAT,
+        "version": CONNECTIVITY_REPORT_VERSION,
+        "revision": design.revision,
+        "sheets": sheets,
+        "totals": {
+            "nets": net_total,
+            "nodes": node_total,
+            "singleNodeNets": single_node_total,
+            "danglingNets": dangling_total,
+            "unconnectedPins": unconnected_total,
+            "wireGroups": group_total,
+            "unassignedWireGroups": unassigned_total,
+            "conflictingWireGroups": conflict_total,
+            "floatingJunctions": floating_junction_total,
+        },
+    })
+}
+
 /// Projects one design to the deterministic text netlist.
 ///
 /// Every declared bus is announced as `BUS <name> <width>`. A net whose name
@@ -4447,6 +4567,111 @@ mod tests {
         assert!(conflict["message"].as_str().expect("message").contains("VCC"));
         assert!(conflict["message"].as_str().expect("message").contains("GND"));
         close(handle).expect("close");
+    }
+
+    #[test]
+    fn connectivity_report_lists_pins_and_counts_open_ends() {
+        let created = create(CreateRequest::default()).expect("create");
+        let handle = created["handle"].as_u64().expect("handle");
+        for (reference, pins) in [("R1", vec!["1", "2"]), ("R2", vec!["1"])] {
+            add_component(
+                handle,
+                AddComponentRequest {
+                    sheet: None,
+                    reference: reference.to_string(),
+                    value: "10k".to_string(),
+                    x: 0.0,
+                    y: 0.0,
+                    rotation: 0.0,
+                    pins: pins.into_iter().map(str::to_string).collect(),
+                },
+            )
+            .expect("add component");
+        }
+        connect_net(
+            handle,
+            ConnectNetRequest { sheet: None, net: "VCC".to_string(), nodes: vec!["R1.1".to_string(), "R2.1".to_string()] },
+        )
+        .expect("connect VCC");
+        wire(handle, None, [0.0, 0.0], [10.0, 0.0]);
+        add_junction(handle, AddJunctionRequest { sheet: None, x: 100.0, y: 100.0 }).expect("junction");
+
+        let report = connectivity_report(handle).expect("connectivity report");
+        assert_eq!(report["format"], "open-eda-connectivity");
+        assert_eq!(report["version"], 1);
+        assert_eq!(report["revision"], summary(handle).expect("summary")["revision"]);
+        assert_eq!(report["totals"]["nets"], 1);
+        assert_eq!(report["totals"]["nodes"], 2);
+        assert_eq!(report["totals"]["singleNodeNets"], 0);
+        assert_eq!(report["totals"]["danglingNets"], 0);
+        assert_eq!(report["totals"]["unconnectedPins"], 1);
+        assert_eq!(report["totals"]["wireGroups"], 1);
+        assert_eq!(report["totals"]["unassignedWireGroups"], 1);
+        assert_eq!(report["totals"]["conflictingWireGroups"], 0);
+        assert_eq!(report["totals"]["floatingJunctions"], 1);
+
+        let sheet = &report["sheets"][0];
+        assert_eq!(sheet["id"], "sheet-1");
+        assert_eq!(sheet["nets"][0]["name"], "VCC");
+        assert_eq!(sheet["nets"][0]["nodes"], 2);
+        assert_eq!(sheet["nets"][0]["pins"], json!(["R1.1", "R2.1"]));
+        assert_eq!(sheet["nets"][0]["singleNode"], false);
+        assert_eq!(sheet["nets"][0]["dangling"], false);
+        assert_eq!(sheet["unconnectedPins"], json!([{ "ref": "R1", "pin": "2" }]));
+        assert_eq!(sheet["wires"], json!({ "segments": 1, "groups": 1, "unassigned": 1, "conflicts": 0 }));
+        assert_eq!(sheet["junctions"], json!({ "total": 1, "floating": 1 }));
+        close(handle).expect("close");
+    }
+
+    #[test]
+    fn connectivity_report_flags_single_node_and_dangling_nets_without_mutating() {
+        let design = Design {
+            id: "design-1".to_string(),
+            title: None,
+            revision: 4,
+            units: "mm".to_string(),
+            sheets: vec![Sheet {
+                id: "sheet-1".to_string(),
+                name: "Sheet 1".to_string(),
+                components: vec![Component {
+                    id: "component-1".to_string(),
+                    reference: "U1".to_string(),
+                    value: "buffer".to_string(),
+                    footprint: String::new(),
+                    x: 0.0,
+                    y: 0.0,
+                    rotation: 0.0,
+                    pins: vec!["1".to_string(), "2".to_string()],
+                }],
+                nets: vec![
+                    Net {
+                        id: "net-1".to_string(),
+                        name: "SIG".to_string(),
+                        nodes: vec![Node { reference: "U1".to_string(), pin: "1".to_string() }],
+                    },
+                    Net { id: "net-2".to_string(), name: "SPARE".to_string(), nodes: Vec::new() },
+                ],
+                wires: Vec::new(),
+                junctions: Vec::new(),
+                no_connects: Vec::new(),
+                texts: Vec::new(),
+            }],
+            buses: Vec::new(),
+            next_component: 2,
+            next_net: 3,
+            next_wire: 1,
+        };
+
+        let report = connectivity_report_of(&design);
+        assert_eq!(report["totals"]["nets"], 2);
+        assert_eq!(report["totals"]["singleNodeNets"], 1);
+        assert_eq!(report["totals"]["danglingNets"], 1);
+        assert_eq!(report["totals"]["unconnectedPins"], 1);
+        let nets = report["sheets"][0]["nets"].as_array().expect("nets");
+        assert_eq!(nets[1]["name"], "SPARE");
+        assert_eq!(nets[1]["pins"], json!([]));
+        assert_eq!(nets[1]["dangling"], true);
+        assert_eq!(design.revision, 4, "the report never mutates the design");
     }
 
     #[test]

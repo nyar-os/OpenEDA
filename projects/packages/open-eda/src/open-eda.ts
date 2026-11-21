@@ -19,6 +19,7 @@ import type {
     Component,
     ComponentInput,
     ConnectNetInput,
+    ConnectivityReport,
     DeleteNetInput,
     Design,
     DesignCapabilities,
@@ -480,6 +481,9 @@ function attach(opened: service.DesignHandle, options: AttachOptions): Design {
         },
         async listSymbols(): Promise<SymbolLibraryResult> {
             return service.symbols(handle);
+        },
+        async connectivity(): Promise<ConnectivityReport> {
+            return service.connectivity(handle);
         },
         async listComponents(): Promise<readonly Component[]> {
             return service.listComponents(handle).components;

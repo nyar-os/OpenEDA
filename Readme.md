@@ -67,6 +67,11 @@ with width 4 expands into the member nets `DATA0`..`DATA3` (name plus the 0-base
 index, no separator). A declared net with the bus name repeats its nodes into
 every member; a bus without such a net still lists its members, without nodes.
 
+The `connectivity` report is the read-only companion of the connectivity check:
+it lists every net with its node count and `REF.PIN` pin list, the pins no net
+reaches, and the per-sheet wire-group and junction totals, tagged
+`open-eda-connectivity` and deterministic for one revision.
+
 The SPICE writer projects the schematic to a deterministic `.cir` netlist.
 Elements follow their reference prefix (`R`/`C`/`L` two-pin, `D` two-pin with a
 model, `Q`/`J` three-pin, `V`/`I` sources, `U`/`X` subcircuit calls, unknown
@@ -156,6 +161,7 @@ open-eda redo blinker.oeda
 open-eda inspect blinker.oeda --checks erc,nets,connectivity,footprints,power
 open-eda list blinker.oeda
 open-eda symbols blinker.oeda
+open-eda connectivity blinker.oeda
 
 # Export supported projections
 open-eda export blinker.oeda --format net --out blinker.net

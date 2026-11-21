@@ -18,6 +18,7 @@ import { runGui } from './gui.js';
 import { OpenEDAError } from './errors.js';
 import { OpenEDA } from './open-eda.js';
 import type {
+    ConnectivityReport,
     Design,
     DesignCapabilities,
     DesignObjects,
@@ -159,8 +160,7 @@ function describeObjects(objects: DesignObjects): string {
     return lines.join('\n');
 }
 
-function describeSymbols(library: SymbolLibraryResult): string {
-    const totals = library.totals;
+function describeSymbols(library: SymbolLibraryResult): string {    const totals = library.totals;
     const lines = [
         `revision=${library.revision} symbols=${totals.symbols} components=${totals.components} missingFootprint=${totals.missingFootprint}`,
     ];
@@ -169,6 +169,26 @@ function describeSymbols(library: SymbolLibraryResult): string {
         lines.push(
             `  ${symbol.libId} pins=${symbol.pins} components=${symbol.components} refs=${symbol.references.join(',')} footprints=${footprints} missingFootprint=${symbol.missingFootprint}`,
         );
+    }
+    return lines.join('\n');
+}
+
+function describeConnectivity(report: ConnectivityReport): string {
+    const totals = report.totals;
+    const lines = [
+        `connectivity revision=${report.revision} nets=${totals.nets} nodes=${totals.nodes} unconnectedPins=${totals.unconnectedPins} singleNodeNets=${totals.singleNodeNets} danglingNets=${totals.danglingNets} wireGroups=${totals.wireGroups} conflictingWireGroups=${totals.conflictingWireGroups} unassignedWireGroups=${totals.unassignedWireGroups} floatingJunctions=${totals.floatingJunctions}`,
+    ];
+    for (const sheet of report.sheets) {
+        lines.push(
+            `  [${sheet.id}] ${sheet.name}: nets=${sheet.nets.length} wires=${sheet.wires.segments} groups=${sheet.wires.groups} junctions=${sheet.junctions.total}`,
+        );
+        for (const net of sheet.nets) {
+            const pins = net.pins.length > 0 ? net.pins.join(', ') : '(none)';
+            lines.push(`    net ${net.name}: ${net.nodes} node(s) ${pins}`);
+        }
+        for (const pin of sheet.unconnectedPins) {
+            lines.push(`    open ${pin.ref}.${pin.pin}`);
+        }
     }
     return lines.join('\n');
 }
@@ -239,6 +259,17 @@ cli.command('symbols', 'cli.cmd.symbols').actionCtx(async (options, _args, ctx) 
     }
     const library = await withDesign(file, (design) => design.listSymbols());
     ctx.emitResult(library, describeSymbols(library));
+    return 0;
+});
+
+cli.command('connectivity', 'cli.cmd.connectivity').actionCtx(async (options, _args, ctx) => {
+    const file = input(options);
+    if (file === undefined) {
+        ctx.fail('open-eda.cli.file-required', { message: 'a design document is required' });
+        return 2;
+    }
+    const report = await withDesign(file, (design) => design.connectivity());
+    ctx.emitResult(report, describeConnectivity(report));
     return 0;
 });
 
