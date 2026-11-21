@@ -36,6 +36,8 @@ export interface NativeBinding {
     design_add_wire(handle: number, requestJson: string): string;
     design_add_junction(handle: number, requestJson: string): string;
     design_add_text(handle: number, requestJson: string): string;
+    design_add_no_connect(handle: number, requestJson: string): string;
+    design_delete_no_connect(handle: number, index: number, sheet?: string): string;
     design_list_components(handle: number, sheet?: string): string;
     design_list_nets(handle: number, sheet?: string): string;
     design_add_bus(handle: number, requestJson: string): string;

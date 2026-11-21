@@ -1143,6 +1143,72 @@ junctionCommand
         return 0;
     });
 
+const noConnectCommand = cli.command('no-connect', 'cli.cmd.no-connect');
+noConnectCommand
+    .command('add', 'cli.cmd.no-connect-add')
+    .option('--x <number>', 'cli.opt.x')
+    .option('--y <number>', 'cli.opt.y')
+    .option('--ref <ref>', 'cli.opt.ref')
+    .option('--pin <pin>', 'cli.opt.pin')
+    .option('--sheet <sheet>', 'cli.opt.sheet')
+    .actionCtx(async (options, _args, ctx) => {
+        const file = input(options);
+        if (file === undefined) {
+            ctx.fail('open-eda.cli.file-required', { message: 'a design document is required' });
+            return 2;
+        }
+        const x = number(options, 'x');
+        const y = number(options, 'y');
+        const reference = text(options, 'ref');
+        const pin = text(options, 'pin');
+        if (x === undefined || Number.isNaN(x) || y === undefined || Number.isNaN(y)) {
+            ctx.fail('open-eda.cli.arguments-invalid', {
+                message: '`--x` and `--y` are required; coordinates must be finite numbers',
+            });
+            return 2;
+        }
+        if ((reference === undefined) !== (pin === undefined)) {
+            ctx.fail('open-eda.cli.arguments-invalid', { message: '`--ref` and `--pin` must be given together' });
+            return 2;
+        }
+        const node = reference !== undefined && pin !== undefined ? { ref: reference, pin } : undefined;
+        const { noConnect, saved } = await withDesign(file, async (design) => {
+            const noConnect = await design.addNoConnect({ sheet: text(options, 'sheet'), x, y, node });
+            return { noConnect, saved: await savedReport(design) };
+        });
+        ctx.emitResult(
+            { ...saved, revision: saved.revision, noConnect },
+            `added no-connect at (${x}, ${y}) in ${file} revision=${saved.revision}`,
+        );
+        return 0;
+    });
+
+noConnectCommand
+    .command('delete', 'cli.cmd.no-connect-delete')
+    .option('--index <number>', 'cli.opt.index')
+    .option('--sheet <sheet>', 'cli.opt.sheet')
+    .actionCtx(async (options, _args, ctx) => {
+        const file = input(options);
+        if (file === undefined) {
+            ctx.fail('open-eda.cli.file-required', { message: 'a design document is required' });
+            return 2;
+        }
+        const index = integer(options, 'index');
+        if (index === undefined || Number.isNaN(index) || index < 0) {
+            ctx.fail('open-eda.cli.arguments-invalid', { message: '`--index` must be a non-negative integer' });
+            return 2;
+        }
+        const saved = await withDesign(file, async (design) => {
+            await design.deleteNoConnect(index, { sheet: text(options, 'sheet') });
+            return savedReport(design);
+        });
+        ctx.emitResult(
+            { ...saved, revision: saved.revision, deleted: index },
+            `deleted no-connect ${index} from ${file} revision=${saved.revision}`,
+        );
+        return 0;
+    });
+
 const textCommand = cli.command('text', 'cli.cmd.text');
 textCommand
     .command('add', 'cli.cmd.text-add')

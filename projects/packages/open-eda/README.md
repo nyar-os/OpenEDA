@@ -47,7 +47,9 @@ A component stores an optional footprint. `setFootprint` assigns or clears it,
 the KiCad writer emits the `Footprint` property and the importer reads it back,
 `bom` groups by value and footprint with designator ranges, `bom_json`
 projects the same rows as JSON and `bom_html` writes them as an HTML table.
-The model never picks or validates a footprint.
+The model never picks or validates a footprint. No-connect flags can name a
+`ref`/`pin` node, which makes ERC and the connectivity report treat that pin as
+deliberately open.
 
 The package also exports the design types, stable error codes and the format
 registry (`kicad_sch`/`kicad_pcb`/`sch`/`brd`/`net`/`edif`/`spice`/`cir`/`gbr`/

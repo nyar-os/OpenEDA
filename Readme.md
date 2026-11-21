@@ -24,6 +24,7 @@ annotations, net labels, including global and hierarchical labels, and the
 title-block title, date, revision and company. Editing
 covers components, nets (derive, disconnect, delete), design-level buses
 (declare, list, remove), wires, junctions and text (move and delete by index),
+no-connect flags (add, delete, and mark one pin as deliberately open),
 sheet add/rename/delete, deterministic reference annotation, BOM variants with
 do-not-populate lists, and undo/redo. The SDK and studio keep a bounded
 32-step history per open handle. A session created with `history: 'sidecar'`
@@ -38,7 +39,7 @@ prints exactly which entries are supported.
 
 | Capability | Status | Notes |
 | --- | --- | --- |
-| `.oeda` create/open/save/edit | supported | sheets, components, nets, buses, wires, junctions, text, title block, undo/redo |
+| `.oeda` create/open/save/edit | supported | sheets, components, nets, buses, wires, junctions, no-connect flags, text, title block, undo/redo |
 | design compare `diff` | supported | read-only report of added, removed and modified sheets, components, nets, wires, buses and BOM variants |
 | pin electrical types | supported | per-pin roles, the `electrical` check and the KiCad library pin types |
 | reference annotation `annotate` | supported | renumbers per prefix by sheet and placement order; net nodes follow |
@@ -59,7 +60,9 @@ library symbols; an unknown type adds a loss entry and leaves that pin untyped. 
 imported as sheet-local net labels and each occurrence adds a
 `{"code": "kicad/label-scope", "detail": "..."}` entry, because the document
 does not model cross-sheet label scope. Junctions, no-connect flags and text
-annotations are part of the subset and round-trip without a loss entry.
+annotations are part of the subset and round-trip without a loss entry. A
+no-connect flag keeps its placement in KiCad; the optional pin attachment is a
+native model annotation and is not written into the KiCad `no_connect` node.
 
 ERC keeps the inspection codes stable: `erc/duplicate-pin` reports a component
 that declares one pin name twice, `erc/dangling-net` reports a declared net with
@@ -68,7 +71,10 @@ no nodes, and `erc/duplicate-net-name`, `erc/single-node-net`,
 `erc/reference-illegal`, `erc/pin-name-illegal` and `erc/net-name-illegal` reject
 names that would break the `REF.PIN` node or `NET` line grammar the netlist and
 SPICE writers emit, so an illegal name fails inspection instead of producing an
-ambiguous file. The `nets` check reports `net-bus-member-collision` when a
+ambiguous file. A no-connect flag may carry a `ref`/`pin` node: the `erc` check
+and the connectivity report then treat that pin as intentionally open, so neither
+`erc/unconnected-pin` nor an `unconnectedPins` entry is emitted for it. A flag
+without a node is a coordinate-only marker and suppresses nothing. The `nets` check reports `net-bus-member-collision` when a
 declared net has the same name as a member the bus expansion would write, so the
 netlist never emits one `NET` line twice.
 
@@ -219,6 +225,8 @@ open-eda sheet rename blinker.oeda --id sheet-2 --name Main
 open-eda junction add blinker.oeda --x 55 --y 30
 open-eda junction move blinker.oeda --index 0 --x 60 --y 30
 open-eda junction delete blinker.oeda --index 0
+open-eda no-connect add blinker.oeda --x 60 --y 30 --ref U1 --pin 4
+open-eda no-connect delete blinker.oeda --index 0
 open-eda text add blinker.oeda --text "Revision A" --x 20 --y 12
 open-eda text move blinker.oeda --index 0 --x 24 --y 14
 open-eda text delete blinker.oeda --index 0
@@ -295,7 +303,7 @@ and missing footprint count per symbol.
 The JSON writer emits a deterministic, read-only document projection tagged
 `open-eda-projection` with the design header (id, title, revision, rev,
 company, date and units) and, per sheet, its components (including typed pins),
-nets, wires, junctions and text annotations; internal allocation counters are
+nets, wires, junctions, no-connect flags and text annotations; internal allocation counters are
 not part of it.
 The KiCad writer emits a KiCad 6/7 S-expression with a `lib_symbols` section,
 one symbol per component, one `wire` per segment, one `junction` per connection

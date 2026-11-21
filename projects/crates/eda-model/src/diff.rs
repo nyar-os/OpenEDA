@@ -503,7 +503,10 @@ fn junction_key(junction: &Junction) -> String {
 }
 
 fn flag_key(flag: &NoConnect) -> String {
-    format!("{:.4},{:.4}", flag.x, flag.y)
+    match &flag.node {
+        Some(node) => format!("{:.4},{:.4}\u{1f}{}.{}", flag.x, flag.y, node.reference, node.pin),
+        None => format!("{:.4},{:.4}", flag.x, flag.y),
+    }
 }
 
 fn text_key(text: &TextLabel) -> String {
@@ -523,7 +526,10 @@ impl ItemJson for Junction {
 
 impl ItemJson for NoConnect {
     fn to_json(&self) -> Value {
-        json!({ "x": self.x, "y": self.y })
+        match &self.node {
+            Some(node) => json!({ "x": self.x, "y": self.y, "node": { "ref": node.reference, "pin": node.pin } }),
+            None => json!({ "x": self.x, "y": self.y }),
+        }
     }
 }
 

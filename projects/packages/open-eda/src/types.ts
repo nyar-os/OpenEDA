@@ -350,10 +350,12 @@ export interface Junction {
     readonly y: number;
 }
 
-/** One no-connect flag at a sheet position. */
+/** One no-connect flag at a sheet position, optionally marking one pin. */
 export interface NoConnect {
     readonly x: number;
     readonly y: number;
+    /** Pin this flag deliberately leaves open; absent on coordinate-only flags. */
+    readonly node?: NetNode;
 }
 
 /** One free text annotation drawn on a sheet. */
@@ -482,6 +484,15 @@ export interface TextInput {
     readonly text: string;
     readonly x: number;
     readonly y: number;
+}
+
+/** Input of `design.addNoConnect()`. */
+export interface NoConnectInput {
+    readonly sheet?: SheetId;
+    readonly x: number;
+    readonly y: number;
+    /** Pin to mark as deliberately open; the pin must already exist. */
+    readonly node?: NetNode;
 }
 
 /** Input of `design.moveComponent()`. */
@@ -832,6 +843,10 @@ export interface Design {
     addJunction(input: JunctionInput): Promise<Junction>;
     /** Adds one free text annotation. */
     addText(input: TextInput): Promise<TextLabel>;
+    /** Adds one no-connect flag; a `node` marks that pin as deliberately open. */
+    addNoConnect(input: NoConnectInput): Promise<NoConnect>;
+    /** Deletes the no-connect flag at a 0-based index on a sheet. */
+    deleteNoConnect(index: number, options?: { readonly sheet?: SheetId }): Promise<void>;
     /** Moves one component to a new placement and optional rotation. */
     moveComponent(input: MoveComponentInput): Promise<Component>;
     /** Replaces the value text of one component. */

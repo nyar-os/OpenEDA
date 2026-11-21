@@ -625,7 +625,7 @@ fn read_label(node: &Node, components: &[Component], nets: &mut Vec<Net>, losses
 /// Reads one `(no_connect (at x y) ...)` flag.
 fn read_no_connect(node: &Node, no_connects: &mut Vec<NoConnect>, losses: &mut Vec<Value>) {
     match read_at(node) {
-        Some((x, y, _)) if x.is_finite() && y.is_finite() => no_connects.push(NoConnect { x, y }),
+        Some((x, y, _)) if x.is_finite() && y.is_finite() => no_connects.push(NoConnect { x, y, node: None }),
         _ => {
             losses.push(loss(UNSUPPORTED_ELEMENT, "a no-connect flag without an `(at x y)` placement was skipped".to_string()))
         }

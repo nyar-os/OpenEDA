@@ -17,7 +17,8 @@ reads and writes. The SDK keeps a bounded 32-step undo/redo history
 per open handle, and the CLI mirrors it in a `<file>.history.json` sidecar so
 `undo` and `redo` work across separate command invocations. Sheet
 add/rename/delete, component move, update and delete, deterministic reference
-annotation, BOM variants with do-not-populate lists, net derive, disconnect and
+annotation, BOM variants with do-not-populate lists, no-connect flags that can
+mark a pin as deliberately open, net derive, disconnect and
 delete, and junction/text move and delete work in place. Board layout, the
 interactive renderer, DRC and clearance checks, and KiCad board, Gerber and drill
 exchange are not implemented and report `capability/not-implemented`.
@@ -57,6 +58,8 @@ open-eda wire delete <file.oeda> --id <wire-id> [--sheet <sheet>]
 open-eda junction add <file.oeda> --x <n> --y <n> [--sheet <sheet>]
 open-eda junction move <file.oeda> --index <n> --x <n> --y <n> [--sheet <sheet>]
 open-eda junction delete <file.oeda> --index <n> [--sheet <sheet>]
+open-eda no-connect add <file.oeda> --x <n> --y <n> [--ref <ref> --pin <pin>] [--sheet <sheet>]
+open-eda no-connect delete <file.oeda> --index <n> [--sheet <sheet>]
 open-eda text add <file.oeda> --text <text> --x <n> --y <n> [--sheet <sheet>]
 open-eda text move <file.oeda> --index <n> --x <n> --y <n> [--sheet <sheet>]
 open-eda text delete <file.oeda> --index <n> [--sheet <sheet>]
@@ -104,7 +107,10 @@ nodes that point at a missing component or pin, and warns about unconnected pins
 It also rejects names that would break the writer grammar:
 `erc/reference-illegal` and `erc/pin-name-illegal` for whitespace or a dot inside
 a `REF.PIN` token, and `erc/net-name-illegal` for whitespace or control
-characters in a net name.
+characters in a net name. A no-connect flag with `--ref` and `--pin` (or the SDK
+`node`) marks that pin as deliberately open: `erc/unconnected-pin` and
+`unreferenced-pin` are skipped for it, and the connectivity report omits it from
+`unconnectedPins`. A coordinate-only flag suppresses nothing.
 `nets` reports floating wires, wires that name an undeclared net, single-node
 nets and empty sheets. `connectivity` groups wires by coincident endpoints,
 junctions and T-junctions, then reports `wire-net-conflict` (one error per group

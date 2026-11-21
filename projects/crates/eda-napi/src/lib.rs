@@ -22,9 +22,9 @@ use std::{
 };
 
 use open_eda_model::{
-    AddBusRequest, AddComponentRequest, AddJunctionRequest, AddTextRequest, AddWireRequest, ConnectNetRequest, CreateRequest,
-    DeleteNetRequest, DisconnectNetRequest, InspectOptions, MoveComponentRequest, RenameNetRequest, ServiceError,
-    SetFootprintRequest, SetPinTypeRequest, UpdateComponentRequest, UpdateDesignRequest,
+    AddBusRequest, AddComponentRequest, AddJunctionRequest, AddNoConnectRequest, AddTextRequest, AddWireRequest,
+    ConnectNetRequest, CreateRequest, DeleteNetRequest, DisconnectNetRequest, InspectOptions, MoveComponentRequest,
+    RenameNetRequest, ServiceError, SetFootprintRequest, SetPinTypeRequest, UpdateComponentRequest, UpdateDesignRequest,
 };
 use serde_json::{Value, json};
 use wae::{
@@ -280,6 +280,25 @@ fn design_add_text(ctx: CallContext) -> Result<JsValue> {
     let handle = handle(&ctx, 0)?;
     let request: AddTextRequest = decode(serde_json::from_str(&text(&ctx, 1)?))?;
     let report = open_eda_model::add_text(handle, request).map_err(fail)?;
+    respond(&ctx, &report)
+}
+
+/// Adds one no-connect flag to an open design, optionally marking a pin.
+#[function]
+fn design_add_no_connect(ctx: CallContext) -> Result<JsValue> {
+    let handle = handle(&ctx, 0)?;
+    let request: AddNoConnectRequest = decode(serde_json::from_str(&text(&ctx, 1)?))?;
+    let report = open_eda_model::add_no_connect(handle, request).map_err(fail)?;
+    respond(&ctx, &report)
+}
+
+/// Deletes one no-connect flag at a sheet index.
+#[function]
+fn design_delete_no_connect(ctx: CallContext) -> Result<JsValue> {
+    let handle = handle(&ctx, 0)?;
+    let index = position(&ctx, 1)?;
+    let sheet = optional_text(&ctx, 2)?;
+    let report = open_eda_model::delete_no_connect(handle, index, sheet.as_deref()).map_err(fail)?;
     respond(&ctx, &report)
 }
 
@@ -1324,6 +1343,8 @@ register_module![
     design_add_wire,
     design_add_junction,
     design_add_text,
+    design_add_no_connect,
+    design_delete_no_connect,
     design_list_components,
     design_list_nets,
     design_add_bus,

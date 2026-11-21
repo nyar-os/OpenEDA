@@ -46,6 +46,8 @@ import type {
     KicadImportResult,
     MoveComponentInput,
     Net,
+    NoConnect,
+    NoConnectInput,
     OpenEDAOptions,
     PinType,
     RenameNetInput,
@@ -436,6 +438,15 @@ function attach(opened: service.DesignHandle, options: AttachOptions): Design {
             const result = await mutate(() => service.addText(handle, input));
             current = result.design;
             return result.text;
+        },
+        async addNoConnect(input: NoConnectInput): Promise<NoConnect> {
+            const result = await mutate(() => service.addNoConnect(handle, input));
+            current = result.design;
+            return result.noConnect;
+        },
+        async deleteNoConnect(index: number, deleteOptions?: { readonly sheet?: string }): Promise<void> {
+            const result = await mutate(() => service.deleteNoConnect(handle, index, deleteOptions?.sheet));
+            current = result.design;
         },
         async moveComponent(input: MoveComponentInput): Promise<Component> {
             const result = await mutate(() => service.moveComponent(handle, input));

@@ -37,6 +37,8 @@ import type {
     KicadImportResult,
     MoveComponentInput,
     Net,
+    NoConnect,
+    NoConnectInput,
     RenameNetInput,
     SaveReport,
     SetFootprintInput,
@@ -101,6 +103,11 @@ export interface JunctionResult extends EditResult, HistoryFlags {
 /** Result of {@link addText}. */
 export interface TextResult extends EditResult, HistoryFlags {
     readonly text: TextLabel;
+}
+
+/** Result of {@link addNoConnect}. */
+export interface NoConnectResult extends EditResult, HistoryFlags {
+    readonly noConnect: NoConnect;
 }
 
 /** Result of {@link addSheet}, {@link renameSheet} and {@link deleteSheet}. */
@@ -412,6 +419,21 @@ export function addText(handle: number, input: TextInput): TextResult {
             JSON.stringify({ sheet: input.sheet, text: input.text, x: input.x, y: input.y }),
         ),
     );
+}
+
+/** Adds one no-connect flag, optionally marking a component pin. */
+export function addNoConnect(handle: number, input: NoConnectInput): NoConnectResult {
+    return decode<NoConnectResult>(() =>
+        binding('design.addNoConnect').design_add_no_connect(
+            handle,
+            JSON.stringify({ sheet: input.sheet, x: input.x, y: input.y, node: input.node }),
+        ),
+    );
+}
+
+/** Deletes the no-connect flag at a 0-based sheet index. */
+export function deleteNoConnect(handle: number, index: number, sheet?: string): DeleteIndexResult {
+    return decode<DeleteIndexResult>(() => binding('design.deleteNoConnect').design_delete_no_connect(handle, index, sheet));
 }
 
 /** Restores the snapshot taken before the newest edit. */

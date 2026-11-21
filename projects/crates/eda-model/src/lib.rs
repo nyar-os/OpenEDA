@@ -315,15 +315,20 @@ pub struct Junction {
 /// One no-connect flag placed on a schematic sheet.
 ///
 /// The flag records that the point is deliberately left unconnected. The model
-/// keeps its placement so the flag survives a KiCad round trip; it does not
-/// attach the flag to a component pin, because the document stores placement
-/// but not per-pin geometry.
+/// keeps its placement so the flag survives a KiCad round trip. When `node` is
+/// present the flag also marks one component pin, so ERC and the connectivity
+/// report treat that pin as intentionally open instead of reporting a warning.
+/// KiCad stores only the placement, so the pin attachment is a design-model
+/// annotation rather than a KiCad file field.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct NoConnect {
     /// Placement X coordinate in design units.
     pub x: f64,
     /// Placement Y coordinate in design units.
     pub y: f64,
+    /// Pin this flag deliberately leaves open; absent on coordinate-only flags.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node: Option<Node>,
 }
 
 /// One free text annotation drawn on a schematic sheet.
@@ -495,6 +500,22 @@ pub struct AddTextRequest {
     pub x: f64,
     /// Placement Y coordinate.
     pub y: f64,
+}
+
+/// Request of [`add_no_connect`].
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AddNoConnectRequest {
+    /// Target sheet id or name; the first sheet is used when omitted.
+    #[serde(default)]
+    pub sheet: Option<String>,
+    /// Placement X coordinate.
+    pub x: f64,
+    /// Placement Y coordinate.
+    pub y: f64,
+    /// Pin the flag deliberately leaves open; optional.
+    #[serde(default)]
+    pub node: Option<Node>,
 }
 
 /// Request of [`move_component`].
@@ -670,7 +691,9 @@ pub struct Waiver {
 /// `erc/duplicate-net-name`, `erc/duplicate-pin`, `erc/single-node-net`,
 /// `erc/dangling-net`, `erc/unconnected-pin`, `erc/floating-wire`,
 /// `erc/reference-illegal`, `erc/pin-name-illegal` and `erc/net-name-illegal`
-/// next to the legacy codes. The `nets` check also reports `net-bus-member-collision` when a
+/// next to the legacy codes. A no-connect flag that names a component pin
+/// removes `erc/unconnected-pin` and `unreferenced-pin` for that pin, because
+/// the open pin is deliberate. The `nets` check also reports `net-bus-member-collision` when a
 /// declared net would be written twice as a bus member. The JSON keys of this
 /// report are unchanged.
 pub fn capabilities() -> Value {
@@ -1707,6 +1730,58 @@ pub fn delete_net(handle: u64, request: DeleteNetRequest) -> Result<Value, Servi
     })
 }
 
+/// Adds one no-connect flag to a sheet.
+///
+/// A flag without a `node` is a plain placement mark. A flag with a `node`
+/// additionally marks that component pin as deliberately open; the pin must
+/// already exist, and one pin can only carry one flag.
+pub fn add_no_connect(handle: u64, request: AddNoConnectRequest) -> Result<Value, ServiceError> {
+    if !request.x.is_finite() || !request.y.is_finite() {
+        return Err(ServiceError::new("session/argument-invalid", "no-connect coordinates must be finite numbers"));
+    }
+    mutate(handle, |design| {
+        let index = sheet_index(design, request.sheet.as_deref())?;
+        let sheet = &design.sheets[index];
+        if let Some(node) = &request.node {
+            let component = sheet
+                .components
+                .iter()
+                .find(|component| component.reference == node.reference)
+                .ok_or_else(|| not_found(format!("no component `{}` is placed on this sheet", node.reference)))?;
+            if !component.pins.iter().any(|pin| pin == &node.pin) {
+                return Err(not_found(format!("component `{}` declares no pin `{}`", node.reference, node.pin)));
+            }
+            if sheet.no_connects.iter().any(|flag| flag.node.as_ref() == Some(node)) {
+                return Err(duplicate(format!("pin `{}.{}` already carries a no-connect flag", node.reference, node.pin)));
+            }
+        }
+        let flag = NoConnect { x: request.x, y: request.y, node: request.node };
+        design.sheets[index].no_connects.push(flag.clone());
+        design.revision += 1;
+        let mut payload = Map::new();
+        payload.insert("noConnect".to_string(), json!(flag));
+        Ok(payload)
+    })
+}
+
+/// Deletes the no-connect flag at `index` (0-based) on a sheet.
+pub fn delete_no_connect(handle: u64, index: usize, sheet: Option<&str>) -> Result<Value, ServiceError> {
+    mutate(handle, |design| {
+        let position = sheet_index(design, sheet)?;
+        let target = &mut design.sheets[position];
+        if index >= target.no_connects.len() {
+            return Err(not_found(format!("no no-connect flag exists at index {index} on this sheet")));
+        }
+        target.no_connects.remove(index);
+        let remaining = target.no_connects.len();
+        design.revision += 1;
+        let mut payload = Map::new();
+        payload.insert("index".to_string(), json!(index));
+        payload.insert("remaining".to_string(), json!(remaining));
+        Ok(payload)
+    })
+}
+
 /// Deletes the junction at `index` (0-based) on a sheet.
 ///
 /// The index is checked against the sheet's junction list; an out-of-range
@@ -2434,9 +2509,29 @@ fn validate_design(design: &Design) -> Result<(), ServiceError> {
                 return Err(invalid(format!("sheet `{}` has a junction with a non-finite coordinate", sheet.id)));
             }
         }
+        let mut no_connect_pins = HashSet::new();
         for no_connect in &sheet.no_connects {
             if !no_connect.x.is_finite() || !no_connect.y.is_finite() {
                 return Err(invalid(format!("sheet `{}` has a no-connect with a non-finite coordinate", sheet.id)));
+            }
+            if let Some(node) = &no_connect.node {
+                let component = sheet
+                    .components
+                    .iter()
+                    .find(|component| component.reference == node.reference)
+                    .ok_or_else(|| invalid(format!("a no-connect references missing component `{}`", node.reference)))?;
+                if !component.pins.iter().any(|pin| pin == &node.pin) {
+                    return Err(invalid(format!(
+                        "a no-connect references missing pin `{}` on component `{}`",
+                        node.pin, node.reference
+                    )));
+                }
+                if !no_connect_pins.insert((node.reference.clone(), node.pin.clone())) {
+                    return Err(invalid(format!(
+                        "pin `{}.{}` carries more than one no-connect flag",
+                        node.reference, node.pin
+                    )));
+                }
             }
         }
         for text in &sheet.texts {
@@ -2634,9 +2729,17 @@ fn inspect_design(design: &Design, checks: &[String]) -> Vec<Value> {
                     }
                 }
             }
+            let mut no_connect_pins: HashSet<(String, String)> = HashSet::new();
+            for flag in &sheet.no_connects {
+                if let Some(node) = &flag.node {
+                    no_connect_pins.insert((node.reference.clone(), node.pin.clone()));
+                }
+            }
             for component in &sheet.components {
                 for pin in &component.pins {
-                    if !connected.contains(&(component.reference.clone(), pin.clone())) {
+                    if !connected.contains(&(component.reference.clone(), pin.clone()))
+                        && !no_connect_pins.contains(&(component.reference.clone(), pin.clone()))
+                    {
                         let message = format!("pin `{}` of component `{}` is not connected to a net", pin, component.reference);
                         issues.push(issue(
                             "unreferenced-pin",
@@ -3132,6 +3235,12 @@ fn connectivity_report_of(design: &Design) -> Value {
                     connected.insert((node.reference.clone(), node.pin.clone()));
                 }
             }
+            let mut marked: HashSet<(String, String)> = HashSet::new();
+            for flag in &sheet.no_connects {
+                if let Some(node) = &flag.node {
+                    marked.insert((node.reference.clone(), node.pin.clone()));
+                }
+            }
             let unconnected = sheet
                 .components
                 .iter()
@@ -3139,7 +3248,10 @@ fn connectivity_report_of(design: &Design) -> Value {
                     component
                         .pins
                         .iter()
-                        .filter(|pin| !connected.contains(&(component.reference.clone(), (*pin).clone())))
+                        .filter(|pin| {
+                            let key = (component.reference.clone(), (*pin).clone());
+                            !connected.contains(&key) && !marked.contains(&key)
+                        })
                         .map(|pin| json!({ "ref": component.reference, "pin": pin }))
                         .collect::<Vec<_>>()
                 })
@@ -3890,7 +4002,14 @@ fn render_json_projection(design: &Design) -> Result<String, ServiceError> {
                 "noConnects": sheet
                     .no_connects
                     .iter()
-                    .map(|no_connect| json!({ "x": no_connect.x, "y": no_connect.y }))
+                    .map(|no_connect| match &no_connect.node {
+                        Some(node) => json!({
+                            "x": no_connect.x,
+                            "y": no_connect.y,
+                            "node": { "ref": node.reference, "pin": node.pin },
+                        }),
+                        None => json!({ "x": no_connect.x, "y": no_connect.y }),
+                    })
                     .collect::<Vec<_>>(),
                 "texts": sheet
                     .texts
@@ -5331,6 +5450,89 @@ mod tests {
         let sheet = &imported["design"]["sheets"][0];
         assert_eq!(sheet["junctions"], json!([{ "x": 12.5, "y": 7.5 }]));
         assert_eq!(sheet["texts"], json!([{ "text": "Revision A", "x": 15.0, "y": 9.0 }]));
+        close(handle).expect("close");
+    }
+
+    #[test]
+    fn no_connect_flags_mark_pins_and_erc_ignores_them() {
+        let created = create(CreateRequest::default()).expect("create");
+        let handle = created["handle"].as_u64().expect("handle");
+        add_component(
+            handle,
+            AddComponentRequest {
+                sheet: None,
+                reference: "R1".to_string(),
+                value: "10k".to_string(),
+                x: 40.0,
+                y: 30.0,
+                rotation: 0.0,
+                pins: vec!["1".to_string(), "2".to_string()],
+            },
+        )
+        .expect("add R1");
+        connect_net(handle, ConnectNetRequest { sheet: None, net: "SIGNAL".to_string(), nodes: vec!["R1.1".to_string()] })
+            .expect("connect R1.1");
+
+        let unconnected = |value: &Value| {
+            value["issues"].as_array().expect("issues").iter().filter(|issue| issue["code"] == "erc/unconnected-pin").count()
+        };
+        let before =
+            inspect_with_options(handle, InspectOptions { checks: Some(vec!["erc".to_string()]), ..InspectOptions::default() })
+                .expect("inspect");
+        assert_eq!(unconnected(&before), 1);
+        let opened = connectivity_report(handle).expect("connectivity");
+        assert_eq!(opened["totals"]["unconnectedPins"], 1);
+
+        let flag = add_no_connect(
+            handle,
+            AddNoConnectRequest {
+                sheet: None,
+                x: 40.0,
+                y: 30.0,
+                node: Some(Node { reference: "R1".to_string(), pin: "2".to_string() }),
+            },
+        )
+        .expect("add no-connect");
+        assert_eq!(flag["noConnect"]["node"], json!({ "ref": "R1", "pin": "2" }));
+
+        let after =
+            inspect_with_options(handle, InspectOptions { checks: Some(vec!["erc".to_string()]), ..InspectOptions::default() })
+                .expect("inspect");
+        assert_eq!(unconnected(&after), 0);
+        let report = connectivity_report(handle).expect("connectivity");
+        assert_eq!(report["totals"]["unconnectedPins"], 0);
+        assert_eq!(report["sheets"][0]["noConnects"], 1);
+
+        let duplicate = add_no_connect(
+            handle,
+            AddNoConnectRequest {
+                sheet: None,
+                x: 40.0,
+                y: 30.0,
+                node: Some(Node { reference: "R1".to_string(), pin: "2".to_string() }),
+            },
+        )
+        .expect_err("duplicate flag");
+        assert_eq!(duplicate.code, "object/duplicate");
+        let missing = add_no_connect(
+            handle,
+            AddNoConnectRequest {
+                sheet: None,
+                x: 40.0,
+                y: 30.0,
+                node: Some(Node { reference: "R1".to_string(), pin: "9".to_string() }),
+            },
+        )
+        .expect_err("missing pin");
+        assert_eq!(missing.code, "object/not-found");
+
+        let removed = delete_no_connect(handle, 0, None).expect("delete flag");
+        assert_eq!(removed["remaining"], 0);
+        let restored =
+            inspect_with_options(handle, InspectOptions { checks: Some(vec!["erc".to_string()]), ..InspectOptions::default() })
+                .expect("inspect");
+        assert_eq!(unconnected(&restored), 1);
+        assert_eq!(delete_no_connect(handle, 0, None).expect_err("out of range").code, "object/not-found");
         close(handle).expect("close");
     }
 
