@@ -1061,6 +1061,141 @@ netClassCommand
         return 0;
     });
 
+const referenceCommand = cli.command('reference', 'cli.cmd.reference');
+
+referenceCommand
+    .command('add', 'cli.cmd.reference-add')
+    .option('--class <class>', 'cli.opt.component-class')
+    .option('--prefix <prefix>', 'cli.opt.prefix')
+    .actionCtx(async (options, _args, ctx) => {
+        const file = input(options);
+        if (file === undefined) {
+            ctx.fail('open-eda.cli.file-required', { message: 'a design document is required' });
+            return 2;
+        }
+        const componentClass = text(options, 'class');
+        const prefix = text(options, 'prefix');
+        if (componentClass === undefined || componentClass.trim().length === 0 || prefix === undefined) {
+            ctx.fail('open-eda.cli.arguments-invalid', {
+                message: '`--class` and `--prefix` are required',
+            });
+            return 2;
+        }
+        const { referencePrefix, saved } = await withDesign(file, async (design) => {
+            const referencePrefix = await design.setReferencePrefix({ class: componentClass, prefix });
+            return { referencePrefix, saved: await savedReport(design) };
+        });
+        ctx.emitResult(
+            { ...saved, revision: saved.revision, referencePrefix },
+            `class ${referencePrefix.class} expects prefix ${referencePrefix.prefix} in ${file} revision=${saved.revision}`,
+        );
+        return 0;
+    });
+
+referenceCommand
+    .command('list', 'cli.cmd.reference-list')
+    .actionCtx(async (options, _args, ctx) => {
+        const file = input(options);
+        if (file === undefined) {
+            ctx.fail('open-eda.cli.file-required', { message: 'a design document is required' });
+            return 2;
+        }
+        const { referencePrefixes, componentClasses } = await withDesign(file, async (design) => ({
+            referencePrefixes: await design.listReferencePrefixes(),
+            componentClasses: await design.listComponentClasses(),
+        }));
+        const lines = [
+            `${referencePrefixes.length} reference rule(s) in ${file}`,
+            ...referencePrefixes.map((rule) => `  ${rule.class} -> ${rule.prefix}`),
+            ...componentClasses.map((entry) => `  ${entry.reference} (${entry.componentId}) class=${entry.class}`),
+        ];
+        ctx.emitResult({ referencePrefixes, componentClasses }, lines.join('\n'));
+        return 0;
+    });
+
+referenceCommand
+    .command('remove', 'cli.cmd.reference-remove')
+    .option('--class <class>', 'cli.opt.component-class')
+    .actionCtx(async (options, _args, ctx) => {
+        const file = input(options);
+        if (file === undefined) {
+            ctx.fail('open-eda.cli.file-required', { message: 'a design document is required' });
+            return 2;
+        }
+        const componentClass = text(options, 'class');
+        if (componentClass === undefined || componentClass.trim().length === 0) {
+            ctx.fail('open-eda.cli.arguments-invalid', { message: '`--class` is required' });
+            return 2;
+        }
+        const saved = await withDesign(file, async (design) => {
+            await design.removeReferencePrefix(componentClass);
+            return savedReport(design);
+        });
+        ctx.emitResult(
+            { ...saved, revision: saved.revision, deleted: componentClass },
+            `removed the reference rule for class ${componentClass} from ${file} revision=${saved.revision}`,
+        );
+        return 0;
+    });
+
+referenceCommand
+    .command('assign', 'cli.cmd.reference-assign')
+    .option('--ref <ref>', 'cli.opt.ref')
+    .option('--class <class>', 'cli.opt.component-class')
+    .option('--sheet <sheet>', 'cli.opt.sheet')
+    .actionCtx(async (options, _args, ctx) => {
+        const file = input(options);
+        if (file === undefined) {
+            ctx.fail('open-eda.cli.file-required', { message: 'a design document is required' });
+            return 2;
+        }
+        const reference = text(options, 'ref');
+        const componentClass = text(options, 'class');
+        if (reference === undefined || reference.trim().length === 0 || componentClass === undefined) {
+            ctx.fail('open-eda.cli.arguments-invalid', { message: '`--ref` and `--class` are required' });
+            return 2;
+        }
+        const { componentId, saved } = await withDesign(file, async (design) => {
+            const result = await design.setComponentClass({
+                sheet: text(options, 'sheet'),
+                reference,
+                class: componentClass,
+            });
+            return { componentId: result.componentId, saved: await savedReport(design) };
+        });
+        ctx.emitResult(
+            { ...saved, revision: saved.revision, componentId },
+            `assigned ${reference} to class ${componentClass} in ${file} revision=${saved.revision}`,
+        );
+        return 0;
+    });
+
+referenceCommand
+    .command('unassign', 'cli.cmd.reference-unassign')
+    .option('--ref <ref>', 'cli.opt.ref')
+    .option('--sheet <sheet>', 'cli.opt.sheet')
+    .actionCtx(async (options, _args, ctx) => {
+        const file = input(options);
+        if (file === undefined) {
+            ctx.fail('open-eda.cli.file-required', { message: 'a design document is required' });
+            return 2;
+        }
+        const reference = text(options, 'ref');
+        if (reference === undefined || reference.trim().length === 0) {
+            ctx.fail('open-eda.cli.arguments-invalid', { message: '`--ref` is required' });
+            return 2;
+        }
+        const saved = await withDesign(file, async (design) => {
+            await design.setComponentClass({ sheet: text(options, 'sheet'), reference, class: '' });
+            return savedReport(design);
+        });
+        ctx.emitResult(
+            { ...saved, revision: saved.revision, reference },
+            `cleared the class of ${reference} in ${file} revision=${saved.revision}`,
+        );
+        return 0;
+    });
+
 const variantCommand = cli.command('variant', 'cli.cmd.variant');
 variantCommand
     .command('add', 'cli.cmd.variant-add')

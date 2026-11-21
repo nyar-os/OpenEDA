@@ -13,11 +13,15 @@ import type {
     Bus,
     BusInput,
     Component,
+    ComponentClassInput,
+    ComponentClassListResult,
+    ComponentClassResult,
     ComponentInput,
     ConnectNetInput,
     ConnectivityReport,
     DeleteNetInput,
     DeleteNetClassResult,
+    DeleteReferencePrefixResult,
     DesignCapabilities,
     DesignCreateOptions,
     DesignDiffInput,
@@ -44,6 +48,9 @@ import type {
     NetClassResult,
     NoConnect,
     NoConnectInput,
+    ReferencePrefixInput,
+    ReferencePrefixListResult,
+    ReferencePrefixResult,
     RenameNetInput,
     SaveReport,
     SetFootprintInput,
@@ -641,6 +648,47 @@ export function removeNetClass(handle: number, netClass: string): DeleteNetClass
 /** Lists the net classes declared by one open design. */
 export function listNetClasses(handle: number): NetClassListResult {
     return decode<NetClassListResult>(() => binding('design.listNetClasses').design_list_net_classes(handle));
+}
+
+/** Declares or replaces one reference designator prefix rule. */
+export function setReferencePrefix(handle: number, input: ReferencePrefixInput): ReferencePrefixResult {
+    return decode<ReferencePrefixResult>(() =>
+        binding('design.setReferencePrefix').design_set_reference_prefix(
+            handle,
+            JSON.stringify({ class: input.class, prefix: input.prefix }),
+        ),
+    );
+}
+
+/** Removes one reference prefix rule by component class. */
+export function removeReferencePrefix(handle: number, componentClass: string): DeleteReferencePrefixResult {
+    return decode<DeleteReferencePrefixResult>(() =>
+        binding('design.removeReferencePrefix').design_remove_reference_prefix(handle, componentClass),
+    );
+}
+
+/** Lists the reference prefix rules declared by one open design. */
+export function listReferencePrefixes(handle: number): ReferencePrefixListResult {
+    return decode<ReferencePrefixListResult>(() =>
+        binding('design.listReferencePrefixes').design_list_reference_prefixes(handle),
+    );
+}
+
+/** Assigns or clears the component class of one placed component. */
+export function setComponentClass(handle: number, input: ComponentClassInput): ComponentClassResult {
+    return decode<ComponentClassResult>(() =>
+        binding('design.setComponentClass').design_set_component_class(
+            handle,
+            JSON.stringify({ sheet: input.sheet, reference: input.reference, class: input.class }),
+        ),
+    );
+}
+
+/** Lists component class assignments with their resolved references. */
+export function listComponentClasses(handle: number): ComponentClassListResult {
+    return decode<ComponentClassListResult>(() =>
+        binding('design.listComponentClasses').design_list_component_classes(handle),
+    );
 }
 
 /** Deletes the junction at a 0-based index on a sheet. */

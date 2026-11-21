@@ -44,10 +44,11 @@ pub const DESIGN_FORMATS: &[&str] =
     &["kicad_sch", "kicad_pcb", "sch", "brd", "net", "edif", "spice", "cir", "gbr", "drl", "step", "svg", "pdf", "png", "bom"];
 
 /// Rule checks declared by the studio inspector.
-const INSPECT_CHECKS: &[&str] = &["erc", "electrical", "drc", "nets", "connectivity", "footprints", "clearance", "power"];
+const INSPECT_CHECKS: &[&str] =
+    &["erc", "electrical", "drc", "nets", "connectivity", "footprints", "clearance", "power", "references"];
 
 /// Rule checks this build actually runs.
-const SUPPORTED_CHECKS: &[&str] = &["erc", "electrical", "nets", "connectivity", "footprints", "power"];
+const SUPPORTED_CHECKS: &[&str] = &["erc", "electrical", "nets", "connectivity", "footprints", "power", "references"];
 
 /// Render targets declared for preview surfaces.
 const RENDER_FORMATS: &[&str] = &["svg", "png", "pdf"];
@@ -282,6 +283,19 @@ pub struct NetClass {
     pub buses: Vec<String>,
 }
 
+/// One reference designator prefix rule: the prefix a component class must use.
+///
+/// The rule is declarative. A component is assigned to a class through
+/// [`set_component_class`], and the `references` inspection check compares its
+/// reference designator against the prefix of that class.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ReferencePrefixRule {
+    /// Component class name, for example `resistor`.
+    pub class: String,
+    /// Expected uppercase letter prefix, for example `R`.
+    pub prefix: String,
+}
+
 /// Design-wide rules carried by the document.
 ///
 /// The bundle is absent from older documents, where every member defaults to
@@ -293,12 +307,18 @@ pub struct DesignRules {
     /// Declared net classes; absent when the design declares none.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub net_classes: Vec<NetClass>,
+    /// Declared reference-prefix rules keyed by component class.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reference_prefixes: Vec<ReferencePrefixRule>,
+    /// Component classes keyed by stable component id; absent when none is assigned.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub component_classes: BTreeMap<String, String>,
 }
 
 impl DesignRules {
     /// Whether the document declares no rule at all.
     fn is_empty(&self) -> bool {
-        self.net_classes.is_empty()
+        self.net_classes.is_empty() && self.reference_prefixes.is_empty() && self.component_classes.is_empty()
     }
 }
 
@@ -799,6 +819,30 @@ pub struct NetClassRequest {
     /// Declared bus names assigned to the class.
     #[serde(default)]
     pub buses: Vec<String>,
+}
+
+/// Request of [`set_reference_prefix`].
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReferencePrefixRequest {
+    /// Component class name, for example `resistor`.
+    pub class: String,
+    /// Expected uppercase letter prefix, for example `R`.
+    pub prefix: String,
+}
+
+/// Request of [`set_component_class`].
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ComponentClassRequest {
+    /// Target sheet id or name; the first sheet is used when omitted.
+    #[serde(default)]
+    pub sheet: Option<String>,
+    /// Reference designator of the placed component.
+    pub reference: String,
+    /// Class to assign; an empty string clears the assignment.
+    #[serde(default)]
+    pub class: String,
 }
 
 /// Request of [`delete_net`].
@@ -1589,6 +1633,154 @@ pub fn list_net_classes(handle: u64) -> Result<Value, ServiceError> {
     })
 }
 
+/// Declares or replaces one reference designator prefix rule.
+///
+/// A prefix is one to eight uppercase ASCII letters, so `R`, `C`, `U`, `J` and
+/// `TP` are all valid. Redeclaring the same class replaces its prefix, and an
+/// unchanged rule adds no revision.
+pub fn set_reference_prefix(handle: u64, request: ReferencePrefixRequest) -> Result<Value, ServiceError> {
+    let class = request.class.trim().to_string();
+    if class.is_empty() {
+        return Err(ServiceError::new("session/argument-invalid", "a reference rule needs a component class"));
+    }
+    if breaks_net_grammar(&class) {
+        return Err(ServiceError::new(
+            "session/argument-invalid",
+            format!("component class `{class}` contains whitespace or a control character"),
+        ));
+    }
+    if !valid_reference_prefix(&request.prefix) {
+        return Err(ServiceError::new(
+            "session/argument-invalid",
+            format!("prefix `{}` must be one to eight uppercase ASCII letters, for example R or TP", request.prefix),
+        ));
+    }
+    mutate(handle, |design| {
+        let rule = ReferencePrefixRule { class: class.clone(), prefix: request.prefix.clone() };
+        let existing = design.rules.reference_prefixes.iter().position(|entry| entry.class == class);
+        let changed = match existing {
+            Some(position) if design.rules.reference_prefixes[position] == rule => false,
+            Some(position) => {
+                design.rules.reference_prefixes[position] = rule.clone();
+                true
+            }
+            None => {
+                design.rules.reference_prefixes.push(rule.clone());
+                true
+            }
+        };
+        if changed {
+            design.revision += 1;
+        }
+        let mut payload = Map::new();
+        payload.insert("referencePrefix".to_string(), json!(rule));
+        Ok(payload)
+    })
+}
+
+/// Removes one reference prefix rule by component class.
+///
+/// Components already assigned to that class keep their assignment; the
+/// `references` check then reports them as `reference/class-unknown` until the
+/// rule is declared again or the assignment is cleared.
+pub fn remove_reference_prefix(handle: u64, class: &str) -> Result<Value, ServiceError> {
+    mutate(handle, |design| {
+        let position = design
+            .rules
+            .reference_prefixes
+            .iter()
+            .position(|entry| entry.class == class)
+            .ok_or_else(|| not_found(format!("no reference rule for class `{class}` is declared")))?;
+        let removed = design.rules.reference_prefixes.remove(position);
+        design.revision += 1;
+        let mut payload = Map::new();
+        payload.insert("deleted".to_string(), json!(removed.class));
+        payload.insert("remaining".to_string(), json!(design.rules.reference_prefixes.len()));
+        Ok(payload)
+    })
+}
+
+/// Lists the reference prefix rules declared by one design.
+pub fn list_reference_prefixes(handle: u64) -> Result<Value, ServiceError> {
+    with_session(handle, |session| {
+        Ok(json!({
+            "revision": session.design.revision,
+            "referencePrefixes": session.design.rules.reference_prefixes,
+        }))
+    })
+}
+
+/// Assigns one placed component to a component class, or clears it.
+///
+/// The class must already have a reference prefix rule, so an assignment can
+/// never name an unknown class at declaration time. The assignment is stored by
+/// the component's stable id, so annotation and reference renames do not detach
+/// it. An empty `class` clears the assignment, and an unchanged assignment adds
+/// no revision.
+pub fn set_component_class(handle: u64, request: ComponentClassRequest) -> Result<Value, ServiceError> {
+    let class = request.class.trim().to_string();
+    if !class.is_empty() && breaks_net_grammar(&class) {
+        return Err(ServiceError::new(
+            "session/argument-invalid",
+            format!("component class `{class}` contains whitespace or a control character"),
+        ));
+    }
+    mutate(handle, |design| {
+        let index = sheet_index(design, request.sheet.as_deref())?;
+        let component =
+            design.sheets[index].components.iter().find(|component| component.reference == request.reference).ok_or_else(
+                || not_found(format!("no component with reference `{}` is placed on this sheet", request.reference)),
+            )?;
+        let id = component.id.clone();
+        if !class.is_empty() && !design.rules.reference_prefixes.iter().any(|rule| rule.class == class) {
+            return Err(not_found(format!("no reference rule for class `{class}` is declared")));
+        }
+        let previous = design.rules.component_classes.get(&id).cloned();
+        let changed = if class.is_empty() {
+            design.rules.component_classes.remove(&id).is_some()
+        }
+        else if previous.as_deref() == Some(class.as_str()) {
+            false
+        }
+        else {
+            design.rules.component_classes.insert(id.clone(), class.clone());
+            true
+        };
+        if changed {
+            design.revision += 1;
+        }
+        let mut payload = Map::new();
+        payload.insert("reference".to_string(), json!(request.reference));
+        payload.insert("componentId".to_string(), json!(id));
+        payload.insert("class".to_string(), if class.is_empty() { Value::Null } else { json!(class) });
+        Ok(payload)
+    })
+}
+
+/// Lists the component class assignments with their resolved references.
+pub fn list_component_classes(handle: u64) -> Result<Value, ServiceError> {
+    with_session(handle, |session| {
+        let design = &session.design;
+        let mut assignments = Vec::new();
+        for sheet in &design.sheets {
+            for component in &sheet.components {
+                if let Some(class) = design.rules.component_classes.get(&component.id) {
+                    assignments.push(json!({
+                        "componentId": component.id,
+                        "reference": component.reference,
+                        "sheetId": sheet.id,
+                        "class": class,
+                    }));
+                }
+            }
+        }
+        Ok(json!({
+            "revision": design.revision,
+            "componentClasses": assignments,
+        }))
+    })
+}
+
 /// Adds one component to a sheet and returns the created object.
 pub fn add_component(handle: u64, request: AddComponentRequest) -> Result<Value, ServiceError> {
     if request.reference.trim().is_empty() {
@@ -1632,12 +1824,15 @@ pub fn add_component(handle: u64, request: AddComponentRequest) -> Result<Value,
 pub fn delete_component(handle: u64, reference: &str, sheet: Option<&str>) -> Result<Value, ServiceError> {
     mutate(handle, |design| {
         let index = sheet_index(design, sheet)?;
+        let removed_id = design.sheets[index]
+            .components
+            .iter()
+            .find(|component| component.reference == reference)
+            .map(|component| component.id.clone())
+            .ok_or_else(|| not_found(format!("no component with reference `{reference}` is placed on this sheet")))?;
+        design.sheets[index].components.retain(|component| component.reference != reference);
+        design.rules.component_classes.remove(&removed_id);
         let target = &mut design.sheets[index];
-        let before = target.components.len();
-        target.components.retain(|component| component.reference != reference);
-        if target.components.len() == before {
-            return Err(not_found(format!("no component with reference `{reference}` is placed on this sheet")));
-        }
         for net in &mut target.nets {
             net.nodes.retain(|node| node.reference != reference);
         }
@@ -2611,6 +2806,7 @@ pub fn export_with_variant(handle: u64, format: &str, path: &Path, variant: Opti
                 "noConnects": design.sheets.iter().map(|sheet| sheet.no_connects.len()).sum::<usize>(),
                 "texts": design.sheets.iter().map(|sheet| sheet.texts.len()).sum::<usize>(),
                 "netClasses": design.rules.net_classes.len(),
+                "referencePrefixes": design.rules.reference_prefixes.len(),
             });
             (render_json_projection(&design)?, artifact)
         }
@@ -2940,6 +3136,32 @@ fn validate_design(design: &Design) -> Result<(), ServiceError> {
             }
         }
     }
+    let mut rule_classes = HashSet::new();
+    for rule in &design.rules.reference_prefixes {
+        if rule.class.trim().is_empty() {
+            return Err(invalid("a reference rule has an empty component class"));
+        }
+        if breaks_net_grammar(&rule.class) {
+            return Err(invalid(format!("component class `{}` contains whitespace or a control character", rule.class)));
+        }
+        if !rule_classes.insert(rule.class.clone()) {
+            return Err(invalid(format!("reference rule class `{}` appears more than once", rule.class)));
+        }
+        if !valid_reference_prefix(&rule.prefix) {
+            return Err(invalid(format!(
+                "reference rule `{}` has prefix `{}`, which is not one to eight uppercase letters",
+                rule.class, rule.prefix
+            )));
+        }
+    }
+    for (component_id, class) in &design.rules.component_classes {
+        if class.trim().is_empty() {
+            return Err(invalid(format!("component `{component_id}` has an empty class assignment")));
+        }
+        if !design.sheets.iter().any(|sheet| sheet.components.iter().any(|component| &component.id == component_id)) {
+            return Err(invalid(format!("component class assignment references missing component `{component_id}`")));
+        }
+    }
     let mut hierarchy_ids = HashSet::new();
     let mut hierarchy_names = HashSet::new();
     for hierarchy in &design.hierarchy {
@@ -3091,6 +3313,17 @@ fn validate_design(design: &Design) -> Result<(), ServiceError> {
         }
     }
     Ok(())
+}
+
+/// Whether a configured prefix is one to eight uppercase ASCII letters.
+fn valid_reference_prefix(prefix: &str) -> bool {
+    !prefix.is_empty() && prefix.len() <= 8 && prefix.chars().all(|character| character.is_ascii_uppercase())
+}
+
+/// Splits a reference designator into its leading letters and the remaining text.
+fn reference_parts(reference: &str) -> (&str, &str) {
+    let split = reference.find(|character: char| !character.is_ascii_alphabetic()).unwrap_or(reference.len());
+    reference.split_at(split)
 }
 
 /// Whether a reference or pin name breaks the `REF.PIN` node grammar.
@@ -3643,6 +3876,51 @@ fn inspect_design(design: &Design, checks: &[String]) -> Vec<Value> {
                     true,
                     format!("rail `{rail}` appears on multiple sheets ({names}); rails are global by name"),
                 ));
+            }
+        }
+    }
+    if checks.iter().any(|check| check == "references") {
+        let mut rules: HashMap<&str, &str> = HashMap::new();
+        for rule in &design.rules.reference_prefixes {
+            rules.insert(rule.class.as_str(), rule.prefix.as_str());
+        }
+        for sheet in &design.sheets {
+            for component in &sheet.components {
+                let Some(class) = design.rules.component_classes.get(&component.id)
+                else {
+                    continue;
+                };
+                let Some(prefix) = rules.get(class.as_str())
+                else {
+                    issues.push(issue(
+                        "reference/class-unknown",
+                        "warning",
+                        design.revision,
+                        &sheet.id,
+                        &component.id,
+                        true,
+                        format!(
+                            "component `{}` is assigned to class `{class}`, but no reference prefix rule declares that class",
+                            component.reference
+                        ),
+                    ));
+                    continue;
+                };
+                let (letters, digits) = reference_parts(&component.reference);
+                if letters != *prefix || digits.is_empty() || !digits.chars().all(|character| character.is_ascii_digit()) {
+                    issues.push(issue(
+                        "reference/prefix-mismatch",
+                        "error",
+                        design.revision,
+                        &sheet.id,
+                        &component.id,
+                        true,
+                        format!(
+                            "reference `{}` does not use prefix `{prefix}` of class `{class}` followed by a number",
+                            component.reference
+                        ),
+                    ));
+                }
             }
         }
     }
@@ -4653,6 +4931,28 @@ fn render_report(design: &Design) -> (String, usize, usize) {
         text.push('\n');
     }
 
+    if !design.rules.reference_prefixes.is_empty() {
+        sections += 1;
+        text.push_str("## Reference prefixes\n\n| Class | Prefix | Components |\n| --- | --- | --- |\n");
+        for rule in &design.rules.reference_prefixes {
+            let references = design
+                .sheets
+                .iter()
+                .flat_map(|sheet| sheet.components.iter())
+                .filter(|component| design.rules.component_classes.get(&component.id) == Some(&rule.class))
+                .map(|component| component.reference.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
+            text.push_str(&format!(
+                "| {} | {} | {} |\n",
+                markdown_cell(&rule.class),
+                markdown_cell(&rule.prefix),
+                markdown_cell(&references)
+            ));
+        }
+        text.push('\n');
+    }
+
     sections += 1;
     text.push_str("## Nets\n");
     for sheet in &design.sheets {
@@ -4819,6 +5119,22 @@ fn render_json_projection(design: &Design) -> Result<String, ServiceError> {
                 "nets": net_class.nets,
                 "buses": net_class.buses,
             }))
+            .collect::<Vec<_>>(),
+        "referencePrefixes": design
+            .rules
+            .reference_prefixes
+            .iter()
+            .map(|rule| json!({ "class": rule.class, "prefix": rule.prefix }))
+            .collect::<Vec<_>>(),
+        "componentClasses": design
+            .sheets
+            .iter()
+            .flat_map(|sheet| sheet.components.iter())
+            .filter_map(|component| {
+                design.rules.component_classes.get(&component.id).map(|class| {
+                    json!({ "componentId": component.id, "reference": component.reference, "class": class })
+                })
+            })
             .collect::<Vec<_>>(),
     });
     let mut encoded = serde_json::to_string_pretty(&projection)
@@ -8005,6 +8321,158 @@ mod tests {
         let added = add_net_class(handle, base("Signal", 0.2, 0.0, 0.0, vec!["VCC".to_string()], vec!["DATA".to_string()]))
             .expect("valid class");
         assert_eq!(added["netClass"]["nets"], json!(["VCC"]));
+        close(handle).expect("close");
+    }
+
+    #[test]
+    fn reference_prefix_rules_report_mismatches_and_keep_waivers_working() {
+        let created = create(CreateRequest::default()).expect("create");
+        let handle = created["handle"].as_u64().expect("handle");
+        for reference in ["R1", "C1", "U1"] {
+            add_component(
+                handle,
+                AddComponentRequest {
+                    sheet: None,
+                    reference: reference.to_string(),
+                    value: "10k".to_string(),
+                    x: 0.0,
+                    y: 0.0,
+                    rotation: 0.0,
+                    pins: vec!["1".to_string()],
+                },
+            )
+            .expect("add component");
+        }
+        for (class, prefix) in [("resistor", "R"), ("capacitor", "C"), ("ic", "U")] {
+            set_reference_prefix(handle, ReferencePrefixRequest { class: class.to_string(), prefix: prefix.to_string() })
+                .expect("declare prefix");
+        }
+        for (reference, class) in [("R1", "resistor"), ("C1", "capacitor"), ("U1", "resistor")] {
+            set_component_class(
+                handle,
+                ComponentClassRequest { sheet: None, reference: reference.to_string(), class: class.to_string() },
+            )
+            .expect("assign class");
+        }
+
+        let report = inspect(handle, Some(vec!["references".to_string()])).expect("inspect references");
+        let codes: Vec<(&str, &str)> = report["issues"]
+            .as_array()
+            .expect("issues")
+            .iter()
+            .map(|issue| (issue["code"].as_str().unwrap_or(""), issue["objectId"].as_str().unwrap_or("")))
+            .collect();
+        assert_eq!(codes, vec![("reference/prefix-mismatch", "component-3")], "only U1 breaks its class prefix");
+        assert_eq!(report["passed"], false);
+
+        let waived = inspect_with_options(
+            handle,
+            InspectOptions {
+                checks: Some(vec!["references".to_string()]),
+                severity: BTreeMap::new(),
+                waivers: vec![Waiver {
+                    code: "reference/prefix-mismatch".to_string(),
+                    sheet_id: None,
+                    object_id: Some("component-3".to_string()),
+                }],
+            },
+        )
+        .expect("inspect with waiver");
+        assert_eq!(waived["passed"], true);
+        assert_eq!(waived["issues"], json!([]));
+        assert_eq!(waived["waived"].as_array().expect("waived").len(), 1);
+
+        remove_reference_prefix(handle, "capacitor").expect("remove rule");
+        let report = inspect(handle, Some(vec!["references".to_string()])).expect("inspect after rule removal");
+        assert!(
+            report["issues"]
+                .as_array()
+                .expect("issues")
+                .iter()
+                .any(|issue| issue["code"] == "reference/class-unknown" && issue["objectId"] == "component-2"),
+            "a removed rule leaves the assignment visible instead of silently accepted"
+        );
+        close(handle).expect("close");
+    }
+
+    #[test]
+    fn reference_prefix_rules_validate_declarations_and_assignments() {
+        let created = create(CreateRequest::default()).expect("create");
+        let handle = created["handle"].as_u64().expect("handle");
+        add_component(
+            handle,
+            AddComponentRequest {
+                sheet: None,
+                reference: "R1".to_string(),
+                value: "10k".to_string(),
+                x: 0.0,
+                y: 0.0,
+                rotation: 0.0,
+                pins: vec!["1".to_string()],
+            },
+        )
+        .expect("add R1");
+
+        let rule = |class: &str, prefix: &str| ReferencePrefixRequest { class: class.to_string(), prefix: prefix.to_string() };
+        assert_eq!(
+            set_reference_prefix(handle, rule("", "R")).unwrap_err().code,
+            "session/argument-invalid",
+            "a rule needs a class"
+        );
+        assert_eq!(
+            set_reference_prefix(handle, rule("resistor", "r")).unwrap_err().code,
+            "session/argument-invalid",
+            "a prefix is uppercase"
+        );
+        assert_eq!(
+            set_reference_prefix(handle, rule("resistor", "R1")).unwrap_err().code,
+            "session/argument-invalid",
+            "digits are not part of a prefix"
+        );
+        assert_eq!(
+            set_reference_prefix(handle, rule("resistor", "TOOLONGPREFIX")).unwrap_err().code,
+            "session/argument-invalid"
+        );
+        assert_eq!(
+            set_component_class(
+                handle,
+                ComponentClassRequest { sheet: None, reference: "R1".to_string(), class: "resistor".to_string() }
+            )
+            .unwrap_err()
+            .code,
+            "object/not-found",
+            "a class needs a declared rule before it can be assigned"
+        );
+        let declared = set_reference_prefix(handle, rule("resistor", "R")).expect("declare");
+        let revision = declared["revision"].as_u64().expect("revision");
+        let unchanged = set_reference_prefix(handle, rule("resistor", "R")).expect("redeclare equal rule");
+        assert_eq!(unchanged["revision"], revision, "an unchanged rule adds no revision");
+        assert_eq!(
+            set_component_class(
+                handle,
+                ComponentClassRequest { sheet: None, reference: "R9".to_string(), class: "resistor".to_string() }
+            )
+            .unwrap_err()
+            .code,
+            "object/not-found"
+        );
+
+        let assigned = set_component_class(
+            handle,
+            ComponentClassRequest { sheet: None, reference: "R1".to_string(), class: "resistor".to_string() },
+        )
+        .expect("assign");
+        assert_eq!(assigned["componentId"], "component-1");
+        let listed = list_component_classes(handle).expect("list assignments");
+        assert_eq!(listed["componentClasses"][0]["reference"], "R1");
+        assert_eq!(listed["componentClasses"][0]["class"], "resistor");
+        let cleared = set_component_class(
+            handle,
+            ComponentClassRequest { sheet: None, reference: "R1".to_string(), class: String::new() },
+        )
+        .expect("clear assignment");
+        assert_eq!(cleared["class"], Value::Null);
+        assert_eq!(list_component_classes(handle).expect("list after clear")["componentClasses"], json!([]));
         close(handle).expect("close");
     }
 

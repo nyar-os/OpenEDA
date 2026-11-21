@@ -57,7 +57,16 @@ export interface OpenEDAOptions {
 export type SupportLevel = 'supported' | 'partial' | 'unsupported';
 
 /** Inspection rules understood by `design.inspect()`. */
-export type InspectCheck = 'erc' | 'electrical' | 'drc' | 'nets' | 'connectivity' | 'footprints' | 'clearance' | 'power';
+export type InspectCheck =
+    | 'erc'
+    | 'electrical'
+    | 'drc'
+    | 'nets'
+    | 'connectivity'
+    | 'footprints'
+    | 'clearance'
+    | 'power'
+    | 'references';
 
 /** Render targets declared for preview surfaces. */
 export type RenderFormat = 'svg' | 'png' | 'pdf';
@@ -480,6 +489,76 @@ export interface DeleteNetClassResult {
 export interface NetClassListResult {
     readonly revision: number;
     readonly netClasses: readonly NetClass[];
+}
+
+/** One reference designator prefix rule for a component class. */
+export interface ReferencePrefixRule {
+    readonly class: string;
+    /** Expected uppercase letter prefix, for example `R`. */
+    readonly prefix: string;
+}
+
+/** One component class assignment with its resolved reference. */
+export interface ComponentClassAssignment {
+    readonly componentId: ObjectId;
+    readonly reference: string;
+    readonly sheetId: SheetId;
+    readonly class: string;
+}
+
+/** Input of `design.setReferencePrefix()`. */
+export interface ReferencePrefixInput {
+    readonly class: string;
+    readonly prefix: string;
+}
+
+/** Result of `design.setReferencePrefix()`. */
+export interface ReferencePrefixResult {
+    readonly revision: number;
+    readonly design: DesignSummary;
+    readonly canUndo: boolean;
+    readonly canRedo: boolean;
+    readonly referencePrefix: ReferencePrefixRule;
+}
+
+/** Result of `design.removeReferencePrefix()`. */
+export interface DeleteReferencePrefixResult {
+    readonly revision: number;
+    readonly design: DesignSummary;
+    readonly canUndo: boolean;
+    readonly canRedo: boolean;
+    readonly deleted: string;
+    readonly remaining: number;
+}
+
+/** Result of `design.listReferencePrefixes()`. */
+export interface ReferencePrefixListResult {
+    readonly revision: number;
+    readonly referencePrefixes: readonly ReferencePrefixRule[];
+}
+
+/** Input of `design.setComponentClass()`; an empty class clears the assignment. */
+export interface ComponentClassInput {
+    readonly sheet?: SheetId;
+    readonly reference: string;
+    readonly class: string;
+}
+
+/** Result of `design.setComponentClass()`. */
+export interface ComponentClassResult {
+    readonly revision: number;
+    readonly design: DesignSummary;
+    readonly canUndo: boolean;
+    readonly canRedo: boolean;
+    readonly reference: string;
+    readonly componentId: ObjectId;
+    readonly class: string | null;
+}
+
+/** Result of `design.listComponentClasses()`. */
+export interface ComponentClassListResult {
+    readonly revision: number;
+    readonly componentClasses: readonly ComponentClassAssignment[];
 }
 
 /** Input of `design.addVariant()`; replaces a variant with the same name. */
@@ -1005,6 +1084,16 @@ export interface Design {
     removeNetClass(netClass: ObjectId | string): Promise<void>;
     /** Lists the net classes declared by the design. */
     listNetClasses(): Promise<readonly NetClass[]>;
+    /** Declares or replaces the expected reference prefix of one component class. */
+    setReferencePrefix(input: ReferencePrefixInput): Promise<ReferencePrefixRule>;
+    /** Removes one reference prefix rule by component class. */
+    removeReferencePrefix(componentClass: string): Promise<void>;
+    /** Lists the reference prefix rules declared by the design. */
+    listReferencePrefixes(): Promise<readonly ReferencePrefixRule[]>;
+    /** Assigns or clears the component class of one placed component. */
+    setComponentClass(input: ComponentClassInput): Promise<ComponentClassResult>;
+    /** Lists component class assignments with their resolved references. */
+    listComponentClasses(): Promise<readonly ComponentClassAssignment[]>;
     /** Deletes the junction at a 0-based index on a sheet. */
     deleteJunction(index: number, options?: { readonly sheet?: SheetId }): Promise<void>;
     /** Moves the junction at a 0-based index to a new placement. */

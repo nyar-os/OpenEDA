@@ -47,6 +47,11 @@ export interface NativeBinding {
     design_add_net_class(handle: number, requestJson: string): string;
     design_remove_net_class(handle: number, netClass: string): string;
     design_list_net_classes(handle: number): string;
+    design_set_reference_prefix(handle: number, requestJson: string): string;
+    design_remove_reference_prefix(handle: number, componentClass: string): string;
+    design_list_reference_prefixes(handle: number): string;
+    design_set_component_class(handle: number, requestJson: string): string;
+    design_list_component_classes(handle: number): string;
     design_add_variant(handle: number, requestJson: string): string;
     design_remove_variant(handle: number, name: string): string;
     design_list_variants(handle: number): string;

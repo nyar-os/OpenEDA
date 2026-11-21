@@ -23,9 +23,9 @@ use std::{
 
 use open_eda_model::{
     AddBusRequest, AddComponentRequest, AddJunctionRequest, AddNoConnectRequest, AddTextRequest, AddWireRequest,
-    ConnectNetRequest, CreateRequest, DeleteNetRequest, DisconnectNetRequest, InspectOptions, MoveComponentRequest,
-    NetClassRequest, RenameNetRequest, ServiceError, SetFootprintRequest, SetPinTypeRequest, UpdateComponentRequest,
-    UpdateDesignRequest,
+    ComponentClassRequest, ConnectNetRequest, CreateRequest, DeleteNetRequest, DisconnectNetRequest, InspectOptions,
+    MoveComponentRequest, NetClassRequest, ReferencePrefixRequest, RenameNetRequest, ServiceError, SetFootprintRequest,
+    SetPinTypeRequest, UpdateComponentRequest, UpdateDesignRequest,
 };
 use serde_json::{Value, json};
 use wae::{
@@ -427,6 +427,49 @@ fn design_remove_net_class(ctx: CallContext) -> Result<JsValue> {
 fn design_list_net_classes(ctx: CallContext) -> Result<JsValue> {
     let handle = handle(&ctx, 0)?;
     let report = open_eda_model::list_net_classes(handle).map_err(fail)?;
+    respond(&ctx, &report)
+}
+
+/// Declares or replaces one reference designator prefix rule.
+#[function]
+fn design_set_reference_prefix(ctx: CallContext) -> Result<JsValue> {
+    let handle = handle(&ctx, 0)?;
+    let request: ReferencePrefixRequest = decode(serde_json::from_str(&text(&ctx, 1)?))?;
+    let report = open_eda_model::set_reference_prefix(handle, request).map_err(fail)?;
+    respond(&ctx, &report)
+}
+
+/// Removes one reference prefix rule by component class.
+#[function]
+fn design_remove_reference_prefix(ctx: CallContext) -> Result<JsValue> {
+    let handle = handle(&ctx, 0)?;
+    let class = text(&ctx, 1)?;
+    let report = open_eda_model::remove_reference_prefix(handle, &class).map_err(fail)?;
+    respond(&ctx, &report)
+}
+
+/// Lists the reference prefix rules declared by one open design.
+#[function]
+fn design_list_reference_prefixes(ctx: CallContext) -> Result<JsValue> {
+    let handle = handle(&ctx, 0)?;
+    let report = open_eda_model::list_reference_prefixes(handle).map_err(fail)?;
+    respond(&ctx, &report)
+}
+
+/// Assigns or clears the component class of one placed component.
+#[function]
+fn design_set_component_class(ctx: CallContext) -> Result<JsValue> {
+    let handle = handle(&ctx, 0)?;
+    let request: ComponentClassRequest = decode(serde_json::from_str(&text(&ctx, 1)?))?;
+    let report = open_eda_model::set_component_class(handle, request).map_err(fail)?;
+    respond(&ctx, &report)
+}
+
+/// Lists component class assignments with their resolved references.
+#[function]
+fn design_list_component_classes(ctx: CallContext) -> Result<JsValue> {
+    let handle = handle(&ctx, 0)?;
+    let report = open_eda_model::list_component_classes(handle).map_err(fail)?;
     respond(&ctx, &report)
 }
 
@@ -1396,6 +1439,11 @@ register_module![
     design_add_net_class,
     design_remove_net_class,
     design_list_net_classes,
+    design_set_reference_prefix,
+    design_remove_reference_prefix,
+    design_list_reference_prefixes,
+    design_set_component_class,
+    design_list_component_classes,
     design_add_variant,
     design_remove_variant,
     design_list_variants,

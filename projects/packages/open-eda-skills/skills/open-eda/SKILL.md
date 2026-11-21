@@ -23,7 +23,9 @@ annotation, BOM variants with do-not-populate lists, no-connect flags that can
 mark a pin as deliberately open, net derive, disconnect and
 delete, and junction/text move and delete work in place. Design-level net classes
 declare trace width, clearance and via attributes and assign declared nets and
-buses to them. Board layout, the
+buses to them. Reference prefix rules declare the expected designator prefix per
+component class and the `references` check reports violations with severities and
+waivers. Board layout, the
 interactive renderer, DRC and clearance checks, and KiCad board, Gerber and drill
 exchange are not implemented and report `capability/not-implemented`.
 
@@ -37,7 +39,7 @@ open-eda open <file.oeda>
 open-eda list <file.oeda>
 open-eda symbols <file.oeda>
 open-eda connectivity <file.oeda>
-open-eda inspect <file.oeda> [--checks erc,electrical,nets,connectivity,footprints,power] [--severity code=level,...] [--waive code[@objectId|@sheetId/objectId],...]
+open-eda inspect <file.oeda> [--checks erc,electrical,nets,connectivity,footprints,power,references] [--severity code=level,...] [--waive code[@objectId|@sheetId/objectId],...]
 open-eda diff <left.oeda> <right.oeda>
 open-eda annotate <file.oeda>
 open-eda export <file.oeda> --format net|net_csv|net_hier|spice|spice_subckt|svg|bom|bom_json|bom_html|pdf|report|kicad_sch|kicad_sym --out <file> [--variant <name>]
@@ -65,6 +67,11 @@ open-eda bus remove <file.oeda> --id <bus>
 open-eda net-class add <file.oeda> --name <name> --width <n> [--clearance <n>] [--via <n>] [--nets VCC,GND] [--buses DATA]
 open-eda net-class list <file.oeda>
 open-eda net-class remove <file.oeda> --id <name>
+open-eda reference add <file.oeda> --class <class> --prefix <prefix>
+open-eda reference list <file.oeda>
+open-eda reference remove <file.oeda> --class <class>
+open-eda reference assign <file.oeda> --ref <ref> --class <class> [--sheet <sheet>]
+open-eda reference unassign <file.oeda> --ref <ref> [--sheet <sheet>]
 open-eda wire delete <file.oeda> --id <wire-id> [--sheet <sheet>]
 open-eda junction add <file.oeda> --x <n> --y <n> [--sheet <sheet>]
 open-eda junction move <file.oeda> --index <n> --x <n> --y <n> [--sheet <sheet>]
@@ -171,6 +178,20 @@ document order, components top to bottom and left to right, each prefix from 1.
 Net nodes are rewritten to the new references, and the command reports every
 `from`/`to` change. An already annotated design adds no revision. References
 without leading letters join the `U` group; the numerals in `TP_A` are replaced.
+
+## Reference prefix rules
+
+`open-eda reference add --class <class> --prefix <prefix>` declares the expected
+designator prefix of a component class; a prefix is one to eight uppercase
+letters (`R`, `C`, `U`, `J`, `TP`). `reference assign --ref <ref> --class <class>`
+places a component in a class and stores the assignment by the component's stable
+id, so annotation does not detach it; `reference unassign` clears it. A class
+must be declared before a component can join it. `reference list` prints the
+rules and the current assignments. The `references` inspection check reports
+`reference/prefix-mismatch` (error) when a classified component's designator is
+not the class prefix followed by a number, and `reference/class-unknown`
+(warning) when a rule was removed while components still carry the class. Both
+codes honour `--severity` and `--waive`.
 
 ## Net classes
 

@@ -18,6 +18,9 @@ import type {
     Bus,
     BusInput,
     Component,
+    ComponentClassAssignment,
+    ComponentClassInput,
+    ComponentClassResult,
     ComponentInput,
     ConnectNetInput,
     ConnectivityReport,
@@ -53,6 +56,8 @@ import type {
     NoConnectInput,
     OpenEDAOptions,
     PinType,
+    ReferencePrefixInput,
+    ReferencePrefixRule,
     RenameNetInput,
     SaveOptions,
     SaveReport,
@@ -538,6 +543,28 @@ function attach(opened: service.DesignHandle, options: AttachOptions): Design {
         async listNetClasses(): Promise<readonly NetClass[]> {
             return service.listNetClasses(handle).netClasses;
         },
+        async setReferencePrefix(input: ReferencePrefixInput): Promise<ReferencePrefixRule> {
+            assertReferencePrefixInput(input);
+            const result = await mutate(() => service.setReferencePrefix(handle, input));
+            current = result.design;
+            return result.referencePrefix;
+        },
+        async removeReferencePrefix(componentClass: string): Promise<void> {
+            const result = await mutate(() => service.removeReferencePrefix(handle, componentClass));
+            current = result.design;
+        },
+        async listReferencePrefixes(): Promise<readonly ReferencePrefixRule[]> {
+            return service.listReferencePrefixes(handle).referencePrefixes;
+        },
+        async setComponentClass(input: ComponentClassInput): Promise<ComponentClassResult> {
+            assertComponentClassInput(input);
+            const result = await mutate(() => service.setComponentClass(handle, input));
+            current = result.design;
+            return result;
+        },
+        async listComponentClasses(): Promise<readonly ComponentClassAssignment[]> {
+            return service.listComponentClasses(handle).componentClasses;
+        },
         async deleteJunction(index: number, deleteOptions?: { readonly sheet?: string }): Promise<void> {
             const result = await mutate(() => service.deleteJunction(handle, index, deleteOptions?.sheet));
             current = result.design;
@@ -666,6 +693,24 @@ function assertNetClassInput(input: NetClassInput): void {
         if (typeof name !== 'string' || name.trim().length === 0) {
             throw new OpenEDAError('session/argument-invalid', '`buses` must contain non-empty bus names');
         }
+    }
+}
+
+function assertReferencePrefixInput(input: ReferencePrefixInput): void {
+    if (typeof input?.class !== 'string' || input.class.trim().length === 0) {
+        throw new OpenEDAError('session/argument-invalid', '`class` must be a non-empty component class name');
+    }
+    if (typeof input.prefix !== 'string' || !/^[A-Z]{1,8}$/.test(input.prefix)) {
+        throw new OpenEDAError('session/argument-invalid', '`prefix` must be one to eight uppercase letters');
+    }
+}
+
+function assertComponentClassInput(input: ComponentClassInput): void {
+    if (typeof input?.reference !== 'string' || input.reference.trim().length === 0) {
+        throw new OpenEDAError('session/argument-invalid', '`reference` must be a non-empty reference designator');
+    }
+    if (typeof input.class !== 'string') {
+        throw new OpenEDAError('session/argument-invalid', '`class` must be a string, empty to clear the assignment');
     }
 }
 
