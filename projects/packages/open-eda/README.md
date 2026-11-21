@@ -10,23 +10,23 @@ The schematic document core is implemented against the native `open-eda-model`
 crate. `new OpenEDA(options?)` creates a session synchronously, and the returned
 `Design` handle supports:
 
-- `addComponent`, `moveComponent`, `updateComponent`, `deleteComponent`
+- `addComponent`, `moveComponent`, `updateComponent`, `setFootprint`, `deleteComponent`
 - `connectNet`, `renameNet`, `addWire`, `deleteWire`
 - `addJunction`, `addText`
 - `addSheet`, `renameSheet`, `deleteSheet`
 - `undo`, `redo`, with `canUndo`/`canRedo` and a bounded 32-step history
-- `listObjects`, `listComponents`, `listNets`
-- `inspect` with `erc`, `nets` and `footprints`
+- `listObjects`, `listComponents`, `listNets`, `listSymbols`
+- `inspect` with `erc`, `nets`, `connectivity`, `footprints` and `power`
 - `save` to a native `.oeda` document and reopen it
-- `export` to `net`, `spice`, `svg`, `bom`, `pdf`, `report`, `json` or `kicad_sch`
+- `export` to `net`, `spice`, `svg`, `bom`, `bom_json`, `pdf`, `report`, `json` or `kicad_sch`
 - `OpenEDA.importKicadSch({ source, target? })` from KiCad schematic text or a
   file path, optionally materializing a native document
 
 | Capability | Status | Notes |
 | --- | --- | --- |
-| `.oeda` create/open/save/edit | supported | sheets, components, nets, wires, undo/redo |
-| checks `erc`, `nets`, `footprints` | supported | `drc`, `clearance` and `power` report `capability/not-implemented` |
-| export `net`, `spice`, `svg`, `bom`, `pdf`, `report`, `json` | supported | read-only projections |
+| `.oeda` create/open/save/edit | supported | sheets, components, nets, buses, wires, undo/redo |
+| checks `erc`, `nets`, `connectivity`, `footprints`, `power` | supported | `drc` and `clearance` report `capability/not-implemented` |
+| export `net`, `spice`, `svg`, `bom`, `bom_json`, `pdf`, `report`, `json` | supported | read-only projections |
 | export `kicad_sch` | supported | KiCad 6/7 S-expression, deterministic identifiers |
 | import `kicad_sch` | supported | symbols, wires, junctions, no-connect flags, text and labels; other constructs return loss entries |
 | export `kicad_pcb`, `gbr` | unsupported | declared, not implemented |
@@ -42,11 +42,16 @@ label scope is not modelled. Junctions, no-connect flags and text annotations
 are part of the subset. Duplicate references and symbols without a reference
 are reported as `kicad/duplicate-reference` and `kicad/missing-reference`.
 
+A component stores an optional footprint. `setFootprint` assigns or clears it,
+the KiCad writer emits the `Footprint` property and the importer reads it back,
+`bom` groups by value and footprint with designator ranges, and `bom_json`
+projects the same rows as JSON. The model never picks or validates a footprint.
+
 The package also exports the design types, stable error codes and the format
 registry (`kicad_sch`/`kicad_pcb`/`sch`/`brd`/`net`/`edif`/`spice`/`cir`/`gbr`/
 `drl`/`step`/`svg`/`pdf`/`png`/`bom`).
 
-`drc`, `clearance`, `power`, KiCad board/Gerber exchange and the interactive
+`drc`, `clearance`, KiCad board/Gerber exchange and the interactive
 renderer report `capability/not-implemented`. Classification is not a support
 claim: reads, writes and exports are reported by `capabilities()`, never
 inferred from an extension or a method name. Undo history belongs to one open
