@@ -11,7 +11,9 @@ The schematic document core is executable. The CLI and SDK create, edit and
 reopen one `.oeda` document, run ERC, net, connectivity, footprint and power
 checks, compare two documents with `diff`, and write a netlist, SPICE netlist,
 SVG sheet, BOM CSV, one-page PDF or
-Markdown report projection. The SDK keeps a bounded 32-step undo/redo history
+Markdown report projection. The design carries title-block properties (title,
+drawing revision, company and date) that `design set` edits and the KiCad writer
+reads and writes. The SDK keeps a bounded 32-step undo/redo history
 per open handle, and the CLI mirrors it in a `<file>.history.json` sidecar so
 `undo` and `redo` work across separate command invocations. Sheet
 add/rename/delete, component move, update and delete, net derive, disconnect and
@@ -23,7 +25,8 @@ Only these commands are executable today:
 
 ```bash
 open-eda capabilities
-open-eda create --out <file.oeda> [--title <title>] [--overwrite]
+open-eda create --out <file.oeda> [--title <title>] [--rev <rev>] [--company <company>] [--date <date>] [--overwrite]
+open-eda design set <file.oeda> [--title <title>] [--rev <rev>] [--company <company>] [--date <date>]
 open-eda open <file.oeda>
 open-eda list <file.oeda>
 open-eda symbols <file.oeda>
@@ -116,8 +119,16 @@ user has not accepted.
 with `capability/not-implemented`. Never describe a design as DRC clean or
 clearance checked.
 
-## Design diff
+## Drawing properties
 
+`title`, `rev`, `company` and `date` are design-wide title-block properties.
+`rev` is a text label such as `A`; it is not the edit revision counter. `design
+set` changes them in place, an empty string clears a field, and an update that
+changes nothing adds no revision. The KiCad writer emits them as a
+`title_block`; the importer reads the same four fields back and reports any
+other title-block field as a loss.
+
+## Design diff
 `open-eda diff <left.oeda> <right.oeda>` compares the modelled objects of two
 documents and never writes a file. Sheets match by id, components by reference,
 nets by name inside a sheet and buses by name. Only changed sheets appear; a
@@ -175,8 +186,9 @@ a footprint and never claims a library part exists outside the document.
 - `report` writes deterministic Markdown with a design header, per-sheet object
   counts, a `Net | Nodes | Pins` table per sheet and the inspection findings
   grouped by severity.
-- `kicad_sch` writes the modelled schematic subset; `kicad_pcb` and `gbr` reject
-  with `capability/not-implemented`.
+- `kicad_sch` writes the modelled schematic subset plus the title-block title,
+  date, revision and company; `kicad_pcb` and `gbr` reject with
+  `capability/not-implemented`.
 - No exchange format can be imported or edited. `.oeda` is the only editable
   document; `import` materializes a `.kicad_sch` into `.oeda`.
 

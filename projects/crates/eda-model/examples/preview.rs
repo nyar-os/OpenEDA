@@ -12,7 +12,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let out = Path::new(&out);
     std::fs::create_dir_all(out)?;
 
-    let created = create(CreateRequest { title: Some("OpenEDA demo sheet".into()), template: Some("blank".into()) })?;
+    let created = create(CreateRequest {
+        title: Some("OpenEDA demo sheet".into()),
+        rev: None,
+        company: None,
+        date: None,
+        template: Some("blank".into()),
+    })?;
     let handle = created["handle"].as_u64().expect("handle");
 
     let parts = [

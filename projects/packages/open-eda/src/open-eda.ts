@@ -29,6 +29,8 @@ import type {
     DesignHistoryMode,
     DesignInput,
     DesignObjects,
+    DesignPropertiesInput,
+    DesignPropertiesResult,
     DesignSummary,
     DeriveNetsResult,
     DisconnectNetInput,
@@ -353,6 +355,12 @@ function attach(opened: service.DesignHandle, options: AttachOptions): Design {
         async export(exportOptions: ExportOptions): Promise<ExportReport> {
             return service.exportDesign(handle, exportOptions.format, exportOptions.target);
         },
+        async setProperties(properties: DesignPropertiesInput): Promise<DesignPropertiesResult> {
+            assertPropertiesInput(properties);
+            const result = await mutate(() => service.setDesignProperties(handle, properties));
+            current = result.design;
+            return result;
+        },
         async undo(): Promise<HistoryResult> {
             if (sidecar && sourcePath !== undefined) {
                 return step('undo');
@@ -516,8 +524,23 @@ function assertCreateOptions(options: DesignCreateOptions): void {
     if (options.title !== undefined && (typeof options.title !== 'string' || options.title.trim().length === 0)) {
         throw new OpenEDAError('session/argument-invalid', '`title` must be a non-empty string');
     }
+    for (const key of ['rev', 'company', 'date'] as const) {
+        const value = options[key];
+        if (value !== undefined && typeof value !== 'string') {
+            throw new OpenEDAError('session/argument-invalid', `\`${key}\` must be a string`);
+        }
+    }
     if (options.template !== undefined && (typeof options.template !== 'string' || options.template.trim().length === 0)) {
         throw new OpenEDAError('session/argument-invalid', '`template` must be a non-empty string');
+    }
+}
+
+function assertPropertiesInput(properties: DesignPropertiesInput): void {
+    for (const key of ['title', 'rev', 'company', 'date'] as const) {
+        const value = properties[key];
+        if (value !== undefined && typeof value !== 'string') {
+            throw new OpenEDAError('session/argument-invalid', `\`${key}\` must be a string`);
+        }
     }
 }
 

@@ -103,7 +103,37 @@ export interface DesignCapabilities {
 /** Options of `OpenEDA.create()`. */
 export interface DesignCreateOptions {
     readonly title?: string;
+    /** Drawing revision label, for example `A`. */
+    readonly rev?: string;
+    /** Company or organisation of the title block. */
+    readonly company?: string;
+    /** Drawing date text. */
+    readonly date?: string;
     readonly template?: string;
+}
+
+/** Drawing properties `design.setProperties()` may change. */
+export interface DesignPropertiesInput {
+    /** New title; an empty string clears it. */
+    readonly title?: string;
+    /** New drawing revision label; an empty string clears it. */
+    readonly rev?: string;
+    /** New company text; an empty string clears it. */
+    readonly company?: string;
+    /** New date text; an empty string clears it. */
+    readonly date?: string;
+}
+
+/** Result of `design.setProperties()`. */
+export interface DesignPropertiesResult {
+    readonly revision: number;
+    readonly design: DesignSummary;
+    readonly canUndo: boolean;
+    readonly canRedo: boolean;
+    readonly title: string | null;
+    readonly rev: string;
+    readonly company: string;
+    readonly date: string;
 }
 
 /**
@@ -151,6 +181,12 @@ export interface DesignSummary {
     readonly id: DesignId;
     readonly revision: number;
     readonly title: string | null;
+    /** Drawing revision label from the title block, for example `A`. */
+    readonly rev: string;
+    /** Company or organisation from the title block. */
+    readonly company: string;
+    /** Drawing date text from the title block. */
+    readonly date: string;
     readonly units: string;
     readonly sheets: readonly DesignSummarySheet[];
     readonly counts: DesignCounts;
@@ -681,6 +717,8 @@ export interface Design {
     save(options?: SaveOptions): Promise<SaveReport>;
     /** Projects the design to `net`, `net_csv`, `spice`, `svg`, `bom`, `pdf`, `report`, `json` or `kicad_sch`; other targets report `capability/not-implemented`. */
     export(options: ExportOptions): Promise<ExportReport>;
+    /** Updates title, drawing revision, company and date; an empty string clears a field. */
+    setProperties(properties: DesignPropertiesInput): Promise<DesignPropertiesResult>;
     /** Restores the snapshot taken before the newest edit. */
     undo(): Promise<HistoryResult>;
     /** Reapplies the snapshot the newest undo displaced. */

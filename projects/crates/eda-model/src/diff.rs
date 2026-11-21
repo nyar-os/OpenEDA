@@ -596,6 +596,9 @@ mod tests {
         Design {
             id: "design-1".to_string(),
             title: Some(title.to_string()),
+            rev: String::new(),
+            company: String::new(),
+            date: String::new(),
             revision,
             units: "mm".to_string(),
             sheets,

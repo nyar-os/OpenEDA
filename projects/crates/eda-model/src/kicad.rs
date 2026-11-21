@@ -28,6 +28,44 @@ pub(crate) const LABEL_SCOPE: &str = "kicad/label-scope";
 /// Root tags of the schematic file that carry no design object.
 const STRUCTURAL_TAGS: &[&str] = &["version", "generator", "generator_version", "uuid", "paper", "lib_symbols", "title_block"];
 
+/// Reads the drawing properties this model keeps from a `title_block`.
+///
+/// Title, date, revision and company map to the document. Any other child of
+/// the block, such as a numbered comment, is reported as a loss instead of
+/// being dropped silently.
+fn read_title_block(root: &Node, losses: &mut Vec<Value>) -> (Option<String>, String, String, String) {
+    let mut title = None;
+    let mut rev = String::new();
+    let mut company = String::new();
+    let mut date = String::new();
+    let Some(block) = root.find("title_block")
+    else {
+        return (title, rev, company, date);
+    };
+    for child in block.children() {
+        let Some(head) = child.head()
+        else {
+            continue;
+        };
+        let text = child.children().first().and_then(node_text).unwrap_or("");
+        match head {
+            "title" => {
+                if !text.trim().is_empty() {
+                    title = Some(text.to_string());
+                }
+            }
+            "rev" => rev = text.to_string(),
+            "company" => company = text.to_string(),
+            "date" => date = text.to_string(),
+            other => losses.push(loss(
+                UNSUPPORTED_ELEMENT,
+                format!("`title_block` field `{other}` is outside the imported subset and was skipped"),
+            )),
+        }
+    }
+    (title, rev, company, date)
+}
+
 /// One parsed S-expression node; atoms and quoted strings both carry text.
 fn node_text(node: &Node) -> Option<&str> {
     node.as_atom().or_else(|| node.as_str())
@@ -39,6 +77,7 @@ pub(crate) fn render(design: &Design) -> String {
     out.push_str("(kicad_sch (version 20211123) (generator \"open-eda\")\n");
     out.push_str(&format!("  (uuid \"{}\")\n", uuid_for(&format!("{}:root", design.id))));
     out.push_str("  (paper \"A4\")\n");
+    render_title_block(&mut out, design);
     out.push_str("  (lib_symbols\n");
     for (lib_id, pins) in library_symbols(design) {
         render_library_symbol(&mut out, &lib_id, &pins);
@@ -72,6 +111,31 @@ pub(crate) fn render(design: &Design) -> String {
     }
     out.push_str(")\n");
     out
+}
+
+/// Writes the drawing title block, omitting it when every property is empty.
+fn render_title_block(out: &mut String, design: &Design) {
+    let mut fields = Vec::new();
+    if let Some(title) = design.title.as_deref().filter(|title| !title.is_empty()) {
+        fields.push(("title", title));
+    }
+    if !design.date.is_empty() {
+        fields.push(("date", design.date.as_str()));
+    }
+    if !design.rev.is_empty() {
+        fields.push(("rev", design.rev.as_str()));
+    }
+    if !design.company.is_empty() {
+        fields.push(("company", design.company.as_str()));
+    }
+    if fields.is_empty() {
+        return;
+    }
+    out.push_str("  (title_block\n");
+    for (key, value) in fields {
+        out.push_str(&format!("    ({key} {})\n", quote(value)));
+    }
+    out.push_str("  )\n");
 }
 
 /// Collects one library symbol per distinct `lib_id`, keyed for stable order.
@@ -228,6 +292,7 @@ pub(crate) fn import(text: &str) -> Result<(Design, Vec<Value>), ServiceError> {
 
     let mut losses = Vec::new();
     let library = read_library(root);
+    let (title, rev, company, date) = read_title_block(root, &mut losses);
     let mut components = Vec::new();
     let mut references = HashSet::new();
     for node in root.children().iter().filter(|node| node.head() == Some("symbol")) {
@@ -292,7 +357,10 @@ pub(crate) fn import(text: &str) -> Result<(Design, Vec<Value>), ServiceError> {
 
     let design = Design {
         id: "design-1".to_string(),
-        title: None,
+        title,
+        rev,
+        company,
+        date,
         revision: 1,
         units: "mm".to_string(),
         next_component: components.len() as u64 + 1,

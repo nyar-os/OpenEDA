@@ -336,6 +336,47 @@ test('sidecar history persists undo and redo across sessions', { skip: withoutAd
     }
 });
 
+test('drawing properties update, persist and reach the KiCad title block', { skip: withoutAddon }, async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'open-eda-properties-'));
+    const document = path.join(directory, 'title.oeda');
+    const kicad = path.join(directory, 'title.kicad_sch');
+    const eda = new OpenEDA();
+    try {
+        const design = await eda.create({ title: 'Blinker', rev: 'A', company: 'Acme', date: '2026-11-22' });
+        assert.equal(design.summary.rev, 'A');
+        assert.equal(design.summary.company, 'Acme');
+        assert.equal(design.summary.date, '2026-11-22');
+        const updated = await design.setProperties({ title: 'Blinker II', rev: 'B' });
+        assert.equal(updated.title, 'Blinker II');
+        assert.equal(updated.rev, 'B');
+        assert.equal(updated.company, 'Acme');
+        assert.equal(updated.design.revision, 2);
+        assert.equal(updated.canUndo, true);
+        await design.save({ target: document, overwrite: true });
+        const exported = await design.export({ format: 'kicad_sch', target: kicad });
+        assert.equal(exported.format, 'kicad_sch');
+        const text = fs.readFileSync(kicad, 'utf8');
+        assert.ok(text.includes('(title_block'));
+        assert.ok(text.includes('(title "Blinker II")'));
+        assert.ok(text.includes('(rev "B")'));
+        assert.ok(text.includes('(company "Acme")'));
+        await design.close();
+
+        const reopened = await eda.open({ path: document });
+        assert.equal(reopened.summary.title, 'Blinker II');
+        assert.equal(reopened.summary.rev, 'B');
+        assert.equal(reopened.summary.company, 'Acme');
+        assert.equal(reopened.summary.date, '2026-11-22');
+        const cleared = await reopened.setProperties({ title: '', company: '' });
+        assert.equal(cleared.title, null);
+        assert.equal(cleared.company, '');
+        await reopened.close();
+    } finally {
+        await eda.dispose();
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
+});
+
 test('diff compares two documents without opening them for editing', { skip: withoutAddon }, async () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'open-eda-diff-'));
     const left = path.join(directory, 'left.oeda');

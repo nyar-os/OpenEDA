@@ -24,7 +24,7 @@ use std::{
 use open_eda_model::{
     AddBusRequest, AddComponentRequest, AddJunctionRequest, AddTextRequest, AddWireRequest, ConnectNetRequest, CreateRequest,
     DeleteNetRequest, DisconnectNetRequest, InspectOptions, MoveComponentRequest, RenameNetRequest, ServiceError,
-    SetFootprintRequest, UpdateComponentRequest,
+    SetFootprintRequest, UpdateComponentRequest, UpdateDesignRequest,
 };
 use serde_json::{Value, json};
 use wae::{
@@ -87,10 +87,22 @@ fn design_create(ctx: CallContext) -> Result<JsValue> {
         serde_json::from_str(&raw).map_err(|error| Error::new(format!("session/argument-invalid: {error}")))?;
     let created = open_eda_model::create(CreateRequest {
         title: request["title"].as_str().map(str::to_string),
+        rev: request["rev"].as_str().map(str::to_string),
+        company: request["company"].as_str().map(str::to_string),
+        date: request["date"].as_str().map(str::to_string),
         template: request["template"].as_str().map(str::to_string),
     })
     .map_err(fail)?;
     respond(&ctx, &created)
+}
+
+/// Updates the drawing properties of one open design.
+#[function]
+fn design_set_properties(ctx: CallContext) -> Result<JsValue> {
+    let handle = handle(&ctx, 0)?;
+    let request: UpdateDesignRequest = decode(serde_json::from_str(&text(&ctx, 1)?))?;
+    let report = open_eda_model::update_design(handle, request).map_err(fail)?;
+    respond(&ctx, &report)
 }
 
 /// Opens a native design document from a path.
@@ -565,8 +577,11 @@ impl IpcHandler for DesignIpcHandler {
             "design.create" => {
                 let request = value.get("request");
                 let title = request.and_then(|request| request.get("title")).and_then(Value::as_str).map(str::to_string);
+                let rev = request.and_then(|request| request.get("rev")).and_then(Value::as_str).map(str::to_string);
+                let company = request.and_then(|request| request.get("company")).and_then(Value::as_str).map(str::to_string);
+                let date = request.and_then(|request| request.get("date")).and_then(Value::as_str).map(str::to_string);
                 let template = request.and_then(|request| request.get("template")).and_then(Value::as_str).map(str::to_string);
-                match open_eda_model::create(CreateRequest { title, template }) {
+                match open_eda_model::create(CreateRequest { title, rev, company, date, template }) {
                     Ok(payload) => reply(id, "createResult", payload),
                     Err(error) => failed(id, &error),
                 }
@@ -765,6 +780,19 @@ impl IpcHandler for DesignIpcHandler {
                     match serde_json::from_value::<UpdateComponentRequest>(request) {
                         Ok(request) => match open_eda_model::update_component(handle, request) {
                             Ok(payload) => reply(id, "updateComponentResult", payload),
+                            Err(error) => failed(id, &error),
+                        },
+                        Err(error) => failure(id, "error", format!("session/argument-invalid: {error}")),
+                    }
+                }
+                Err(message) => failure(id, "error", message),
+            },
+            "design.setProperties" => match ipc_handle(&value) {
+                Ok(handle) => {
+                    let request = value.get("request").cloned().unwrap_or(Value::Null);
+                    match serde_json::from_value::<UpdateDesignRequest>(request) {
+                        Ok(request) => match open_eda_model::update_design(handle, request) {
+                            Ok(payload) => reply(id, "setPropertiesResult", payload),
                             Err(error) => failed(id, &error),
                         },
                         Err(error) => failure(id, "error", format!("session/argument-invalid: {error}")),
@@ -1221,6 +1249,7 @@ register_module![
     design_create,
     design_open,
     design_save,
+    design_set_properties,
     design_inspect,
     design_inspect_with,
     design_export,

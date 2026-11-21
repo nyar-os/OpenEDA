@@ -147,6 +147,12 @@ fn duplicate(message: impl Into<String>) -> ServiceError {
 pub struct CreateRequest {
     /// Design title.
     pub title: Option<String>,
+    /// Drawing revision label, for example `A`.
+    pub rev: Option<String>,
+    /// Company or organisation of the title block.
+    pub company: Option<String>,
+    /// Drawing date text.
+    pub date: Option<String>,
     /// Template the design starts from; only `blank` (or no template) is implemented.
     pub template: Option<String>,
 }
@@ -295,6 +301,15 @@ pub struct Design {
     pub id: String,
     /// Optional design title.
     pub title: Option<String>,
+    /// Drawing revision label, for example `A`; the edit counter is `revision`.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub rev: String,
+    /// Company or organisation drawn in the title block.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub company: String,
+    /// Drawing date text, for example `2026-11-22`.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub date: String,
     /// Committed revision; every successful edit increments it.
     pub revision: u64,
     /// Design units, `mm` or `mil`.
@@ -310,6 +325,27 @@ pub struct Design {
     pub next_net: u64,
     /// Next wire number used to build deterministic object identities.
     pub next_wire: u64,
+}
+
+/// Request of [`update_design`].
+///
+/// A present field replaces the current value and an empty string clears it; an
+/// absent field keeps its value.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateDesignRequest {
+    /// New title; an empty string clears it.
+    #[serde(default)]
+    pub title: Option<String>,
+    /// New drawing revision label; an empty string clears it.
+    #[serde(default)]
+    pub rev: Option<String>,
+    /// New company text; an empty string clears it.
+    #[serde(default)]
+    pub company: Option<String>,
+    /// New drawing date text; an empty string clears it.
+    #[serde(default)]
+    pub date: Option<String>,
 }
 
 /// Request of [`add_component`].
@@ -682,6 +718,9 @@ pub fn create(request: CreateRequest) -> Result<Value, ServiceError> {
     let design = Design {
         id: "design-1".to_string(),
         title: request.title,
+        rev: request.rev.unwrap_or_default(),
+        company: request.company.unwrap_or_default(),
+        date: request.date.unwrap_or_default(),
         revision: 1,
         units: "mm".to_string(),
         sheets: vec![Sheet {
@@ -767,6 +806,40 @@ struct DocumentFile<'a> {
     format: &'static str,
     version: u64,
     document: &'a Design,
+}
+
+/// Updates the drawing properties of one open design.
+///
+/// Each field that is present replaces the current value and an empty string
+/// clears it; a field that is absent keeps its value. The revision advances
+/// only when at least one property actually changed, so a no-op update adds no
+/// undo step.
+pub fn update_design(handle: u64, request: UpdateDesignRequest) -> Result<Value, ServiceError> {
+    mutate(handle, |design| {
+        let before = (design.title.clone(), design.rev.clone(), design.company.clone(), design.date.clone());
+        if let Some(title) = request.title {
+            let title = title.trim();
+            design.title = if title.is_empty() { None } else { Some(title.to_string()) };
+        }
+        if let Some(rev) = request.rev {
+            design.rev = rev.trim().to_string();
+        }
+        if let Some(company) = request.company {
+            design.company = company.trim().to_string();
+        }
+        if let Some(date) = request.date {
+            design.date = date.trim().to_string();
+        }
+        if before != (design.title.clone(), design.rev.clone(), design.company.clone(), design.date.clone()) {
+            design.revision += 1;
+        }
+        let mut payload = Map::new();
+        payload.insert("title".to_string(), json!(design.title));
+        payload.insert("rev".to_string(), json!(design.rev));
+        payload.insert("company".to_string(), json!(design.company));
+        payload.insert("date".to_string(), json!(design.date));
+        Ok(payload)
+    })
 }
 
 /// Runs the requested rule checks on one open design.
@@ -1839,6 +1912,9 @@ fn summary_of(session: &Session) -> Value {
         "id": design.id,
         "revision": design.revision,
         "title": design.title,
+        "rev": design.rev,
+        "company": design.company,
+        "date": design.date,
         "units": design.units,
         "sheets": sheets,
         "counts": {
@@ -3142,6 +3218,15 @@ fn render_report(design: &Design) -> (String, usize, usize) {
         design.title.as_deref().map(markdown_cell).unwrap_or_else(|| "(untitled)".to_string())
     ));
     text.push_str(&format!("- Revision: {}\n", design.revision));
+    if !design.rev.is_empty() {
+        text.push_str(&format!("- Drawing revision: {}\n", markdown_cell(&design.rev)));
+    }
+    if !design.company.is_empty() {
+        text.push_str(&format!("- Company: {}\n", markdown_cell(&design.company)));
+    }
+    if !design.date.is_empty() {
+        text.push_str(&format!("- Date: {}\n", markdown_cell(&design.date)));
+    }
     text.push_str(&format!("- Units: {}\n", design.units));
     text.push_str(&format!("- Sheets: {}\n\n", design.sheets.len()));
 
@@ -3276,6 +3361,9 @@ fn render_json_projection(design: &Design) -> Result<String, ServiceError> {
         "design": design.id,
         "title": design.title,
         "revision": design.revision,
+        "rev": design.rev,
+        "company": design.company,
+        "date": design.date,
         "units": design.units,
         "sheets": sheets,
     });
@@ -3548,7 +3636,9 @@ mod tests {
         let netlist = dir.join("blinker.net");
         let drawing = dir.join("blinker.svg");
 
-        let created = create(CreateRequest { title: Some("Blinker".to_string()), template: None }).expect("create");
+        let created =
+            create(CreateRequest { title: Some("Blinker".to_string()), rev: None, company: None, date: None, template: None })
+                .expect("create");
         let handle = created["handle"].as_u64().expect("handle");
         assert_eq!(created["design"]["sheets"][0]["title"], "Sheet 1");
 
@@ -3757,7 +3847,9 @@ mod tests {
         let left = dir.join("left.oeda");
         let right = dir.join("right.oeda");
 
-        let created = create(CreateRequest { title: Some("Blinker".to_string()), template: None }).expect("create");
+        let created =
+            create(CreateRequest { title: Some("Blinker".to_string()), rev: None, company: None, date: None, template: None })
+                .expect("create");
         let handle = created["handle"].as_u64().expect("handle");
         add_component(
             handle,
@@ -3813,6 +3905,9 @@ mod tests {
         let design = Design {
             id: "design-1".to_string(),
             title: None,
+            rev: String::new(),
+            company: String::new(),
+            date: String::new(),
             revision: 3,
             units: "mm".to_string(),
             sheets: vec![Sheet {
@@ -3860,6 +3955,9 @@ mod tests {
         let design = Design {
             id: "design-1".to_string(),
             title: None,
+            rev: String::new(),
+            company: String::new(),
+            date: String::new(),
             revision: 2,
             units: "mm".to_string(),
             sheets: vec![Sheet {
@@ -3889,6 +3987,9 @@ mod tests {
         let design = Design {
             id: "design-1".to_string(),
             title: None,
+            rev: String::new(),
+            company: String::new(),
+            date: String::new(),
             revision: 2,
             units: "mm".to_string(),
             sheets: vec![Sheet {
@@ -4373,7 +4474,9 @@ mod tests {
     fn pdf_export_writes_a_complete_vector_document() {
         let dir = TempDir::new("pdf");
         let path = dir.join("blinker.pdf");
-        let created = create(CreateRequest { title: Some("Blinker".to_string()), template: None }).expect("create");
+        let created =
+            create(CreateRequest { title: Some("Blinker".to_string()), rev: None, company: None, date: None, template: None })
+                .expect("create");
         let handle = created["handle"].as_u64().expect("handle");
         add_component(
             handle,
@@ -4421,6 +4524,9 @@ mod tests {
         let mut design = Design {
             id: "design-1".to_string(),
             title: None,
+            rev: String::new(),
+            company: String::new(),
+            date: String::new(),
             revision: 1,
             units: "mm".to_string(),
             sheets: vec![Sheet {
@@ -4519,7 +4625,9 @@ mod tests {
         let dir = TempDir::new("spice");
         let first = dir.join("blinker.cir");
         let second = dir.join("blinker-again.cir");
-        let created = create(CreateRequest { title: Some("Blinker".to_string()), template: None }).expect("create");
+        let created =
+            create(CreateRequest { title: Some("Blinker".to_string()), rev: None, company: None, date: None, template: None })
+                .expect("create");
         let handle = created["handle"].as_u64().expect("handle");
         blinker(handle);
 
@@ -4608,6 +4716,9 @@ mod tests {
         let mut design = Design {
             id: "design-1".to_string(),
             title: None,
+            rev: String::new(),
+            company: String::new(),
+            date: String::new(),
             revision: 1,
             units: "mm".to_string(),
             sheets: vec![Sheet {
@@ -4635,7 +4746,9 @@ mod tests {
     fn kicad_round_trip_preserves_junctions_and_texts_without_losses() {
         let dir = TempDir::new("kicad-junction-text");
         let path = dir.join("annotated.kicad_sch");
-        let created = create(CreateRequest { title: Some("Blinker".to_string()), template: None }).expect("create");
+        let created =
+            create(CreateRequest { title: Some("Blinker".to_string()), rev: None, company: None, date: None, template: None })
+                .expect("create");
         let handle = created["handle"].as_u64().expect("handle");
         blinker(handle);
         add_junction(handle, AddJunctionRequest { sheet: None, x: 12.5, y: 7.5 }).expect("add junction");
@@ -4655,12 +4768,82 @@ mod tests {
     }
 
     #[test]
+    fn drawing_properties_are_edited_and_written_to_the_title_block() {
+        let dir = TempDir::new("properties");
+        let document = dir.join("title.oeda");
+        let created = create(CreateRequest {
+            title: Some("Blinker".to_string()),
+            rev: Some("A".to_string()),
+            company: Some("Acme".to_string()),
+            date: Some("2026-11-22".to_string()),
+            template: None,
+        })
+        .expect("create");
+        let handle = created["handle"].as_u64().expect("handle");
+        assert_eq!(created["design"]["rev"], "A");
+        assert_eq!(created["design"]["company"], "Acme");
+        assert_eq!(created["design"]["date"], "2026-11-22");
+
+        let untouched = update_design(handle, UpdateDesignRequest::default()).expect("no-op");
+        assert_eq!(untouched["revision"], 1);
+
+        let updated = update_design(
+            handle,
+            UpdateDesignRequest {
+                title: Some("Blinker II".to_string()),
+                rev: Some("B".to_string()),
+                company: None,
+                date: None,
+            },
+        )
+        .expect("update");
+        assert_eq!(updated["revision"], 2);
+        assert_eq!(updated["title"], "Blinker II");
+        assert_eq!(updated["rev"], "B");
+        assert_eq!(updated["company"], "Acme");
+
+        save(handle, &document, false).expect("save");
+        let opened = open(&document).expect("open");
+        let reopened = opened["handle"].as_u64().expect("handle");
+        assert_eq!(opened["design"]["rev"], "B");
+        assert_eq!(opened["design"]["company"], "Acme");
+        assert_eq!(opened["design"]["date"], "2026-11-22");
+
+        let kicad_path = dir.join("title.kicad_sch");
+        export(reopened, "kicad_sch", &kicad_path).expect("export");
+        let text = fs::read_to_string(&kicad_path).expect("read");
+        assert!(text.contains("(title_block"));
+        assert!(text.contains("(title \"Blinker II\")"));
+        assert!(text.contains("(rev \"B\")"));
+        assert!(text.contains("(company \"Acme\")"));
+        assert!(text.contains("(date \"2026-11-22\")"));
+
+        let (imported, losses) = crate::kicad::import(&text).expect("import");
+        assert_eq!(imported.title.as_deref(), Some("Blinker II"));
+        assert_eq!(imported.rev, "B");
+        assert_eq!(imported.company, "Acme");
+        assert_eq!(imported.date, "2026-11-22");
+        assert!(losses.is_empty());
+
+        let cleared =
+            update_design(handle, UpdateDesignRequest { title: Some(String::new()), rev: None, company: None, date: None })
+                .expect("clear title");
+        assert_eq!(cleared["title"], Value::Null);
+        assert_eq!(cleared["revision"], 3);
+
+        close(handle).expect("close");
+        close(reopened).expect("close");
+    }
+
+    #[test]
     fn kicad_sch_export_is_deterministic_and_round_trips() {
         let dir = TempDir::new("kicad");
         let first = dir.join("blinker.kicad_sch");
         let second = dir.join("blinker-again.kicad_sch");
 
-        let created = create(CreateRequest { title: Some("Blinker".to_string()), template: None }).expect("create");
+        let created =
+            create(CreateRequest { title: Some("Blinker".to_string()), rev: None, company: None, date: None, template: None })
+                .expect("create");
         let handle = created["handle"].as_u64().expect("handle");
         blinker(handle);
         set_component_footprint(
@@ -4961,6 +5144,9 @@ mod tests {
         let design = Design {
             id: "design-1".to_string(),
             title: None,
+            rev: String::new(),
+            company: String::new(),
+            date: String::new(),
             revision: 4,
             units: "mm".to_string(),
             sheets: vec![Sheet {
@@ -5064,7 +5250,9 @@ mod tests {
     fn net_csv_export_writes_one_row_per_node_and_expands_buses() {
         let dir = TempDir::new("net-csv");
         let path = dir.join("blinker.csv");
-        let created = create(CreateRequest { title: Some("Blinker".to_string()), template: None }).expect("create");
+        let created =
+            create(CreateRequest { title: Some("Blinker".to_string()), rev: None, company: None, date: None, template: None })
+                .expect("create");
         let handle = created["handle"].as_u64().expect("handle");
         blinker(handle);
         rename_sheet(handle, "sheet-1", "Main, A").expect("rename sheet");
@@ -5095,7 +5283,9 @@ mod tests {
     fn report_export_renders_object_and_net_tables() {
         let dir = TempDir::new("report");
         let path = dir.join("report.md");
-        let created = create(CreateRequest { title: Some("Blinker".to_string()), template: None }).expect("create");
+        let created =
+            create(CreateRequest { title: Some("Blinker".to_string()), rev: None, company: None, date: None, template: None })
+                .expect("create");
         let handle = created["handle"].as_u64().expect("handle");
         add_component(
             handle,
@@ -5146,7 +5336,9 @@ mod tests {
         let dir = TempDir::new("json-projection");
         let first = dir.join("blinker.json");
         let second = dir.join("blinker-again.json");
-        let created = create(CreateRequest { title: Some("Blinker".to_string()), template: None }).expect("create");
+        let created =
+            create(CreateRequest { title: Some("Blinker".to_string()), rev: None, company: None, date: None, template: None })
+                .expect("create");
         let handle = created["handle"].as_u64().expect("handle");
         blinker(handle);
         add_junction(handle, AddJunctionRequest { sheet: None, x: 55.0, y: 30.0 }).expect("junction");
@@ -5286,6 +5478,9 @@ mod tests {
         let design = Design {
             id: "design-1".to_string(),
             title: None,
+            rev: String::new(),
+            company: String::new(),
+            date: String::new(),
             revision: 2,
             units: "mm".to_string(),
             sheets: vec![Sheet {
@@ -5326,6 +5521,9 @@ mod tests {
         let design = Design {
             id: "design-1".to_string(),
             title: None,
+            rev: String::new(),
+            company: String::new(),
+            date: String::new(),
             revision: 2,
             units: "mm".to_string(),
             sheets: vec![Sheet {
@@ -5385,6 +5583,9 @@ mod tests {
         let design = Design {
             id: "design-1".to_string(),
             title: None,
+            rev: String::new(),
+            company: String::new(),
+            date: String::new(),
             revision: 2,
             units: "mm".to_string(),
             sheets: vec![Sheet {

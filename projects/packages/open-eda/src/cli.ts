@@ -135,7 +135,13 @@ function describeCapabilities(matrix: DesignCapabilities): string {
 
 function describeDesign(design: DesignSummary): string {
     const title = design.title ?? 'untitled';
-    const lines = [`design ${design.id} "${title}" revision=${design.revision} sheets=${design.sheets.length}`];
+    const properties = [
+        design.rev.length > 0 ? `rev=${design.rev}` : undefined,
+        design.company.length > 0 ? `company=${design.company}` : undefined,
+        design.date.length > 0 ? `date=${design.date}` : undefined,
+    ].filter((entry): entry is string => entry !== undefined);
+    const suffix = properties.length > 0 ? ` ${properties.join(' ')}` : '';
+    const lines = [`design ${design.id} "${title}" revision=${design.revision}${suffix} sheets=${design.sheets.length}`];
     for (const sheet of design.sheets) {
         lines.push(`  [${sheet.index}] ${sheet.id} ${sheet.title} (${sheet.objects} objects)`);
     }
@@ -326,6 +332,9 @@ cli
     .command('create', 'cli.cmd.create')
     .option('--out <file>', 'cli.opt.out')
     .option('--title <title>', 'cli.opt.title')
+    .option('--rev <rev>', 'cli.opt.rev')
+    .option('--company <company>', 'cli.opt.company')
+    .option('--date <date>', 'cli.opt.date')
     .option('--template <name>', 'cli.opt.template')
     .option('--overwrite', 'cli.opt.overwrite')
     .actionCtx(async (options, _args, ctx) => {
@@ -334,7 +343,13 @@ cli
             ctx.fail('open-eda.cli.out-required', { message: '`--out <file>` is required' });
             return 2;
         }
-        const design = await app.create({ title: text(options, 'title'), template: text(options, 'template') });
+        const design = await app.create({
+            title: text(options, 'title'),
+            rev: text(options, 'rev'),
+            company: text(options, 'company'),
+            date: text(options, 'date'),
+            template: text(options, 'template'),
+        });
         try {
             const report = await design.save({ target: out, overwrite: flag(options, 'overwrite') });
             ctx.emitResult(
@@ -401,6 +416,42 @@ cli.command('connectivity', 'cli.cmd.connectivity').actionCtx(async (options, _a
     ctx.emitResult(report, describeConnectivity(report));
     return 0;
 });
+
+const designCommand = cli.command('design', 'cli.cmd.design');
+designCommand
+    .command('set', 'cli.cmd.design-set')
+    .option('--title <title>', 'cli.opt.title')
+    .option('--rev <rev>', 'cli.opt.rev')
+    .option('--company <company>', 'cli.opt.company')
+    .option('--date <date>', 'cli.opt.date')
+    .actionCtx(async (options, _args, ctx) => {
+        const file = input(options);
+        if (file === undefined) {
+            ctx.fail('open-eda.cli.file-required', { message: 'a design document is required' });
+            return 2;
+        }
+        const properties = {
+            title: text(options, 'title'),
+            rev: text(options, 'rev'),
+            company: text(options, 'company'),
+            date: text(options, 'date'),
+        };
+        if (Object.values(properties).every((entry) => entry === undefined)) {
+            ctx.fail('open-eda.cli.arguments-invalid', {
+                message: 'at least one of `--title`, `--rev`, `--company` or `--date` is required',
+            });
+            return 2;
+        }
+        const { saved, title, rev, company, date } = await withDesign(file, async (design) => {
+            const updated = await design.setProperties(properties);
+            return { saved: await savedReport(design), title: updated.title, rev: updated.rev, company: updated.company, date: updated.date };
+        });
+        ctx.emitResult(
+            { ...saved, title, rev, company, date },
+            `set design properties in ${file} revision=${saved.revision} title=${title ?? '(cleared)'} rev=${rev.length > 0 ? rev : '(cleared)'} company=${company.length > 0 ? company : '(cleared)'} date=${date.length > 0 ? date : '(cleared)'}`,
+        );
+        return 0;
+    });
 
 const componentCommand = cli.command('component', 'cli.cmd.component');
 componentCommand

@@ -20,7 +20,8 @@ checks, compares two documents with `diff`, and writes netlist, SPICE, SVG,
 BOM, PDF, Markdown report and JSON
 document projections. It also exports and imports the same schematic subset as a KiCad
 6/7 schematic (`kicad_sch`): symbols, wires, junctions, no-connect flags, text
-annotations and net labels, including global and hierarchical labels. Editing
+annotations, net labels, including global and hierarchical labels, and the
+title-block title, date, revision and company. Editing
 covers components, nets (derive, disconnect, delete), design-level buses
 (declare, list, remove), wires, junctions and text (move and delete by index),
 sheet add/rename/delete, and undo/redo. The SDK and studio keep a bounded
@@ -36,7 +37,7 @@ prints exactly which entries are supported.
 
 | Capability | Status | Notes |
 | --- | --- | --- |
-| `.oeda` create/open/save/edit | supported | sheets, components, nets, buses, wires, junctions, text, undo/redo |
+| `.oeda` create/open/save/edit | supported | sheets, components, nets, buses, wires, junctions, text, title block, undo/redo |
 | design compare `diff` | supported | read-only report of added, removed and modified sheets, components, nets, wires and buses |
 | checks `erc`, `nets`, `connectivity`, `footprints`, `power` | supported | `drc` and `clearance` are unsupported |
 | export `net`, `net_csv`, `spice`, `svg`, `bom`, `bom_json`, `pdf`, `report`, `json`, `kicad_sch` | supported | read-only projections; `kicad_pcb` and `gbr` are unsupported |
@@ -47,8 +48,10 @@ prints exactly which entries are supported.
 The KiCad importer is deliberately narrow. Buses, hierarchical sheets, arcs,
 images and every other construct outside that subset are not dropped silently:
 each occurrence adds a `{"code": "kicad/unsupported-element", "detail": "..."}`
-entry to the import losses. Global and hierarchical labels are imported as
-sheet-local net labels and each occurrence adds a
+entry to the import losses. The title-block `title`, `date`, `rev` and
+`company` fields are part of the subset; other title-block fields, such as
+numbered comments, add a loss entry. Global and hierarchical labels are
+imported as sheet-local net labels and each occurrence adds a
 `{"code": "kicad/label-scope", "detail": "..."}` entry, because the document
 does not model cross-sheet label scope. Junctions, no-connect flags and text
 annotations are part of the subset and round-trip without a loss entry.
@@ -89,6 +92,14 @@ changes (value, footprint, position, rotation, pins, net node sets, wire
 endpoints and bus width). Net node order is not a change. Two documents with the
 same modelled objects compare equal even when their bytes differ.
 
+Drawing properties are design-wide: `title`, `rev` (the drawing revision label,
+which is separate from the revision counter), `company` and `date`. They are
+written to the KiCad `title_block` and read back from it; importing a title
+block keeps those four fields and reports any other field as a loss. The SDK
+changes them with `design.setProperties()` and the CLI with `design set`. An
+empty string clears a field, and an update that changes nothing adds no
+revision.
+
 The SPICE writer projects the schematic to a deterministic `.cir` netlist.
 Elements follow their reference prefix (`R`/`C`/`L` two-pin, `D` two-pin with a
 model, `Q`/`J` three-pin, `V`/`I` sources, `U`/`X` subcircuit calls, unknown
@@ -110,7 +121,7 @@ The SDK is the API. Every operation is a method on the session or on the
 import { OpenEDA } from '@wae/open-eda';
 
 const eda = new OpenEDA({ history: 'sidecar' });
-const design = await eda.create({ title: 'Blinker' });
+const design = await eda.create({ title: 'Blinker', rev: 'A', company: 'Acme', date: '2026-11-22' });
 
 await design.addComponent({ reference: 'R1', value: '10k', x: 40, y: 30, pins: ['1', '2'] });
 await design.setFootprint({ reference: 'R1', footprint: 'Resistor_SMD:R_0805_2012Metric' });
@@ -122,6 +133,7 @@ await design.addBus({ name: 'DATA', width: 4 });
 const buses = await design.listBuses();
 
 await design.save({ target: 'blinker.oeda', overwrite: true });
+await design.setProperties({ rev: 'B' });
 await design.export({ format: 'kicad_sch', target: 'blinker.kicad_sch' });
 await design.export({ format: 'spice', target: 'blinker.cir' });
 
@@ -139,7 +151,10 @@ and enables the sidecar so `undo`/`redo` survive invocations.
 open-eda capabilities
 
 # Create a native design document
-open-eda create --out blinker.oeda --title "Blinker"
+open-eda create --out blinker.oeda --title "Blinker" --rev A --company "Acme" --date 2026-11-22
+
+# Update the title-block properties in place
+open-eda design set blinker.oeda --rev B --company "Acme"
 
 # Add two components to the existing document, in place
 open-eda component add blinker.oeda --ref R1 --value 10k --x 40 --y 30 --pins 1,2
@@ -218,19 +233,22 @@ inclusive ranges (`R5-R7` for three or more consecutive numbers); `bom_json`
 writes the same rows as a deterministic `open-eda-bom` projection. The PDF writer
 emits a complete one-page A4 landscape vector document (`%PDF-1.4` header,
 cross-reference table, `%%EOF`) with sheet names, component boxes and wires.
-The report writer emits deterministic Markdown with a design header, a
+The report writer emits deterministic Markdown with a design header (including
+the drawing revision, company and date when set), a
 per-sheet object-count table, one `Net | Nodes | Pins` table per sheet and an
 inspection section grouped by severity.
 The `symbols` report groups placed components by the library id the KiCad writer
 derives from their pins and lists the pin count, references, assigned footprints
 and missing footprint count per symbol.
 The JSON writer emits a deterministic, read-only document projection tagged
-`open-eda-projection` with the design header and, per sheet, its components,
+`open-eda-projection` with the design header (id, title, revision, rev,
+company, date and units) and, per sheet, its components,
 nets, wires, junctions and text annotations; internal allocation counters are
 not part of it.
 The KiCad writer emits a KiCad 6/7 S-expression with a `lib_symbols` section,
 one symbol per component, one `wire` per segment, one `junction` per connection
-dot, one `text` per annotation and one `label` per net;
+dot, one `text` per annotation, one `label` per net and a `title_block` when a
+drawing property is set;
 identifiers are derived from the document ids, so the same design always writes
 byte-identical output.
 Every file is written through a temporary file and a rename.

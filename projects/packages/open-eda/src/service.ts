@@ -21,6 +21,8 @@ import type {
     DesignDiffInput,
     DesignDiffReport,
     DesignObjects,
+    DesignPropertiesInput,
+    DesignPropertiesResult,
     DesignSummary,
     DeriveNetsResult,
     DisconnectNetInput,
@@ -200,7 +202,15 @@ export function capabilities(): DesignCapabilities {
 /** Creates a design and returns its handle. */
 export function create(request: DesignCreateOptions): DesignHandle {
     return decode<DesignHandle>(() =>
-        binding('create').design_create(JSON.stringify({ title: request.title, template: request.template })),
+        binding('create').design_create(
+            JSON.stringify({
+                title: request.title,
+                rev: request.rev,
+                company: request.company,
+                date: request.date,
+                template: request.template,
+            }),
+        ),
     );
 }
 
@@ -212,6 +222,21 @@ export function open(path: string): DesignHandle {
 /** Writes one open design to a native document path. */
 export function save(handle: number, target: string, overwrite: boolean): SaveReport {
     return decode<SaveReport>(() => binding('save').design_save(handle, target, overwrite));
+}
+
+/** Updates the drawing properties of one open design. */
+export function setDesignProperties(handle: number, input: DesignPropertiesInput): DesignPropertiesResult {
+    return decode<DesignPropertiesResult>(() =>
+        binding('design.setProperties').design_set_properties(
+            handle,
+            JSON.stringify({
+                title: input.title,
+                rev: input.rev,
+                company: input.company,
+                date: input.date,
+            }),
+        ),
+    );
 }
 
 /** Runs the requested rule checks on one open design. */
