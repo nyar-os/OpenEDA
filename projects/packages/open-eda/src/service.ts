@@ -35,6 +35,7 @@ import type {
     Junction,
     JunctionInput,
     KicadImportResult,
+    KicadSymbolImportResult,
     MoveComponentInput,
     Net,
     NoConnect,
@@ -311,6 +312,16 @@ export function exportDesign(handle: number, format: ExportTarget, target: strin
  */
 export function importKicadSch(source: string): KicadImportResult {
     return decode<KicadImportResult>(() => binding('import.kicadSch').import_kicad_sch(source));
+}
+
+/**
+ * Reads a KiCad `.kicad_sym` symbol library.
+ *
+ * The result lists every declared symbol with its unit count and pins; nothing
+ * is written to disk and no design handle is opened.
+ */
+export function importKicadSymbol(source: string): KicadSymbolImportResult {
+    return decode<KicadSymbolImportResult>(() => binding('import.kicadSymbol').import_kicad_symbol(source));
 }
 
 /**

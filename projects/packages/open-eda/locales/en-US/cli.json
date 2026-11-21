@@ -9,6 +9,7 @@
             "annotate": "Renumber every component reference designator by sheet and placement order",
             "list": "List components, nets and wires of a design document",
             "symbols": "List the symbol library a design document uses, with pin counts and missing footprints",
+            "library": "Read a KiCad .kicad_sym symbol library and report its symbols, units and pins",
             "connectivity": "Report what each net connects, the pins no net reaches and the per-sheet wire totals",
             "inspect": "Run electrical rule checks on a design document",
             "export": "Project a design document to a supported exchange format",

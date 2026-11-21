@@ -23,7 +23,8 @@ document projections. It also exports and imports the same schematic subset as a
 annotations, net labels, including global and hierarchical labels, and the
 title-block title, date, revision and company. Hierarchical sheet symbols and
 their ports are read and written back as declarations; the child sheet file is
-not opened. Editing
+not opened. A separate read-only reader reports the symbols a KiCad `.kicad_sym`
+library declares, with their units and pins. Editing
 covers components, nets (derive, disconnect, delete), design-level buses
 (declare, list, remove), wires, junctions and text (move and delete by index),
 no-connect flags (add, delete, and mark one pin as deliberately open),
@@ -49,6 +50,7 @@ prints exactly which entries are supported.
 | checks `erc`, `electrical`, `nets`, `connectivity`, `footprints`, `power` | supported | `drc` and `clearance` are unsupported |
 | export `net`, `net_csv`, `net_hier`, `spice`, `spice_subckt`, `svg`, `bom`, `bom_json`, `bom_html`, `pdf`, `report`, `json`, `kicad_sch` | supported | read-only projections; `kicad_pcb` and `gbr` are unsupported |
 | import `kicad_sch` | supported | symbols, wires, junctions, no-connect flags, text, labels, hierarchical sheet symbols and ports; other constructs are reported as loss entries |
+| import `kicad_sym` | supported | read-only symbol declarations: name, unit count and each pin's number, name, electrical role and unit |
 | KiCad board, Gerber, drill, STEP | unsupported | declared in the capability matrix only |
 | interactive schematic/board renderer | unsupported | the preview is an SVG projection |
 
@@ -278,6 +280,9 @@ open-eda export blinker.oeda --format kicad_sch --out blinker.kicad_sch
 # Import a KiCad schematic into a native document
 open-eda import blinker.kicad_sch --out blinker-imported.oeda
 
+# Read a KiCad symbol library and list its symbols, units and pins
+open-eda library Device.kicad_sym
+
 # Open the studio window
 open-eda gui
 ```
@@ -317,7 +322,11 @@ per-sheet object-count table, one `Net | Nodes | Pins` table per sheet and an
 inspection section grouped by severity.
 The `symbols` report groups placed components by the library id the KiCad writer
 derives from their pins and lists the pin count, references, assigned footprints
-and missing footprint count per symbol.
+and missing footprint count per symbol. The `library` command reads a KiCad
+`.kicad_sym` file without creating a design: it reports every declared symbol
+with its unit count and each pin's number, name, electrical role and unit, and
+any construct outside that subset as a `kicad_sym/unsupported-element` loss
+entry. It never writes a file.
 The JSON writer emits a deterministic, read-only document projection tagged
 `open-eda-projection` with the design header (id, title, revision, rev,
 company, date and units) and, per sheet, its components (including typed pins),

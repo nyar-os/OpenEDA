@@ -178,6 +178,21 @@ fn import_kicad_sch(ctx: CallContext) -> Result<JsValue> {
     respond(&ctx, &report)
 }
 
+/// Imports a KiCad symbol library from either its text or a file path.
+#[function]
+fn import_kicad_symbol(ctx: CallContext) -> Result<JsValue> {
+    let source = text(&ctx, 0)?;
+    let contents = if Path::new(&source).is_file() {
+        std::fs::read_to_string(&source)
+            .map_err(|error| Error::new(format!("format/invalid: cannot read `{source}`: {error}")))?
+    }
+    else {
+        source
+    };
+    let report = open_eda_model::import_kicad_symbol(&contents).map_err(fail)?;
+    respond(&ctx, &report)
+}
+
 /// Compares two native design documents without opening either for editing.
 #[function]
 fn diff_documents(ctx: CallContext) -> Result<JsValue> {
@@ -1333,6 +1348,7 @@ register_module![
     design_inspect_with,
     design_export,
     import_kicad_sch,
+    import_kicad_symbol,
     diff_documents,
     design_close,
     design_summary,

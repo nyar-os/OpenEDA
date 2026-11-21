@@ -2379,6 +2379,16 @@ pub fn import_kicad_sch(text: &str) -> Result<Value, ServiceError> {
     Ok(json!({ "design": design, "losses": losses }))
 }
 
+/// Imports one KiCad `.kicad_sym` symbol library and reports its symbols.
+///
+/// Only the declaration is read: each symbol reports its name, unit count and
+/// pins with their number, name, electrical role and unit. Nothing is written to
+/// disk and no design handle is created. A construct outside that subset is
+/// reported as a `kicad_sym/unsupported-element` loss entry.
+pub fn import_kicad_symbol(text: &str) -> Result<Value, ServiceError> {
+    kicad::import_symbol_library(text)
+}
+
 /// Renders one sheet of an open design for a read-only preview.
 ///
 /// Only `svg` is a preview projection; `png` and `pdf` stay export targets, so
@@ -6403,6 +6413,53 @@ mod tests {
         assert_eq!(import_kicad_sch("(kicad_sch (version 20211123)").unwrap_err().code, "format/invalid");
         assert_eq!(import_kicad_sch("(kicad_sch))").unwrap_err().code, "format/invalid");
         assert_eq!(import_kicad_sch("not an s-expression").unwrap_err().code, "format/invalid");
+    }
+
+    #[test]
+    fn kicad_symbol_library_import_reports_units_and_pins() {
+        let text = "\
+(kicad_symbol_lib (version 20211014) (generator kicad_symbol_editor)
+  (symbol \"74HC00\"
+    (property \"Reference\" \"U\" (at 0 0 0))
+    (symbol \"74HC00_0_1\"
+      (pin power_in line (at 0 0 0) (length 2.54)
+        (name \"VCC\" (effects (font (size 1.27 1.27))))
+        (number \"14\" (effects (font (size 1.27 1.27))))))
+    (symbol \"74HC00_1_1\"
+      (pin input line (at 0 0 0) (length 2.54)
+        (name \"A\" (effects (font (size 1.27 1.27))))
+        (number \"1\" (effects (font (size 1.27 1.27))))))
+    (symbol \"74HC00_2_1\"
+      (pin input line (at 0 0 0) (length 2.54)
+        (name \"B\" (effects (font (size 1.27 1.27))))
+        (number \"2\" (effects (font (size 1.27 1.27)))))))
+  (image (at 0 0))
+)
+";
+        let report = import_kicad_symbol(text).expect("import kicad_sym");
+        assert_eq!(report["kind"], "kicad_sym");
+        assert_eq!(report["totals"], json!({ "symbols": 1, "pins": 3 }));
+        let symbol = &report["symbols"][0];
+        assert_eq!(symbol["name"], "74HC00");
+        assert_eq!(symbol["unitCount"], 2);
+        let pins = symbol["pins"].as_array().expect("pins");
+        assert_eq!(pins.len(), 3);
+        assert_eq!(pins[0], json!({ "number": "14", "name": "VCC", "type": "power_in", "unit": 1 }));
+        assert_eq!(pins[1], json!({ "number": "1", "name": "A", "type": "input", "unit": 1 }));
+        assert_eq!(pins[2], json!({ "number": "2", "name": "B", "type": "input", "unit": 2 }));
+        let losses = report["losses"].as_array().expect("losses");
+        assert_eq!(losses.len(), 1);
+        assert_eq!(losses[0]["code"], "kicad_sym/unsupported-element");
+        assert!(losses[0]["detail"].as_str().expect("detail").contains("image"));
+    }
+
+    #[test]
+    fn kicad_symbol_library_rejects_other_documents() {
+        assert_eq!(import_kicad_symbol("").unwrap_err().code, "format/invalid");
+        assert_eq!(import_kicad_symbol("(kicad_sch (version 1))").unwrap_err().code, "format/invalid");
+        let report = import_kicad_symbol("(kicad_symbol_lib (version 20211014))").expect("empty library");
+        assert_eq!(report["totals"], json!({ "symbols": 0, "pins": 0 }));
+        assert_eq!(report["losses"], json!([]));
     }
 
     fn wire(handle: u64, net: Option<&str>, from: [f64; 2], to: [f64; 2]) {

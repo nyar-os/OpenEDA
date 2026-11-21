@@ -67,6 +67,8 @@ pub(crate) const DUPLICATE_REFERENCE: &str = "kicad/duplicate-reference";
 pub(crate) const MISSING_REFERENCE: &str = "kicad/missing-reference";
 /// Loss code reported when a design-scoped label becomes a sheet-local net.
 pub(crate) const LABEL_SCOPE: &str = "kicad/label-scope";
+/// Loss code reported for a `.kicad_sym` construct the reader skips.
+pub(crate) const SYMBOL_UNSUPPORTED_ELEMENT: &str = "kicad_sym/unsupported-element";
 
 /// Root tags of the schematic file that carry no design object.
 const STRUCTURAL_TAGS: &[&str] = &["version", "generator", "generator_version", "uuid", "paper", "lib_symbols", "title_block"];
@@ -791,6 +793,117 @@ fn read_at(node: &Node) -> Option<(f64, f64, f64)> {
 
 fn child_text<'a>(node: &'a Node, head: &str) -> Option<&'a str> {
     node.find(head).and_then(|item| item.children().first()).and_then(node_text)
+}
+
+/// Reads a KiCad 6/7 symbol library and reports the symbols it declares.
+///
+/// Only the declaration is read: each symbol reports its name, unit count and
+/// pins with their number, name, electrical role and unit. A construct outside
+/// that subset adds a `kicad_sym/unsupported-element` loss entry instead of
+/// being dropped silently.
+pub(crate) fn import_symbol_library(text: &str) -> Result<Value, ServiceError> {
+    let nodes = parse(text)?;
+    let root = nodes
+        .iter()
+        .find(|node| node.head() == Some("kicad_symbol_lib"))
+        .ok_or_else(|| invalid("the file is not a KiCad symbol library: no `(kicad_symbol_lib ...)` root was found"))?;
+
+    let mut losses = Vec::new();
+    let mut symbols = Vec::new();
+    let mut total_pins = 0usize;
+    for node in root.children() {
+        match node.head() {
+            Some("symbol") => {
+                if let Some((symbol, pin_count)) = read_library_symbol(node, &mut losses) {
+                    total_pins += pin_count;
+                    symbols.push(symbol);
+                }
+            }
+            Some("version" | "generator" | "generator_version") => {}
+            Some(tag) => losses.push(loss(
+                SYMBOL_UNSUPPORTED_ELEMENT,
+                format!("`{tag}` is outside the imported symbol subset and was skipped"),
+            )),
+            None => {}
+        }
+    }
+    let symbol_count = symbols.len();
+
+    Ok(json!({
+        "kind": "kicad_sym",
+        "symbols": symbols,
+        "totals": { "symbols": symbol_count, "pins": total_pins },
+        "losses": losses,
+    }))
+}
+
+/// Reads one top-level library symbol and the pins of every nested unit symbol.
+fn read_library_symbol(node: &Node, losses: &mut Vec<Value>) -> Option<(Value, usize)> {
+    let Some(name) = node.children().first().and_then(node_text)
+    else {
+        losses.push(loss(SYMBOL_UNSUPPORTED_ELEMENT, "a symbol without a name was skipped".to_string()));
+        return None;
+    };
+    let mut pins = Vec::new();
+    let mut units = 1u64;
+    collect_symbol_pins(node, 1, &mut units, &mut pins, losses);
+    let pin_count = pins.len();
+    Some((json!({ "name": name, "unitCount": units, "pins": pins }), pin_count))
+}
+
+/// Collects the pins of one symbol or nested unit symbol.
+///
+/// A nested symbol named `<name>_<unit>_<style>` marks the unit its pins belong
+/// to; unit `0` is shared graphics and keeps the enclosing unit.
+fn collect_symbol_pins(node: &Node, unit: u64, units: &mut u64, pins: &mut Vec<Value>, losses: &mut Vec<Value>) {
+    for item in node.children() {
+        match item.head() {
+            Some("pin") => {
+                let Some(number) = child_text(item, "number")
+                else {
+                    losses.push(loss(SYMBOL_UNSUPPORTED_ELEMENT, "a pin without a number was skipped".to_string()));
+                    continue;
+                };
+                let name = child_text(item, "name").unwrap_or("");
+                let type_name = item.children().first().and_then(node_text).unwrap_or("");
+                let pin_type = match read_pin_type(type_name) {
+                    Some(pin_type) => pin_type,
+                    None => {
+                        losses.push(loss(
+                            SYMBOL_UNSUPPORTED_ELEMENT,
+                            format!("pin `{number}` has electrical type `{type_name}`, which the model does not carry"),
+                        ));
+                        PinType::Unspecified
+                    }
+                };
+                pins.push(json!({
+                    "number": number,
+                    "name": name,
+                    "type": pin_type_name(pin_type),
+                    "unit": unit,
+                }));
+            }
+            Some("symbol") => {
+                let nested = item
+                    .children()
+                    .first()
+                    .and_then(node_text)
+                    .and_then(unit_of_symbol_name)
+                    .filter(|value| *value > 0)
+                    .unwrap_or(unit);
+                *units = (*units).max(nested);
+                collect_symbol_pins(item, nested, units, pins, losses);
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Reads the unit number out of a `<name>_<unit>_<style>` symbol name.
+fn unit_of_symbol_name(name: &str) -> Option<u64> {
+    let mut parts = name.rsplit('_');
+    let _style = parts.next()?;
+    parts.next()?.parse::<u64>().ok()
 }
 
 fn parse(text: &str) -> Result<Vec<Node>, ServiceError> {

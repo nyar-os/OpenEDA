@@ -42,6 +42,7 @@ open-eda variant add <file.oeda> --name <name> [--dnp R1,R2] [--values R1=22k]
 open-eda variant list <file.oeda>
 open-eda variant remove <file.oeda> --name <name>
 open-eda import <file.kicad_sch> --out <file.oeda> [--overwrite]
+open-eda library <file.kicad_sym>
 open-eda undo <file.oeda>
 open-eda redo <file.oeda>
 open-eda component add <file.oeda> --ref <ref> --value <value> --x <n> --y <n> [--rotation <deg>] [--pins 1,2] [--sheet <sheet>]
@@ -208,6 +209,12 @@ references that place the symbol, the distinct assigned footprints and how many
 components still have no footprint. It is a read-only report: it never assigns
 a footprint and never claims a library part exists outside the document.
 
+`open-eda library <file.kicad_sym>` reads a KiCad symbol library instead of a
+design document. It reports every declared symbol with its unit count and each
+pin's number, name, electrical role and unit, plus a
+`kicad_sym/unsupported-element` loss entry for any construct outside that
+subset. It creates no design handle and writes no file.
+
 ## Referential integrity
 
 - Deleting a component removes its net nodes, drops nets that become empty, and
@@ -255,7 +262,8 @@ a footprint and never claims a library part exists outside the document.
   sheet symbols with their ports; `kicad_pcb`
   and `gbr` reject with `capability/not-implemented`.
 - No exchange format can be imported or edited. `.oeda` is the only editable
-  document; `import` materializes a `.kicad_sch` into `.oeda`. Hierarchical
+  document; `import` materializes a `.kicad_sch` into `.oeda`, while `library`
+  only reads a `.kicad_sym` symbol declaration. Hierarchical
   `sheet` symbols and their `pin` ports import as declarations; the referenced
   child sheet file is never opened.
 

@@ -44,6 +44,7 @@ import type {
     JunctionInput,
     KicadImportOptions,
     KicadImportResult,
+    KicadSymbolImportResult,
     MoveComponentInput,
     Net,
     NoConnect,
@@ -174,6 +175,17 @@ export class OpenEDA {
             history.clearHistory(options.target);
         }
         return imported;
+    }
+
+    /**
+     * Reads a KiCad `.kicad_sym` symbol library.
+     *
+     * The result lists every declared symbol with its unit count and pins. It
+     * neither writes a file nor opens a design handle.
+     */
+    async importKicadSymbol(source: string): Promise<KicadSymbolImportResult> {
+        this.assertActive();
+        return service.importKicadSymbol(source);
     }
 
     /** Inspects an input without keeping a design handle. */

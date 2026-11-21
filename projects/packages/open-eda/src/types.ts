@@ -709,6 +709,36 @@ export interface KicadImportResult {
     readonly losses: readonly KicadImportLoss[];
 }
 
+/** One pin of a symbol imported from a KiCad `.kicad_sym` library. */
+export interface KicadSymbolPin {
+    /** Pin number, for example `1`. */
+    readonly number: string;
+    /** Pin name, for example `VCC`. */
+    readonly name: string;
+    /** Electrical role read from the library, or `unspecified` when absent. */
+    readonly type: PinType;
+    /** Unit (gate) the pin belongs to; `1` when the symbol has one unit. */
+    readonly unit: number;
+}
+
+/** One symbol declared by a KiCad `.kicad_sym` library. */
+export interface KicadSymbol {
+    /** Symbol name, for example `74HC00`. */
+    readonly name: string;
+    /** Number of units (gates) the symbol declares; at least 1. */
+    readonly unitCount: number;
+    readonly pins: readonly KicadSymbolPin[];
+}
+
+/** Result of `OpenEDA.importKicadSymbol()`. */
+export interface KicadSymbolImportResult {
+    readonly kind: 'kicad_sym';
+    readonly symbols: readonly KicadSymbol[];
+    readonly totals: { readonly symbols: number; readonly pins: number };
+    /** Constructs outside the imported subset; empty when nothing was lost. */
+    readonly losses: readonly KicadImportLoss[];
+}
+
 /** Electrical direction of one hierarchical sheet port. */
 export type PortDirection = 'input' | 'output' | 'bidirectional' | 'tri_state' | 'passive';
 

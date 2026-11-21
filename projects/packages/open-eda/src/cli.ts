@@ -31,6 +31,7 @@ import type {
     InspectReport,
     InspectSeverity,
     InspectWaiver,
+    KicadSymbolImportResult,
     PinType,
     SaveReport,
     SymbolLibraryResult,
@@ -236,7 +237,8 @@ function describeObjects(objects: DesignObjects): string {
     return lines.join('\n');
 }
 
-function describeSymbols(library: SymbolLibraryResult): string {    const totals = library.totals;
+function describeSymbols(library: SymbolLibraryResult): string {
+    const totals = library.totals;
     const lines = [
         `revision=${library.revision} symbols=${totals.symbols} components=${totals.components} missingFootprint=${totals.missingFootprint}`,
     ];
@@ -245,6 +247,15 @@ function describeSymbols(library: SymbolLibraryResult): string {    const totals
         lines.push(
             `  ${symbol.libId} pins=${symbol.pins} components=${symbol.components} refs=${symbol.references.join(',')} footprints=${footprints} missingFootprint=${symbol.missingFootprint}`,
         );
+    }
+    return lines.join('\n');
+}
+
+function describeKicadSymbolLibrary(library: KicadSymbolImportResult): string {
+    const totals = library.totals;
+    const lines = [`kicad_sym symbols=${totals.symbols} pins=${totals.pins} losses=${library.losses.length}`];
+    for (const symbol of library.symbols) {
+        lines.push(`  ${symbol.name} units=${symbol.unitCount} pins=${symbol.pins.length}`);
     }
     return lines.join('\n');
 }
@@ -452,6 +463,17 @@ cli.command('symbols', 'cli.cmd.symbols').actionCtx(async (options, _args, ctx) 
     }
     const library = await withDesign(file, (design) => design.listSymbols());
     ctx.emitResult(library, describeSymbols(library));
+    return 0;
+});
+
+cli.command('library', 'cli.cmd.library').actionCtx(async (options, _args, ctx) => {
+    const file = input(options);
+    if (file === undefined) {
+        ctx.fail('open-eda.cli.file-required', { message: 'a KiCad symbol library is required' });
+        return 2;
+    }
+    const report = await app.importKicadSymbol(file);
+    ctx.emitResult(report, describeKicadSymbolLibrary(report));
     return 0;
 });
 

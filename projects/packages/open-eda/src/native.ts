@@ -24,6 +24,7 @@ export interface NativeBinding {
     design_inspect_with(handle: number, optionsJson: string): string;
     design_export(handle: number, format: string, path: string, variant?: string): string;
     import_kicad_sch(source: string): string;
+    import_kicad_symbol(source: string): string;
     diff_documents(left: string, right: string): string;
     design_close(handle: number): boolean;
     design_summary(handle: number): string;
