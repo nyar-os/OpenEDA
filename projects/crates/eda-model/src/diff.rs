@@ -13,7 +13,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::{Value, json};
 
-use crate::{Bus, Component, Design, Junction, Net, NoConnect, Sheet, TextLabel, Wire};
+use crate::{Bus, Component, Design, Junction, Net, NoConnect, Sheet, TextLabel, Variant, Wire};
 
 /// Tag written into every diff report.
 pub(crate) const DIFF_FORMAT: &str = "open-eda-diff";
@@ -98,8 +98,9 @@ pub(crate) fn compare(left_path: &str, left: &Design, right_path: &str, right: &
     }
 
     let buses = compare_buses(left, right);
+    let variants = compare_variants(left, right);
     let design = compare_design(left, right);
-    let equal = added + removed + modified == 0 && !buses.changed() && design.is_none();
+    let equal = added + removed + modified == 0 && !buses.changed() && !variants.changed() && design.is_none();
 
     json!({
         "format": DIFF_FORMAT,
@@ -116,6 +117,7 @@ pub(crate) fn compare(left_path: &str, left: &Design, right_path: &str, right: &
             "noConnects": totals.no_connects.json(),
             "texts": totals.texts.json(),
             "buses": buses.counts.json(),
+            "variants": variants.counts.json(),
             "design": { "modified": usize::from(design.is_some()) },
         },
         "design": { "changes": design },
@@ -124,6 +126,11 @@ pub(crate) fn compare(left_path: &str, left: &Design, right_path: &str, right: &
             "added": buses.added,
             "removed": buses.removed,
             "modified": buses.modified,
+        },
+        "variants": {
+            "added": variants.added,
+            "removed": variants.removed,
+            "modified": variants.modified,
         },
     })
 }
@@ -526,26 +533,26 @@ impl ItemJson for TextLabel {
     }
 }
 
-/// Result of the design-level bus comparison.
-struct BusDiff {
+/// Result of a design-level comparison (buses or variants).
+struct LevelDiff {
     counts: Counts,
     added: Vec<Value>,
     removed: Vec<Value>,
     modified: Vec<Value>,
 }
 
-impl BusDiff {
+impl LevelDiff {
     fn changed(&self) -> bool {
         self.counts.changed()
     }
 }
 
-fn compare_buses(left: &Design, right: &Design) -> BusDiff {
+fn compare_buses(left: &Design, right: &Design) -> LevelDiff {
     let left_map: BTreeMap<&str, &Bus> = left.buses.iter().map(|bus| (bus.name.as_str(), bus)).collect();
     let right_map: BTreeMap<&str, &Bus> = right.buses.iter().map(|bus| (bus.name.as_str(), bus)).collect();
     let keys: BTreeSet<&str> = left_map.keys().copied().chain(right_map.keys().copied()).collect();
 
-    let mut diff = BusDiff { counts: Counts::default(), added: Vec::new(), removed: Vec::new(), modified: Vec::new() };
+    let mut diff = LevelDiff { counts: Counts::default(), added: Vec::new(), removed: Vec::new(), modified: Vec::new() };
     for name in keys {
         match (left_map.get(name), right_map.get(name)) {
             (None, Some(bus)) => {
@@ -573,6 +580,55 @@ fn compare_buses(left: &Design, right: &Design) -> BusDiff {
 
 fn bus_view(bus: &Bus) -> Value {
     json!({ "id": bus.id, "name": bus.name, "width": bus.width })
+}
+
+/// Compares the BOM variants by name; a variant is keyed by its name, so a
+/// rename reads as one removal and one addition.
+fn compare_variants(left: &Design, right: &Design) -> LevelDiff {
+    let left_map: BTreeMap<&str, &Variant> = left.variants.iter().map(|variant| (variant.name.as_str(), variant)).collect();
+    let right_map: BTreeMap<&str, &Variant> = right.variants.iter().map(|variant| (variant.name.as_str(), variant)).collect();
+    let keys: BTreeSet<&str> = left_map.keys().copied().chain(right_map.keys().copied()).collect();
+
+    let mut diff = LevelDiff { counts: Counts::default(), added: Vec::new(), removed: Vec::new(), modified: Vec::new() };
+    for name in keys {
+        match (left_map.get(name), right_map.get(name)) {
+            (None, Some(variant)) => {
+                diff.counts.added += 1;
+                diff.added.push(variant_view(variant));
+            }
+            (Some(variant), None) => {
+                diff.counts.removed += 1;
+                diff.removed.push(variant_view(variant));
+            }
+            (Some(before), Some(after)) => {
+                let mut changes = serde_json::Map::new();
+                let before_dnp: BTreeSet<&str> = before.dnp.iter().map(String::as_str).collect();
+                let after_dnp: BTreeSet<&str> = after.dnp.iter().map(String::as_str).collect();
+                if before_dnp != after_dnp {
+                    changes.insert(
+                        "dnp".to_string(),
+                        json!({
+                            "from": before_dnp.into_iter().collect::<Vec<_>>(),
+                            "to": after_dnp.into_iter().collect::<Vec<_>>(),
+                        }),
+                    );
+                }
+                if before.values != after.values {
+                    changes.insert("values".to_string(), json!({ "from": before.values, "to": after.values }));
+                }
+                if !changes.is_empty() {
+                    diff.counts.modified += 1;
+                    diff.modified.push(json!({ "name": name, "changes": changes }));
+                }
+            }
+            (None, None) => {}
+        }
+    }
+    diff
+}
+
+fn variant_view(variant: &Variant) -> Value {
+    json!({ "name": variant.name, "dnp": variant.dnp, "values": variant.values })
 }
 
 #[cfg(test)]
@@ -747,5 +803,29 @@ mod tests {
         after.nets[0].nodes.reverse();
         let report = compare("a.oeda", &design("A", 1, vec![before], vec![]), "b.oeda", &design("A", 1, vec![after], vec![]));
         assert_eq!(report["equal"], true);
+    }
+
+    #[test]
+    fn bom_variant_changes_are_reported() {
+        let mut left = design("A", 1, vec![sheet("sheet-1", "Main")], vec![]);
+        left.variants.push(Variant {
+            name: "lite".to_string(),
+            dnp: vec!["R1".to_string()],
+            values: BTreeMap::from([("R2".to_string(), "22k".to_string())]),
+        });
+        let mut right = left.clone();
+        right.variants[0].dnp.push("R3".to_string());
+        right.variants.push(Variant { name: "pro".to_string(), dnp: Vec::new(), values: BTreeMap::new() });
+
+        let report = compare("a.oeda", &left, "b.oeda", &right);
+        assert_eq!(report["equal"], false);
+        assert_eq!(report["summary"]["variants"], json!({ "added": 1, "removed": 0, "modified": 1 }));
+        assert_eq!(report["variants"]["added"][0]["name"], "pro");
+        assert_eq!(report["variants"]["modified"][0]["name"], "lite");
+        assert_eq!(report["variants"]["modified"][0]["changes"]["dnp"]["to"], json!(["R1", "R3"]));
+
+        let unchanged = compare("a.oeda", &left, "b.oeda", &left.clone());
+        assert_eq!(unchanged["equal"], true);
+        assert_eq!(unchanged["summary"]["variants"], json!({ "added": 0, "removed": 0, "modified": 0 }));
     }
 }

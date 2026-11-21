@@ -260,9 +260,19 @@ function describeDiff(report: DesignDiffReport): string {
         `nets +${totals.nets.added} -${totals.nets.removed} ~${totals.nets.modified}`,
         `wires +${totals.wires.added} -${totals.wires.removed} ~${totals.wires.modified}`,
         `buses +${totals.buses.added} -${totals.buses.removed} ~${totals.buses.modified}`,
+        `variants +${totals.variants.added} -${totals.variants.removed} ~${totals.variants.modified}`,
     ];
     if (report.design.changes !== null) {
         lines.push(`  design ${changeText(report.design.changes)}`);
+    }
+    for (const variant of report.variants.added) {
+        lines.push(`  variant +${variant.name} dnp=${variant.dnp.join(',') || '-'}`);
+    }
+    for (const variant of report.variants.removed) {
+        lines.push(`  variant -${variant.name} dnp=${variant.dnp.join(',') || '-'}`);
+    }
+    for (const variant of report.variants.modified) {
+        lines.push(`  variant ~${variant.name ?? '?'} ${changeText(variant.changes)}`);
     }
     for (const bus of report.buses.added) {
         lines.push(`  bus +${bus.name} width=${bus.width}`);

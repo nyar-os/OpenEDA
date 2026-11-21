@@ -39,7 +39,7 @@ prints exactly which entries are supported.
 | Capability | Status | Notes |
 | --- | --- | --- |
 | `.oeda` create/open/save/edit | supported | sheets, components, nets, buses, wires, junctions, text, title block, undo/redo |
-| design compare `diff` | supported | read-only report of added, removed and modified sheets, components, nets, wires and buses |
+| design compare `diff` | supported | read-only report of added, removed and modified sheets, components, nets, wires, buses and BOM variants |
 | pin electrical types | supported | per-pin roles, the `electrical` check and the KiCad library pin types |
 | reference annotation `annotate` | supported | renumbers per prefix by sheet and placement order; net nodes follow |
 | BOM variants and DNP | supported | named DNP designator lists and value overrides applied to `bom`/`bom_json` |
@@ -108,12 +108,13 @@ reaches, and the per-sheet wire-group and junction totals, tagged
 `open-eda-connectivity` and deterministic for one revision.
 
 `diff` compares two `.oeda` documents without opening either one for editing.
-Sheets are matched by id, components by reference, nets by name inside a sheet
-and buses by name. A sheet present on one side only reports all of its objects
-as added or removed, so a deleted sheet never hides its contents. The report is
-tagged `open-eda-diff`, lists only the changed sheets, and records field-level
-changes (value, footprint, position, rotation, pins, net node sets, wire
-endpoints and bus width). Net node order is not a change. Two documents with the
+Sheets are matched by id, components by reference, nets by name inside a sheet,
+buses and BOM variants by name. A sheet present on one side only reports all of
+its objects as added or removed, so a deleted sheet never hides its contents. The
+report is tagged `open-eda-diff`, lists only the changed sheets, and records
+field-level changes (value, footprint, position, rotation, pins, net node sets,
+wire endpoints, bus width, variant DNP lists and variant value overrides). Net
+node order is not a change. Two documents with the
 same modelled objects compare equal even when their bytes differ; the internal
 edit counter is ignored, while a changed title, drawing revision, company, date
 or unit makes the report unequal.

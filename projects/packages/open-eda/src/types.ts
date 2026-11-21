@@ -770,7 +770,7 @@ export interface DesignDiffSheet {
 export interface DesignDiffReport {
     readonly format: 'open-eda-diff';
     readonly version: number;
-    /** True when no sheet, object or bus changed. */
+    /** True when no sheet, object, bus or variant changed. */
     readonly equal: boolean;
     readonly left: DesignDiffSide;
     readonly right: DesignDiffSide;
@@ -783,6 +783,7 @@ export interface DesignDiffReport {
         readonly noConnects: DesignDiffCounts;
         readonly texts: DesignDiffCounts;
         readonly buses: DesignDiffCounts;
+        readonly variants: DesignDiffCounts;
         readonly design: { readonly modified: number };
     };
     /** Drawing property changes; null when title, rev, company, date and units all match. */
@@ -790,6 +791,7 @@ export interface DesignDiffReport {
     /** Only the sheets that changed. */
     readonly sheets: readonly DesignDiffSheet[];
     readonly buses: DesignDiffSet<Bus>;
+    readonly variants: DesignDiffSet<Variant>;
 }
 
 /** An open design document. Every operation keeps its own stable code. */
