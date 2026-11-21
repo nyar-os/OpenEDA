@@ -33,7 +33,7 @@
             "bus": "Edit design-level buses",
             "bus-add": "Declare a bus the netlist expands into member nets",
             "bus-list": "List the buses a design document declares",
-            "bus-remove": "Remove a declared bus by id or name",
+            "bus-remove": "Remove a declared bus by id, name or alias",
             "variant": "Manage BOM variants and their do-not-populate lists",
             "variant-add": "Declare or replace a BOM variant with DNP designators and value overrides",
             "variant-list": "List the BOM variants a design document declares",
@@ -89,6 +89,7 @@
             "variant": "BOM variant to apply; only bom, bom_json and bom_html accept one",
             "variant-values": "Comma-separated value overrides in ref=value form, for example R1=22k",
             "width": "Number of member nets the bus expands to",
+            "aliases": "Comma-separated alternate bus names that resolve to the same bus, for example D",
             "index": "0-based position inside the sheet's junction or text list",
             "text": "Text content of the annotation"
         }

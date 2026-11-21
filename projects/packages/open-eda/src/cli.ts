@@ -900,6 +900,7 @@ busCommand
     .command('add', 'cli.cmd.bus-add')
     .option('--name <name>', 'cli.opt.name')
     .option('--width <number>', 'cli.opt.width')
+    .option('--aliases <names>', 'cli.opt.aliases')
     .actionCtx(async (options, _args, ctx) => {
         const file = input(options);
         if (file === undefined) {
@@ -914,13 +915,14 @@ busCommand
             });
             return 2;
         }
+        const aliases = list(options, 'aliases');
         const { bus, saved } = await withDesign(file, async (design) => {
-            const bus = await design.addBus({ name, width });
+            const bus = await design.addBus({ name, width, aliases });
             return { bus, saved: await savedReport(design) };
         });
         ctx.emitResult(
             { ...saved, revision: saved.revision, bus },
-            `declared bus ${bus.name}[0..${bus.width - 1}] in ${file} revision=${saved.revision}`,
+            `declared bus ${bus.name}[0..${bus.width - 1}]${aliases.length > 0 ? ` aliased as ${aliases.join(',')}` : ''} in ${file} revision=${saved.revision}`,
         );
         return 0;
     });

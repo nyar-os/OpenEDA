@@ -83,7 +83,8 @@ and the connectivity report then treat that pin as intentionally open, so neithe
 `erc/unconnected-pin` nor an `unconnectedPins` entry is emitted for it. A flag
 without a node is a coordinate-only marker and suppresses nothing. The `nets` check reports `net-bus-member-collision` when a
 declared net has the same name as a member the bus expansion would write, so the
-netlist never emits one `NET` line twice.
+netlist never emits one `NET` line twice, and `net-bus-alias-collision` when two
+nets on one sheet resolve to the same bus through an alias.
 
 Pins may carry an electrical role, one of `input`, `output`, `bidirectional`,
 `tri_state`, `passive`, `power_in`, `power_out`, `open_collector`,
@@ -113,7 +114,11 @@ Accepted findings move from `issues` to `waived` with the same shape plus
 A bus is a design-level declaration, not a drawn bus wire. A bus named `DATA`
 with width 4 expands into the member nets `DATA0`..`DATA3` (name plus the 0-based
 index, no separator). A declared net with the bus name repeats its nodes into
-every member; a bus without such a net still lists its members, without nodes.
+every member; a bus without such a net still lists its members, without nodes. A
+bus may also declare aliases: a net named with an alias resolves to the same bus
+and expands into the same canonical members, and an alias may not collide with a
+bus name, a member name or another alias. Two nets on one sheet that resolve to
+the same bus are reported as `net-bus-alias-collision`.
 
 The `connectivity` report is the read-only companion of the connectivity check:
 it lists every net with its node count and `REF.PIN` pin list, the pins no net
@@ -173,7 +178,7 @@ await design.connectNet({ net: 'VCC', nodes: ['R1.1'] });
 await design.addJunction({ x: 55, y: 30 });
 await design.addText({ text: 'Revision A', x: 20, y: 12 });
 await design.addWire({ net: 'VCC', from: [40, 30], to: [70, 30] });
-await design.addBus({ name: 'DATA', width: 4 });
+await design.addBus({ name: 'DATA', width: 4, aliases: ['D'] });
 const buses = await design.listBuses();
 await design.annotate();
 await design.addVariant({ name: 'lite', dnp: ['R1'], values: { R1: '22k' } });
@@ -222,7 +227,7 @@ open-eda net disconnect blinker.oeda --net VCC --nodes C1.1
 open-eda net derive blinker.oeda
 open-eda net rename blinker.oeda --id VCC --name VIN
 open-eda net delete blinker.oeda --net VIN
-open-eda bus add blinker.oeda --name DATA --width 4
+open-eda bus add blinker.oeda --name DATA --width 4 --aliases D
 open-eda bus list blinker.oeda
 open-eda bus remove blinker.oeda --id DATA
 open-eda component move blinker.oeda --ref R1 --x 50 --y 30 --rotation 90
@@ -381,8 +386,8 @@ served by the desktop window and talks to the same operations over JSON-RPC.
   file are reported as import losses instead of being reconstructed; global
   and hierarchical labels are flattened to sheet-local nets and reported as
   `kicad/label-scope`.
-- It models buses as design-level name and width declarations. It does not draw
-  bus wires or infer bus membership from schematic geometry.
+- It models buses as design-level name, width and alias declarations. It does not
+  draw bus wires or infer bus membership from schematic geometry.
 - It does not draw an interactive schematic or board, route, or check clearance.
 - It does not assign footprints: it stores the footprint text you set, and the
   BOM and KiCad writer emit it verbatim, but it never picks, validates or

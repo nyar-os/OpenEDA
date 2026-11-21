@@ -224,6 +224,13 @@ pub struct Bus {
     pub name: String,
     /// Number of member nets; at least 1.
     pub width: u64,
+    /// Alternate names that resolve to this bus.
+    ///
+    /// A net named with an alias expands exactly like a net named with the bus
+    /// name, so `D` with alias `DATA` still yields the members `DATA0`... The
+    /// canonical member names always use the bus name, never the alias.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub aliases: Vec<String>,
 }
 
 /// One BOM variant: the parts that are not populated and the value overrides.
@@ -692,6 +699,9 @@ pub struct AddBusRequest {
     pub name: String,
     /// Number of member nets; must be at least 1.
     pub width: u64,
+    /// Alternate names that resolve to this bus; empty when none are declared.
+    #[serde(default)]
+    pub aliases: Vec<String>,
 }
 
 /// Request of [`add_variant`].
@@ -764,14 +774,17 @@ pub struct Waiver {
 /// projections are supported,
 /// KiCad schematics are also imported, and every other exchange format and rule
 /// check is reported as unsupported. Design-level buses are edited through
-/// `add_bus`, `remove_bus` and `list_buses`, and ERC reports the stable codes
+/// `add_bus`, `remove_bus` and `list_buses`; a bus carries a width and optional
+/// aliases that resolve to the same expansion. ERC reports the stable codes
 /// `erc/duplicate-net-name`, `erc/duplicate-pin`, `erc/single-node-net`,
 /// `erc/dangling-net`, `erc/unconnected-pin`, `erc/floating-wire`,
 /// `erc/reference-illegal`, `erc/pin-name-illegal` and `erc/net-name-illegal`
 /// next to the legacy codes. A no-connect flag that names a component pin
 /// removes `erc/unconnected-pin` and `unreferenced-pin` for that pin, because
 /// the open pin is deliberate. The `nets` check also reports `net-bus-member-collision` when a
-/// declared net would be written twice as a bus member. The JSON keys of this
+/// declared net would be written twice as a bus member, and
+/// `net-bus-alias-collision` when two nets on one sheet resolve to the same bus
+/// through an alias. The JSON keys of this
 /// report are unchanged.
 pub fn capabilities() -> Value {
     let matrix = capability_matrix();
@@ -1204,7 +1217,9 @@ pub fn list_buses(handle: u64) -> Result<Value, ServiceError> {
 ///
 /// Names must be non-empty and unique across the design; a duplicate name is
 /// reported as `object/duplicate`. `width` must be at least 1; zero is reported
-/// as `session/argument-invalid`.
+/// as `session/argument-invalid`. Aliases are trimmed, must be legal net names,
+/// and must not collide with a bus name, another alias or a member name of any
+/// bus, because one net name would then resolve to two different things.
 pub fn add_bus(handle: u64, request: AddBusRequest) -> Result<Value, ServiceError> {
     let name = request.name.trim().to_string();
     if name.is_empty() {
@@ -1213,12 +1228,50 @@ pub fn add_bus(handle: u64, request: AddBusRequest) -> Result<Value, ServiceErro
     if request.width == 0 {
         return Err(ServiceError::new("session/argument-invalid", "a bus width must be at least 1"));
     }
+    let mut aliases = Vec::new();
+    for raw in request.aliases {
+        let alias = raw.trim().to_string();
+        if alias.is_empty() {
+            return Err(ServiceError::new("session/argument-invalid", "a bus alias must not be empty"));
+        }
+        if breaks_net_grammar(&alias) {
+            return Err(ServiceError::new(
+                "session/argument-invalid",
+                format!("bus alias `{alias}` contains whitespace or a control character"),
+            ));
+        }
+        if aliases.contains(&alias) {
+            return Err(ServiceError::new(
+                "session/argument-invalid",
+                format!("bus alias `{alias}` is declared more than once"),
+            ));
+        }
+        aliases.push(alias);
+    }
     mutate(handle, |design| {
-        if design.buses.iter().any(|bus| bus.name == name) {
+        let declared = |candidate: &str| {
+            design.buses.iter().any(|bus| {
+                bus.name == candidate
+                    || bus.aliases.iter().any(|alias| alias == candidate)
+                    || (0..bus.width).any(|index| format!("{}{index}", bus.name) == candidate)
+            })
+        };
+        if declared(&name) {
             return Err(duplicate(format!("bus name `{name}` already exists")));
         }
+        for alias in &aliases {
+            if alias == &name {
+                return Err(ServiceError::new("session/argument-invalid", "a bus alias must differ from its bus name"));
+            }
+            if declared(alias) {
+                return Err(duplicate(format!("bus alias `{alias}` already resolves to a declared bus")));
+            }
+            if (0..request.width).any(|index| format!("{name}{index}") == *alias) {
+                return Err(duplicate(format!("bus alias `{alias}` is already a member name of bus `{name}`")));
+            }
+        }
         let id = free_bus_id(design);
-        let bus = Bus { id, name: name.clone(), width: request.width };
+        let bus = Bus { id, name: name.clone(), width: request.width, aliases };
         design.buses.push(bus.clone());
         design.revision += 1;
         let mut payload = Map::new();
@@ -1236,7 +1289,7 @@ pub fn remove_bus(handle: u64, bus: &str) -> Result<Value, ServiceError> {
         let position = design
             .buses
             .iter()
-            .position(|entry| entry.id == bus || entry.name == bus)
+            .position(|entry| entry.id == bus || entry.name == bus || entry.aliases.iter().any(|alias| alias == bus))
             .ok_or_else(|| not_found(format!("no bus `{bus}` is declared")))?;
         let removed = design.buses.remove(position);
         design.revision += 1;
@@ -2544,6 +2597,22 @@ fn validate_design(design: &Design) -> Result<(), ServiceError> {
         if bus.width == 0 {
             return Err(invalid(format!("bus `{}` has width 0; the minimum is 1", bus.name)));
         }
+        for index in 0..bus.width {
+            if !bus_names.insert(format!("{}{index}", bus.name)) {
+                return Err(invalid(format!("a member name of bus `{}` collides with a declared bus or alias", bus.name)));
+            }
+        }
+        for alias in &bus.aliases {
+            if alias.trim().is_empty() {
+                return Err(invalid(format!("bus `{}` has an empty alias", bus.name)));
+            }
+            if breaks_net_grammar(alias) {
+                return Err(invalid(format!("bus alias `{alias}` contains whitespace or a control character")));
+            }
+            if !bus_names.insert(alias.clone()) {
+                return Err(invalid(format!("bus alias `{alias}` collides with a declared bus name, member name or alias")));
+            }
+        }
     }
     let mut variant_names = HashSet::new();
     for variant in &design.variants {
@@ -3079,6 +3148,7 @@ fn inspect_design(design: &Design, checks: &[String]) -> Vec<Value> {
             }
         }
         for sheet in &design.sheets {
+            let mut resolved: HashMap<&str, &str> = HashMap::new();
             for net in &sheet.nets {
                 if let Some(bus) = members.get(&net.name) {
                     issues.push(issue(
@@ -3089,6 +3159,22 @@ fn inspect_design(design: &Design, checks: &[String]) -> Vec<Value> {
                         &net.id,
                         true,
                         format!("net `{}` collides with a member of bus `{bus}`", net.name),
+                    ));
+                }
+                if let Some(bus) = bus_for_net(design, &net.name)
+                    && let Some(first) = resolved.insert(bus.name.as_str(), net.id.as_str())
+                {
+                    issues.push(issue(
+                        "net-bus-alias-collision",
+                        "error",
+                        design.revision,
+                        &sheet.id,
+                        &net.id,
+                        true,
+                        format!(
+                            "net `{}` resolves to bus `{}` through an alias, but net `{first}` already does the same",
+                            net.name, bus.name
+                        ),
                     ));
                 }
             }
@@ -3461,13 +3547,22 @@ fn connectivity_report_of(design: &Design) -> Value {
     })
 }
 
+/// Resolves a net name to the bus whose name or alias it matches.
+///
+/// Aliases are alternate names for the same declaration: a net called `D` with
+/// alias `D` on bus `DATA` expands into `DATA0`..`DATAn`, never `D0`..`Dn`.
+fn bus_for_net<'a>(design: &'a Design, name: &str) -> Option<&'a Bus> {
+    design.buses.iter().find(|bus| bus.name == name || bus.aliases.iter().any(|alias| alias == name))
+}
+
 /// Projects one design to the deterministic text netlist.
 ///
 /// Every declared bus is announced as `BUS <name> <width>`. A net whose name
-/// equals a bus name expands into the bus member nets using the fixed rule
-/// `DATA` with width 4 -> `DATA0`..`DATA3` (name plus 0-based index, no
-/// separator); each member repeats the parent net's nodes. A declared bus with
-/// no such net still lists its member names, with no nodes, after the sheets.
+/// equals a bus name or one of its aliases expands into the bus member nets
+/// using the fixed rule `DATA` with width 4 -> `DATA0`..`DATA3` (name plus
+/// 0-based index, no separator); each member repeats the parent net's nodes. A
+/// declared bus with no such net still lists its member names, with no nodes,
+/// after the sheets.
 fn render_netlist(design: &Design) -> String {
     let mut text = String::from("# OpenEDA netlist v1\n");
     text.push_str(&format!("# design {} revision {}\n", design.id, design.revision));
@@ -3480,7 +3575,7 @@ fn render_netlist(design: &Design) -> String {
     let mut expanded: HashSet<&str> = HashSet::new();
     for sheet in &design.sheets {
         for net in &sheet.nets {
-            if let Some(bus) = design.buses.iter().find(|bus| bus.name == net.name) {
+            if let Some(bus) = bus_for_net(design, &net.name) {
                 expanded.insert(bus.name.as_str());
                 for index in 0..bus.width {
                     text.push_str(&format!("NET {}{}\n", bus.name, index));
@@ -3513,15 +3608,15 @@ fn render_netlist(design: &Design) -> String {
 /// Projects one design to a CSV pin-level netlist plus its data-row count.
 ///
 /// The header is `Sheet,Net,Ref,Pin` and every node becomes one row. A net whose
-/// name equals a bus name expands into the same member nets the text netlist
-/// writes, so both projections agree. Rows follow sheet, net and node order and
-/// are byte-stable for one revision.
+/// name equals a bus name or alias expands into the same member nets the text
+/// netlist writes, so both projections agree. Rows follow sheet, net and node
+/// order and are byte-stable for one revision.
 fn render_net_csv(design: &Design) -> (String, usize) {
     let mut text = String::from("Sheet,Net,Ref,Pin\n");
     let mut rows = 0usize;
     for sheet in &design.sheets {
         for net in &sheet.nets {
-            let members: Vec<String> = match design.buses.iter().find(|bus| bus.name == net.name) {
+            let members: Vec<String> = match bus_for_net(design, &net.name) {
                 Some(bus) => (0..bus.width).map(|index| format!("{}{index}", bus.name)).collect(),
                 None => vec![net.name.clone()],
             };
@@ -3571,7 +3666,7 @@ fn render_hierarchical_netlist(design: &Design) -> String {
         paths.insert(path.clone());
         text.push_str(&format!("SHEET {path}\n"));
         for net in &sheet.nets {
-            let members: Vec<String> = match design.buses.iter().find(|bus| bus.name == net.name) {
+            let members: Vec<String> = match bus_for_net(design, &net.name) {
                 Some(bus) => (0..bus.width).map(|index| format!("{}{index}", bus.name)).collect(),
                 None => vec![net.name.clone()],
             };
@@ -6697,7 +6792,7 @@ mod tests {
         let handle = created["handle"].as_u64().expect("handle");
         blinker(handle);
         rename_sheet(handle, "sheet-1", "Main, A").expect("rename sheet");
-        add_bus(handle, AddBusRequest { name: "DATA".to_string(), width: 2 }).expect("add bus");
+        add_bus(handle, AddBusRequest { name: "DATA".to_string(), width: 2, aliases: Vec::new() }).expect("add bus");
         connect_net(handle, ConnectNetRequest { sheet: None, net: "DATA".to_string(), nodes: vec!["R1.1".to_string()] })
             .expect("connect DATA");
 
@@ -6754,7 +6849,7 @@ mod tests {
             },
         )
         .expect("connect Power VCC");
-        add_bus(handle, AddBusRequest { name: "DATA".to_string(), width: 2 }).expect("add bus");
+        add_bus(handle, AddBusRequest { name: "DATA".to_string(), width: 2, aliases: Vec::new() }).expect("add bus");
 
         let report = export(handle, "net_hier", &first).expect("export net_hier");
         assert_eq!(report["format"], "net_hier");
@@ -7120,7 +7215,7 @@ mod tests {
                 no_connects: Vec::new(),
                 texts: Vec::new(),
             }],
-            buses: vec![Bus { id: "bus-1".to_string(), name: "DATA".to_string(), width: 4 }],
+            buses: vec![Bus { id: "bus-1".to_string(), name: "DATA".to_string(), width: 4, aliases: Vec::new() }],
             variants: Vec::new(),
             hierarchy: Vec::new(),
             next_component: 2,
@@ -7135,6 +7230,63 @@ mod tests {
         assert_eq!(collision["sheetId"], "sheet-1");
         assert_eq!(collision["objectId"], "net-1");
         assert!(collision["message"].as_str().expect("message").contains("DATA"));
+    }
+
+    #[test]
+    fn nets_check_reports_two_nets_resolving_to_one_bus_through_an_alias() {
+        let design = Design {
+            id: "design-1".to_string(),
+            title: None,
+            rev: String::new(),
+            company: String::new(),
+            date: String::new(),
+            revision: 2,
+            units: "mm".to_string(),
+            sheets: vec![Sheet {
+                id: "sheet-1".to_string(),
+                name: "Sheet 1".to_string(),
+                components: vec![Component {
+                    id: "component-1".to_string(),
+                    reference: "U1".to_string(),
+                    value: "buffer".to_string(),
+                    footprint: String::new(),
+                    x: 0.0,
+                    y: 0.0,
+                    rotation: 0.0,
+                    pins: vec!["1".to_string(), "2".to_string()],
+                    pin_types: BTreeMap::new(),
+                }],
+                nets: vec![
+                    Net {
+                        id: "net-1".to_string(),
+                        name: "DATA".to_string(),
+                        nodes: vec![Node { reference: "U1".to_string(), pin: "1".to_string() }],
+                    },
+                    Net {
+                        id: "net-2".to_string(),
+                        name: "D".to_string(),
+                        nodes: vec![Node { reference: "U1".to_string(), pin: "2".to_string() }],
+                    },
+                ],
+                wires: Vec::new(),
+                junctions: Vec::new(),
+                no_connects: Vec::new(),
+                texts: Vec::new(),
+            }],
+            buses: vec![Bus { id: "bus-1".to_string(), name: "DATA".to_string(), width: 4, aliases: vec!["D".to_string()] }],
+            variants: Vec::new(),
+            hierarchy: Vec::new(),
+            next_component: 2,
+            next_net: 3,
+            next_wire: 1,
+        };
+
+        let issues = inspect_design(&design, &["nets".to_string()]);
+        let collision =
+            issues.iter().find(|issue| issue["code"] == "net-bus-alias-collision").expect("bus alias collision finding");
+        assert_eq!(collision["severity"], "error");
+        assert_eq!(collision["objectId"], "net-2");
+        assert!(collision["message"].as_str().expect("message").contains("net-1"));
     }
 
     #[test]
@@ -7157,17 +7309,42 @@ mod tests {
         )
         .expect("R1");
 
-        let added = add_bus(handle, AddBusRequest { name: "DATA".to_string(), width: 4 }).expect("add bus");
-        assert_eq!(added["bus"], json!({ "id": "bus-1", "name": "DATA", "width": 4 }));
+        let added = add_bus(handle, AddBusRequest { name: "DATA".to_string(), width: 4, aliases: vec!["D".to_string()] })
+            .expect("add bus");
+        assert_eq!(added["bus"], json!({ "id": "bus-1", "name": "DATA", "width": 4, "aliases": ["D"] }));
         assert_eq!(added["revision"], 3);
-        assert_eq!(add_bus(handle, AddBusRequest { name: "DATA".to_string(), width: 2 }).unwrap_err().code, "object/duplicate");
         assert_eq!(
-            add_bus(handle, AddBusRequest { name: "ADDR".to_string(), width: 0 }).unwrap_err().code,
+            add_bus(handle, AddBusRequest { name: "DATA".to_string(), width: 2, aliases: Vec::new() }).unwrap_err().code,
+            "object/duplicate"
+        );
+        assert_eq!(
+            add_bus(handle, AddBusRequest { name: "ADDR".to_string(), width: 2, aliases: vec!["D".to_string()] })
+                .unwrap_err()
+                .code,
+            "object/duplicate",
+            "an alias cannot resolve to two buses"
+        );
+        assert_eq!(
+            add_bus(handle, AddBusRequest { name: "ADDR".to_string(), width: 2, aliases: vec!["DATA1".to_string()] })
+                .unwrap_err()
+                .code,
+            "object/duplicate",
+            "an alias cannot shadow a bus member name"
+        );
+        assert_eq!(
+            add_bus(handle, AddBusRequest { name: "ADDR".to_string(), width: 0, aliases: Vec::new() }).unwrap_err().code,
             "session/argument-invalid"
         );
         assert_eq!(
-            add_bus(handle, AddBusRequest { name: "  ".to_string(), width: 1 }).unwrap_err().code,
+            add_bus(handle, AddBusRequest { name: "  ".to_string(), width: 1, aliases: Vec::new() }).unwrap_err().code,
             "session/argument-invalid"
+        );
+        assert_eq!(
+            add_bus(handle, AddBusRequest { name: "ADDR".to_string(), width: 1, aliases: vec!["A B".to_string()] })
+                .unwrap_err()
+                .code,
+            "session/argument-invalid",
+            "an alias must be a legal net name"
         );
 
         export(handle, "net", &path).expect("export declared bus");
@@ -7179,9 +7356,9 @@ mod tests {
 
         connect_net(
             handle,
-            ConnectNetRequest { sheet: None, net: "DATA".to_string(), nodes: vec!["R1.1".to_string(), "R1.2".to_string()] },
+            ConnectNetRequest { sheet: None, net: "D".to_string(), nodes: vec!["R1.1".to_string(), "R1.2".to_string()] },
         )
-        .expect("connect DATA");
+        .expect("connect alias D");
         export(handle, "net", &path).expect("export expanded bus");
         let text = fs::read_to_string(&path).expect("read expanded netlist");
         for index in 0..4 {
@@ -7190,12 +7367,14 @@ mod tests {
                 "member {index} repeats the parent nodes"
             );
         }
+        assert!(!text.contains("NET D0\n"), "members use the canonical bus name, never the alias");
 
         let listed = list_buses(handle).expect("list buses");
         assert_eq!(listed["buses"].as_array().expect("buses").len(), 1);
         assert_eq!(listed["buses"][0]["name"], "DATA");
+        assert_eq!(listed["buses"][0]["aliases"], json!(["D"]));
 
-        let removed = remove_bus(handle, "DATA").expect("remove by name");
+        let removed = remove_bus(handle, "D").expect("remove by alias");
         assert_eq!(removed["deleted"], "DATA");
         assert_eq!(removed["remaining"], 0);
         assert_eq!(list_buses(handle).expect("list again")["buses"], json!([]));

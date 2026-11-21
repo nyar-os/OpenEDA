@@ -571,12 +571,16 @@ fn compare_buses(left: &Design, right: &Design) -> LevelDiff {
                 diff.removed.push(bus_view(bus));
             }
             (Some(before), Some(after)) => {
+                let mut changes = serde_json::Map::new();
                 if before.width != after.width {
+                    changes.insert("width".to_string(), json!({ "from": before.width, "to": after.width }));
+                }
+                if before.aliases != after.aliases {
+                    changes.insert("aliases".to_string(), json!({ "from": before.aliases, "to": after.aliases }));
+                }
+                if !changes.is_empty() {
                     diff.counts.modified += 1;
-                    diff.modified.push(json!({
-                        "name": name,
-                        "changes": { "width": { "from": before.width, "to": after.width } },
-                    }));
+                    diff.modified.push(json!({ "name": name, "changes": changes }));
                 }
             }
             (None, None) => {}
@@ -586,7 +590,7 @@ fn compare_buses(left: &Design, right: &Design) -> LevelDiff {
 }
 
 fn bus_view(bus: &Bus) -> Value {
-    json!({ "id": bus.id, "name": bus.name, "width": bus.width })
+    json!({ "id": bus.id, "name": bus.name, "width": bus.width, "aliases": bus.aliases })
 }
 
 /// Compares the BOM variants by name; a variant is keyed by its name, so a
@@ -709,10 +713,14 @@ mod tests {
             "Blinker",
             3,
             vec![first.clone()],
-            vec![Bus { id: "bus-1".to_string(), name: "DATA".to_string(), width: 4 }],
+            vec![Bus { id: "bus-1".to_string(), name: "DATA".to_string(), width: 4, aliases: Vec::new() }],
         );
-        let right =
-            design("Blinker", 3, vec![first], vec![Bus { id: "bus-1".to_string(), name: "DATA".to_string(), width: 4 }]);
+        let right = design(
+            "Blinker",
+            3,
+            vec![first],
+            vec![Bus { id: "bus-1".to_string(), name: "DATA".to_string(), width: 4, aliases: Vec::new() }],
+        );
         let report = compare("a.oeda", &left, "b.oeda", &right);
         assert_eq!(report["equal"], true);
         assert_eq!(report["sheets"], json!([]));
@@ -769,13 +777,13 @@ mod tests {
             "A",
             1,
             vec![sheet("sheet-1", "Main")],
-            vec![Bus { id: "bus-1".to_string(), name: "DATA".to_string(), width: 4 }],
+            vec![Bus { id: "bus-1".to_string(), name: "DATA".to_string(), width: 4, aliases: Vec::new() }],
         );
         let right = design(
             "B",
             2,
             vec![sheet("sheet-1", "Core")],
-            vec![Bus { id: "bus-1".to_string(), name: "DATA".to_string(), width: 8 }],
+            vec![Bus { id: "bus-1".to_string(), name: "DATA".to_string(), width: 8, aliases: Vec::new() }],
         );
         let report = compare("a.oeda", &left, "b.oeda", &right);
         assert_eq!(report["sheets"][0]["changes"]["name"]["to"], "Core");

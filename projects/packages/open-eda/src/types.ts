@@ -259,6 +259,8 @@ export interface Bus {
     readonly name: string;
     /** Number of member nets; at least 1. */
     readonly width: number;
+    /** Alternate names that resolve to this bus; members still use `name`. */
+    readonly aliases?: readonly string[];
 }
 
 /** One symbol the design uses, grouped by the library id derived from its pins. */
@@ -373,6 +375,12 @@ export interface BusInput {
     readonly name: string;
     /** Number of member nets; at least 1. */
     readonly width: number;
+    /**
+     * Alternate names that resolve to this bus, for example `['D']`. A net named
+     * with an alias expands into the bus's canonical members (`DATA0`...), and an
+     * alias may not collide with a bus name, member name or another alias.
+     */
+    readonly aliases?: readonly string[];
 }
 
 /** Input of `design.addComponent()`. */

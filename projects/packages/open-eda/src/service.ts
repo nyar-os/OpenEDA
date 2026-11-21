@@ -573,7 +573,10 @@ export function deleteNet(handle: number, input: DeleteNetInput): DeleteNetResul
 /** Declares a design-level bus. */
 export function addBus(handle: number, input: BusInput): BusResult {
     return decode<BusResult>(() =>
-        binding('design.addBus').design_add_bus(handle, JSON.stringify({ name: input.name, width: input.width })),
+        binding('design.addBus').design_add_bus(
+            handle,
+            JSON.stringify({ name: input.name, width: input.width, aliases: input.aliases }),
+        ),
     );
 }
 

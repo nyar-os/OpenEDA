@@ -56,6 +56,9 @@ open-eda net derive <file.oeda> [--sheet <sheet>]
 open-eda net disconnect <file.oeda> --net <name> [--nodes <ref.pin>,<ref.pin>] [--sheet <sheet>]
 open-eda net delete <file.oeda> --net <name> [--sheet <sheet>]
 open-eda net rename <file.oeda> --id <net> --name <new-name> [--sheet <sheet>]
+open-eda bus add <file.oeda> --name <name> --width <n> [--aliases D,E]
+open-eda bus list <file.oeda>
+open-eda bus remove <file.oeda> --id <bus>
 open-eda wire delete <file.oeda> --id <wire-id> [--sheet <sheet>]
 open-eda junction add <file.oeda> --x <n> --y <n> [--sheet <sheet>]
 open-eda junction move <file.oeda> --index <n> --x <n> --y <n> [--sheet <sheet>]
@@ -114,7 +117,9 @@ characters in a net name. A no-connect flag with `--ref` and `--pin` (or the SDK
 `unreferenced-pin` are skipped for it, and the connectivity report omits it from
 `unconnectedPins`. A coordinate-only flag suppresses nothing.
 `nets` reports floating wires, wires that name an undeclared net, single-node
-nets and empty sheets. `connectivity` groups wires by coincident endpoints,
+nets and empty sheets. A net named with a bus alias resolves to the same bus as
+the canonical name; `net-bus-alias-collision` reports two nets on one sheet that
+resolve to the same bus. `connectivity` groups wires by coincident endpoints,
 junctions and T-junctions, then reports `wire-net-conflict` (one error per group
 naming two nets), `wire-net-unassigned` (one warning per unlabeled group) and
 `junction-floating`. `footprints` reports components without a value. `power`
@@ -227,6 +232,8 @@ subset. It creates no design handle and writes no file.
 ## Export limits
 
 - `net` writes `# OpenEDA netlist v1`, then `NET <name>` and `NODE <ref>.<pin>`.
+  A declared bus expands into `<bus><index>` members, and a net named with a bus
+  alias expands into the canonical members rather than alias-derived names.
 - `net_csv` writes the same connectivity as `Sheet,Net,Ref,Pin` rows; bus nets
   expand into their member names and fields are quoted when the CSV grammar
   needs it.
