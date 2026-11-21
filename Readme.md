@@ -80,7 +80,10 @@ check only reads typed pins and reports `erc/input-input-conflict` and
 `erc/power-in-unpowered` when power-input pins have no power-output pin on their
 net. Pin roles are written into the KiCad library symbols and read back from
 them; a role the importer does not know is reported as an unsupported element
-instead of being guessed.
+instead of being guessed. The `power` check reports `power/driver-conflict` when
+more than one power-output pin drives one net, and
+`power/output-driver-conflict` when a power output shares a net with a logic
+output, because either pairing would tie two drivers together.
 
 Reference annotation is deterministic. `annotate` visits sheets in document
 order, then components top to bottom and left to right, and numbers each

@@ -113,7 +113,10 @@ naming two nets), `wire-net-unassigned` (one warning per unlabeled group) and
 detects rails by case-insensitive prefix (`VCC`, `VDD`, `VSS`, `GND`, `VBAT`,
 `VIN`, `PWR`, or a leading `+`/`-`) and warns with `power-net-underconnected`
 below two nodes and `power-net-duplicate` when one rail name appears on more
-than one sheet. Errors fail the report; warnings are reported but do not.
+than one sheet. It also reports `power/driver-conflict` (error) when more than
+one `power_out` pin drives a net and `power/output-driver-conflict` (error) when
+a `power_out` pin shares a net with a logic `output` pin. Errors fail the
+report; warnings are reported but do not.
 
 `inspect` also accepts `--severity code=level` overrides (`error`, `warning`,
 `info` or `off`) and `--waive code[@objectId|@sheetId/objectId]` entries. A
@@ -132,7 +135,10 @@ Pins may carry a role: `input`, `output`, `bidirectional`, `tri_state`,
 `unspecified`. `component pin-type` assigns one, and `--clear` removes it. The
 `electrical` check reads only typed pins and reports
 `erc/input-input-conflict`, `erc/output-output-conflict` and
-`erc/power-in-unpowered`; an untyped pin is never a finding. Roles are written
+`erc/power-in-unpowered`; an untyped pin is never a finding. Power-driver
+conflicts between `power_out` pins, or between a `power_out` and a logic
+`output`, belong to the `power` check (`power/driver-conflict`,
+`power/output-driver-conflict`). Roles are written
 into the KiCad library symbols and read back; an unknown imported type is a loss
 entry, not a guess.
 

@@ -2859,6 +2859,60 @@ fn inspect_design(design: &Design, checks: &[String]) -> Vec<Value> {
                 rails.entry(net.name.to_ascii_uppercase()).or_default().push((&sheet.id, &net.id));
             }
         }
+        // A power output is a supply source, not a logic driver: two of them on
+        // one net are two supplies tied together, and a supply fighting a logic
+        // output is a short. Both are reported here, while the `electrical`
+        // check stays limited to logic input/output roles.
+        for sheet in &design.sheets {
+            for net in &sheet.nets {
+                let mut power_outputs = Vec::new();
+                let mut outputs = Vec::new();
+                for node in &net.nodes {
+                    let Some(component) = sheet.components.iter().find(|component| component.reference == node.reference)
+                    else {
+                        continue;
+                    };
+                    let label = format!("{}.{}", node.reference, node.pin);
+                    match component.pin_types.get(&node.pin) {
+                        Some(PinType::PowerOut) => power_outputs.push(label),
+                        Some(PinType::Output) => outputs.push(label),
+                        _ => {}
+                    }
+                }
+                if power_outputs.len() > 1 {
+                    issues.push(issue(
+                        "power/driver-conflict",
+                        "error",
+                        design.revision,
+                        &sheet.id,
+                        &net.id,
+                        true,
+                        format!(
+                            "net `{}` is driven by {} power outputs ({}); only one supply may drive a net",
+                            net.name,
+                            power_outputs.len(),
+                            power_outputs.join(", ")
+                        ),
+                    ));
+                }
+                if power_outputs.len() == 1 && !outputs.is_empty() {
+                    issues.push(issue(
+                        "power/output-driver-conflict",
+                        "error",
+                        design.revision,
+                        &sheet.id,
+                        &net.id,
+                        true,
+                        format!(
+                            "net `{}` is driven by power output `{}` and logic output {}; the two would drive against each other",
+                            net.name,
+                            power_outputs[0],
+                            outputs.join(", ")
+                        ),
+                    ));
+                }
+            }
+        }
         for (rail, occurrences) in rails {
             let sheets: BTreeSet<&str> = occurrences.iter().map(|(sheet_id, _)| *sheet_id).collect();
             if sheets.len() > 1 {
@@ -6479,6 +6533,80 @@ mod tests {
         let variant = &list_variants(handle).expect("list")["variants"][0];
         assert_eq!(variant["dnp"], json!(["R1"]));
         assert_eq!(variant["values"]["R2"], "22k");
+        close(handle).expect("close");
+    }
+
+    #[test]
+    fn power_check_reports_driver_conflicts() {
+        let created = create(CreateRequest::default()).expect("create");
+        let handle = created["handle"].as_u64().expect("handle");
+        for reference in ["U1", "U2"] {
+            add_component(
+                handle,
+                AddComponentRequest {
+                    sheet: None,
+                    reference: reference.to_string(),
+                    value: "regulator".to_string(),
+                    x: 0.0,
+                    y: 0.0,
+                    rotation: 0.0,
+                    pins: vec!["1".to_string(), "2".to_string()],
+                },
+            )
+            .expect("add");
+        }
+        connect_net(
+            handle,
+            ConnectNetRequest { sheet: None, net: "VCC".to_string(), nodes: vec!["U1.1".to_string(), "U2.1".to_string()] },
+        )
+        .expect("connect");
+        connect_net(
+            handle,
+            ConnectNetRequest { sheet: None, net: "VBAT".to_string(), nodes: vec!["U1.2".to_string(), "U2.2".to_string()] },
+        )
+        .expect("connect");
+        for (reference, pin, pin_type) in [
+            ("U1", "1", PinType::PowerOut),
+            ("U2", "1", PinType::PowerOut),
+            ("U1", "2", PinType::PowerOut),
+            ("U2", "2", PinType::Output),
+        ] {
+            set_pin_type(
+                handle,
+                SetPinTypeRequest {
+                    sheet: None,
+                    reference: reference.to_string(),
+                    pin: pin.to_string(),
+                    pin_type: Some(pin_type),
+                },
+            )
+            .expect("type pin");
+        }
+
+        let report = inspect(handle, Some(vec!["power".to_string()])).expect("inspect power");
+        let codes =
+            report["issues"].as_array().expect("issues").iter().filter_map(|issue| issue["code"].as_str()).collect::<Vec<_>>();
+        assert!(codes.contains(&"power/driver-conflict"));
+        assert!(codes.contains(&"power/output-driver-conflict"));
+        let conflict = report["issues"]
+            .as_array()
+            .expect("issues")
+            .iter()
+            .find(|issue| issue["code"] == "power/driver-conflict")
+            .expect("driver conflict");
+        assert_eq!(conflict["severity"], "error");
+        assert!(conflict["message"].as_str().expect("message").contains("U1.1, U2.1"));
+
+        set_pin_type(
+            handle,
+            SetPinTypeRequest { sheet: None, reference: "U2".to_string(), pin: "1".to_string(), pin_type: None },
+        )
+        .expect("clear");
+        let single = inspect(handle, Some(vec!["power".to_string()])).expect("inspect power");
+        let codes =
+            single["issues"].as_array().expect("issues").iter().filter_map(|issue| issue["code"].as_str()).collect::<Vec<_>>();
+        assert!(!codes.contains(&"power/driver-conflict"));
+        assert!(codes.contains(&"power/output-driver-conflict"));
         close(handle).expect("close");
     }
 }
