@@ -14,6 +14,8 @@ import { OpenEDAError } from './errors.js';
 import type { DesignIntent } from './formats.js';
 import * as service from './service.js';
 import type {
+    Bus,
+    BusInput,
     Component,
     ComponentInput,
     ConnectNetInput,
@@ -411,6 +413,18 @@ function attach(opened: service.DesignHandle, options: AttachOptions): Design {
         async deleteNet(input: DeleteNetInput): Promise<void> {
             const result = await mutate(() => service.deleteNet(handle, input));
             current = result.design;
+        },
+        async addBus(input: BusInput): Promise<Bus> {
+            const result = await mutate(() => service.addBus(handle, input));
+            current = result.design;
+            return result.bus;
+        },
+        async removeBus(bus: string): Promise<void> {
+            const result = await mutate(() => service.removeBus(handle, bus));
+            current = result.design;
+        },
+        async listBuses(): Promise<readonly Bus[]> {
+            return service.listBuses(handle).buses;
         },
         async deleteJunction(index: number, deleteOptions?: { readonly sheet?: string }): Promise<void> {
             const result = await mutate(() => service.deleteJunction(handle, index, deleteOptions?.sheet));

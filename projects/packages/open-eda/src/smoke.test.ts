@@ -112,6 +112,10 @@ test('document core: edit, inspect, save/open round trip and projections', { ski
         assert.deepEqual(report.issues, []);
         assert.equal(design.revision, 6);
 
+        const bus = await design.addBus({ name: 'DATA', width: 4 });
+        assert.deepEqual(bus, { id: 'bus-1', name: 'DATA', width: 4 });
+        assert.equal((await design.listBuses()).length, 1);
+
         const objects = await design.listObjects();
         assert.equal(objects.components.length, 2);
         assert.equal(objects.nets.length, 2);
@@ -126,6 +130,7 @@ test('document core: edit, inspect, save/open round trip and projections', { ski
         const reopened = await eda.open({ path: document });
         assert.equal(reopened.revision, design.revision);
         assert.equal((await reopened.listNets()).length, 2);
+        assert.equal((await reopened.listBuses()).length, 1);
         const resaved = await reopened.save();
         assert.equal(resaved.revision, reopened.revision);
 
@@ -136,7 +141,9 @@ test('document core: edit, inspect, save/open round trip and projections', { ski
         const pdfPath = path.join(directory, 'blinker.pdf');
         const netlist = await reopened.export({ format: 'net', target: netlistPath });
         assert.equal(netlist.format, 'net');
-        assert.ok(fs.readFileSync(netlistPath, 'utf8').includes('NET VCC'));
+        const netlistText = fs.readFileSync(netlistPath, 'utf8');
+        assert.ok(netlistText.includes('NET VCC'));
+        assert.ok(netlistText.includes('BUS DATA 4'));
         const spice = await reopened.export({ format: 'spice', target: spicePath });
         assert.equal(spice.format, 'spice');
         assert.ok(fs.readFileSync(spicePath, 'utf8').includes('* OpenEDA SPICE netlist v1'));
@@ -226,6 +233,20 @@ test('history, sheets and deep edits stay referentially sound', { skip: withoutA
         const renamed = await design.renameNet({ net: 'VCC', name: 'VIN' });
         assert.equal(renamed.name, 'VIN');
         assert.equal((await design.listObjects()).wires[0]?.net, 'VIN');
+
+        const bus = await design.addBus({ name: 'DATA', width: 4 });
+        assert.deepEqual(bus, { id: 'bus-1', name: 'DATA', width: 4 });
+        assert.deepEqual(await design.listBuses(), [bus]);
+        await assert.rejects(
+            design.addBus({ name: 'DATA', width: 2 }),
+            (error: unknown) => error instanceof OpenEDAError && error.code === 'object/duplicate',
+        );
+        await design.removeBus('DATA');
+        assert.deepEqual(await design.listBuses(), []);
+        await assert.rejects(
+            design.removeBus('DATA'),
+            (error: unknown) => error instanceof OpenEDAError && error.code === 'object/not-found',
+        );
 
         const sheet = await design.addSheet('Power');
         assert.equal(sheet.id, 'sheet-2');

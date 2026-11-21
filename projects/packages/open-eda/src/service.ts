@@ -9,6 +9,8 @@
 import { NotImplementedError, OpenEDAError, errorCodes, type OpenEDAErrorCode } from './errors.js';
 import { nativeBinding } from './native.js';
 import type {
+    Bus,
+    BusInput,
     Component,
     ComponentInput,
     ConnectNetInput,
@@ -118,6 +120,22 @@ export interface DisconnectResult extends EditResult, HistoryFlags {
 export interface DeleteNetResult extends EditResult, HistoryFlags {
     readonly deleted: string;
     readonly detached: number;
+}
+
+/** Result of {@link addBus}. */
+export interface BusResult extends EditResult, HistoryFlags {
+    readonly bus: Bus;
+}
+
+/** Result of {@link removeBus}. */
+export interface DeleteBusResult extends EditResult, HistoryFlags {
+    readonly deleted: string;
+    readonly remaining: number;
+}
+
+/** Result of {@link listBuses}. */
+export interface BusListResult extends EditResult {
+    readonly buses: readonly Bus[];
 }
 
 /** Result of {@link deleteJunction} and {@link deleteText}. */
@@ -414,6 +432,23 @@ export function deleteNet(handle: number, input: DeleteNetInput): DeleteNetResul
     return decode<DeleteNetResult>(() =>
         binding('design.deleteNet').design_delete_net(handle, JSON.stringify({ sheet: input.sheet, net: input.net })),
     );
+}
+
+/** Declares a design-level bus. */
+export function addBus(handle: number, input: BusInput): BusResult {
+    return decode<BusResult>(() =>
+        binding('design.addBus').design_add_bus(handle, JSON.stringify({ name: input.name, width: input.width })),
+    );
+}
+
+/** Removes one declared bus by id or name. */
+export function removeBus(handle: number, bus: string): DeleteBusResult {
+    return decode<DeleteBusResult>(() => binding('design.removeBus').design_remove_bus(handle, bus));
+}
+
+/** Lists the buses declared by one open design. */
+export function listBuses(handle: number): BusListResult {
+    return decode<BusListResult>(() => binding('design.listBuses').design_list_buses(handle));
 }
 
 /** Deletes the junction at a 0-based index on a sheet. */

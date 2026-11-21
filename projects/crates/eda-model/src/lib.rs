@@ -6,10 +6,10 @@
 //! the same model and the same capability matrix, so no surface can claim a
 //! capability the model does not implement.
 //!
-//! The MVP covers schematic capture only: sheets, components, nets, wires,
-//! junctions and text annotations, with per-handle undo/redo, netlist, SPICE,
-//! SVG, BOM, PDF and JSON projections, plus KiCad schematic exchange for that
-//! subset.
+//! The MVP covers schematic capture only: sheets, components, nets, design-level
+//! buses, wires, junctions and text annotations, with per-handle undo/redo,
+//! netlist, SPICE, SVG, BOM, PDF and JSON projections, plus KiCad schematic
+//! exchange for that subset.
 //! Board layout, clearance analysis, board exchange and Gerber output are
 //! declared but not implemented, and the capability matrix says so.
 
@@ -4237,6 +4237,72 @@ mod tests {
         let listing = list(handle).expect("list");
         assert_eq!(listing["nets"].as_array().expect("nets").len(), 0);
         assert_eq!(listing["wires"][0]["net"], Value::Null);
+        close(handle).expect("close");
+    }
+
+    #[test]
+    fn buses_are_declared_listed_expanded_and_removed() {
+        let dir = TempDir::new("bus");
+        let path = dir.join("bus.net");
+        let created = create(CreateRequest::default()).expect("create");
+        let handle = created["handle"].as_u64().expect("handle");
+        add_component(
+            handle,
+            AddComponentRequest {
+                sheet: None,
+                reference: "R1".to_string(),
+                value: "10k".to_string(),
+                x: 0.0,
+                y: 0.0,
+                rotation: 0.0,
+                pins: vec!["1".to_string(), "2".to_string()],
+            },
+        )
+        .expect("R1");
+
+        let added = add_bus(handle, AddBusRequest { name: "DATA".to_string(), width: 4 }).expect("add bus");
+        assert_eq!(added["bus"], json!({ "id": "bus-1", "name": "DATA", "width": 4 }));
+        assert_eq!(added["revision"], 3);
+        assert_eq!(add_bus(handle, AddBusRequest { name: "DATA".to_string(), width: 2 }).unwrap_err().code, "object/duplicate");
+        assert_eq!(
+            add_bus(handle, AddBusRequest { name: "ADDR".to_string(), width: 0 }).unwrap_err().code,
+            "session/argument-invalid"
+        );
+        assert_eq!(
+            add_bus(handle, AddBusRequest { name: "  ".to_string(), width: 1 }).unwrap_err().code,
+            "session/argument-invalid"
+        );
+
+        export(handle, "net", &path).expect("export declared bus");
+        let text = fs::read_to_string(&path).expect("read netlist");
+        assert!(text.contains("BUS DATA 4\n"));
+        for index in 0..4 {
+            assert!(text.contains(&format!("NET DATA{index}\n\n")), "member {index} is listed without nodes");
+        }
+
+        connect_net(
+            handle,
+            ConnectNetRequest { sheet: None, net: "DATA".to_string(), nodes: vec!["R1.1".to_string(), "R1.2".to_string()] },
+        )
+        .expect("connect DATA");
+        export(handle, "net", &path).expect("export expanded bus");
+        let text = fs::read_to_string(&path).expect("read expanded netlist");
+        for index in 0..4 {
+            assert!(
+                text.contains(&format!("NET DATA{index}\nNODE R1.1\nNODE R1.2\n\n")),
+                "member {index} repeats the parent nodes"
+            );
+        }
+
+        let listed = list_buses(handle).expect("list buses");
+        assert_eq!(listed["buses"].as_array().expect("buses").len(), 1);
+        assert_eq!(listed["buses"][0]["name"], "DATA");
+
+        let removed = remove_bus(handle, "DATA").expect("remove by name");
+        assert_eq!(removed["deleted"], "DATA");
+        assert_eq!(removed["remaining"], 0);
+        assert_eq!(list_buses(handle).expect("list again")["buses"], json!([]));
+        assert_eq!(remove_bus(handle, "DATA").unwrap_err().code, "object/not-found");
         close(handle).expect("close");
     }
 }

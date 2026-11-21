@@ -26,8 +26,11 @@ export type {
 export { GuiError, closeGui, defaultGuiContentDir, isGuiOpen, openGui, pumpEvents, runGui } from './gui.js';
 export type { GuiCloseResult, GuiOpenResult, GuiStatus, OpenGuiOptions } from './gui.js';
 export type {
+    BusListResult,
+    BusResult,
     ComponentListResult,
     ComponentResult,
+    DeleteBusResult,
     DeleteResult,
     DesignHandle,
     EditResult,

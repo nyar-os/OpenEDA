@@ -222,6 +222,14 @@ export interface TextLabel {
     readonly y: number;
 }
 
+/** Input of `design.addBus()`. */
+export interface BusInput {
+    /** Bus name, for example `DATA`. */
+    readonly name: string;
+    /** Number of member nets; at least 1. */
+    readonly width: number;
+}
+
 /** Input of `design.addComponent()`. */
 export interface ComponentInput {
     /** Target sheet id or name; the first sheet is used when omitted. */
@@ -498,6 +506,12 @@ export interface Design {
     disconnectNet(input: DisconnectNetInput): Promise<Net>;
     /** Deletes a net and detaches the wires that named it. */
     deleteNet(input: DeleteNetInput): Promise<void>;
+    /** Declares a design-level bus; a duplicate name is refused. */
+    addBus(input: BusInput): Promise<Bus>;
+    /** Removes one declared bus by id or name. */
+    removeBus(bus: ObjectId | string): Promise<void>;
+    /** Lists the buses declared by the design. */
+    listBuses(): Promise<readonly Bus[]>;
     /** Deletes the junction at a 0-based index on a sheet. */
     deleteJunction(index: number, options?: { readonly sheet?: SheetId }): Promise<void>;
     /** Moves the junction at a 0-based index to a new placement. */

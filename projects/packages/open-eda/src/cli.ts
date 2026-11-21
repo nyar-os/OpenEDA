@@ -501,6 +501,76 @@ netCommand
         return 0;
     });
 
+const busCommand = cli.command('bus', 'cli.cmd.bus');
+
+busCommand
+    .command('add', 'cli.cmd.bus-add')
+    .option('--name <name>', 'cli.opt.name')
+    .option('--width <number>', 'cli.opt.width')
+    .actionCtx(async (options, _args, ctx) => {
+        const file = input(options);
+        if (file === undefined) {
+            ctx.fail('open-eda.cli.file-required', { message: 'a design document is required' });
+            return 2;
+        }
+        const name = text(options, 'name');
+        const width = integer(options, 'width');
+        if (name === undefined || name.trim().length === 0 || width === undefined || Number.isNaN(width) || width < 1) {
+            ctx.fail('open-eda.cli.arguments-invalid', {
+                message: '`--name` and a positive integer `--width` are required',
+            });
+            return 2;
+        }
+        const { bus, saved } = await withDesign(file, async (design) => {
+            const bus = await design.addBus({ name, width });
+            return { bus, saved: await savedReport(design) };
+        });
+        ctx.emitResult(
+            { ...saved, revision: saved.revision, bus },
+            `declared bus ${bus.name}[0..${bus.width - 1}] in ${file} revision=${saved.revision}`,
+        );
+        return 0;
+    });
+
+busCommand
+    .command('list', 'cli.cmd.bus-list')
+    .actionCtx(async (options, _args, ctx) => {
+        const file = input(options);
+        if (file === undefined) {
+            ctx.fail('open-eda.cli.file-required', { message: 'a design document is required' });
+            return 2;
+        }
+        const buses = await withDesign(file, (design) => design.listBuses());
+        const lines = buses.map((bus) => `${bus.id} ${bus.name} width=${bus.width}`);
+        ctx.emitResult({ buses }, [file, ...lines].join('\n'));
+        return 0;
+    });
+
+busCommand
+    .command('remove', 'cli.cmd.bus-remove')
+    .option('--id <bus>', 'cli.opt.bus')
+    .actionCtx(async (options, _args, ctx) => {
+        const file = input(options);
+        if (file === undefined) {
+            ctx.fail('open-eda.cli.file-required', { message: 'a design document is required' });
+            return 2;
+        }
+        const bus = text(options, 'id');
+        if (bus === undefined || bus.trim().length === 0) {
+            ctx.fail('open-eda.cli.arguments-invalid', { message: '`--id` is required' });
+            return 2;
+        }
+        const saved = await withDesign(file, async (design) => {
+            await design.removeBus(bus);
+            return savedReport(design);
+        });
+        ctx.emitResult(
+            { ...saved, revision: saved.revision, deleted: bus },
+            `removed bus ${bus} from ${file} revision=${saved.revision}`,
+        );
+        return 0;
+    });
+
 const wireCommand = cli.command('wire', 'cli.cmd.wire');
 wireCommand
     .command('delete', 'cli.cmd.wire-delete')

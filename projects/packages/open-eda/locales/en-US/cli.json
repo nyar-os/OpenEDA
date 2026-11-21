@@ -22,6 +22,10 @@
             "net-derive": "Name every connected wire group of a sheet in place",
             "net-disconnect": "Remove REF.PIN nodes from a net while keeping the net and its wires",
             "net-delete": "Delete a net and detach the wires that named it",
+            "bus": "Edit design-level buses",
+            "bus-add": "Declare a bus the netlist expands into member nets",
+            "bus-list": "List the buses a design document declares",
+            "bus-remove": "Remove a declared bus by id or name",
             "wire": "Edit wire segments",
             "wire-delete": "Delete a wire segment in place",
             "junction": "Edit schematic junctions",
@@ -57,6 +61,8 @@
             "wire": "Wire id, for example wire-1",
             "net": "Net name or id, for example VCC",
             "nodes": "Comma-separated REF.PIN nodes, for example R1.1,C1.1",
+            "bus": "Bus id or name, for example DATA",
+            "width": "Number of member nets the bus expands to",
             "index": "0-based position inside the sheet's junction or text list",
             "text": "Text content of the annotation"
         }
