@@ -24,12 +24,14 @@ import type {
     DesignDiffReport,
     DesignObjects,
     DesignSummary,
+    ExportReport,
     ExportTarget,
     InspectCheck,
     InspectOptions,
     InspectReport,
     InspectSeverity,
     InspectWaiver,
+    PinType,
     SaveReport,
     SymbolLibraryResult,
 } from './types.js';
@@ -617,6 +619,42 @@ componentCommand
         ctx.emitResult(
             { ...saved, revision: saved.revision, component },
             `set footprint of ${reference} to ${shown} in ${file} revision=${saved.revision}`,
+        );
+        return 0;
+    });
+
+componentCommand
+    .command('pin-type', 'cli.cmd.component-pin-type')
+    .option('--sheet <sheet>', 'cli.opt.sheet')
+    .option('--clear', 'cli.opt.clear')
+    .actionCtx(async (options, _args, ctx) => {
+        const [file, reference, pin, pinType] = options._ ?? [];
+        if (file === undefined || reference === undefined || pin === undefined) {
+            ctx.fail('open-eda.cli.arguments-invalid', {
+                message: '`<file> <ref> <pin> [type]` arguments are required',
+            });
+            return 2;
+        }
+        const clear = flag(options, 'clear');
+        if (!clear && pinType === undefined) {
+            ctx.fail('open-eda.cli.arguments-invalid', {
+                message: 'a pin electrical type is required unless `--clear` is passed',
+            });
+            return 2;
+        }
+        const { result, saved } = await withDesign(file, async (design) => {
+            const result = await design.setPinType({
+                sheet: text(options, 'sheet'),
+                reference,
+                pin,
+                pinType: clear ? null : (pinType as PinType),
+            });
+            return { result, saved: await savedReport(design) };
+        });
+        const shown = result.pinType ?? '(cleared)';
+        ctx.emitResult(
+            { ...saved, revision: saved.revision, pinType: result },
+            `set pin ${reference}.${pin} to ${shown} in ${file} revision=${saved.revision}`,
         );
         return 0;
     });

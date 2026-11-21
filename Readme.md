@@ -15,8 +15,8 @@ files.
 ## Status
 
 The schematic document core works. The native model creates, edits, saves and
-reopens one `.oeda` document, runs ERC, net, connectivity, footprint and power
-checks, compares two documents with `diff`, and writes netlist, SPICE, SVG,
+reopens one `.oeda` document, runs ERC, electrical, net, connectivity, footprint
+and power checks, compares two documents with `diff`, and writes netlist, SPICE, SVG,
 BOM, PDF, Markdown report and JSON
 document projections. It also exports and imports the same schematic subset as a KiCad
 6/7 schematic (`kicad_sch`): symbols, wires, junctions, no-connect flags, text
@@ -39,7 +39,8 @@ prints exactly which entries are supported.
 | --- | --- | --- |
 | `.oeda` create/open/save/edit | supported | sheets, components, nets, buses, wires, junctions, text, title block, undo/redo |
 | design compare `diff` | supported | read-only report of added, removed and modified sheets, components, nets, wires and buses |
-| checks `erc`, `nets`, `connectivity`, `footprints`, `power` | supported | `drc` and `clearance` are unsupported |
+| pin electrical types | supported | per-pin roles and the `electrical` check for input, output and power conflicts |
+| checks `erc`, `electrical`, `nets`, `connectivity`, `footprints`, `power` | supported | `drc` and `clearance` are unsupported |
 | export `net`, `net_csv`, `spice`, `svg`, `bom`, `bom_json`, `pdf`, `report`, `json`, `kicad_sch` | supported | read-only projections; `kicad_pcb` and `gbr` are unsupported |
 | import `kicad_sch` | supported | symbols, wires, junctions, no-connect flags, text and labels; other constructs are reported as loss entries |
 | KiCad board, Gerber, drill, STEP | unsupported | declared in the capability matrix only |
@@ -66,6 +67,16 @@ SPICE writers emit, so an illegal name fails inspection instead of producing an
 ambiguous file. The `nets` check reports `net-bus-member-collision` when a
 declared net has the same name as a member the bus expansion would write, so the
 netlist never emits one `NET` line twice.
+
+Pins may carry an electrical role, one of `input`, `output`, `bidirectional`,
+`tri_state`, `passive`, `power_in`, `power_out`, `open_collector`,
+`open_emitter` or `unspecified`, matching the KiCad vocabulary. The `electrical`
+check only reads typed pins and reports `erc/input-input-conflict` and
+`erc/output-output-conflict` when two inputs or two outputs share one net, and
+`erc/power-in-unpowered` when power-input pins have no power-output pin on their
+net. Pin roles are native to the `.oeda` document and are not part of the KiCad
+exchange yet: the writer emits every KiCad library pin as `passive` and the
+importer leaves the roles unset.
 
 Inspection accepts per-code severity overrides and waivers. An override promotes,
 demotes or silences one finding code (`error`, `warning`, `info` or `off`); a
@@ -147,7 +158,7 @@ only for file-backed work. The CLI below is a thin shell over this same session
 and enables the sidecar so `undo`/`redo` survive invocations.
 
 ```bash
-# Print the capability matrix (net, spice, svg, bom, pdf, report, json export; erc/nets/connectivity/footprints/power supported)
+# Print the capability matrix (net, spice, svg, bom, pdf, report, json export; erc/electrical/nets/connectivity/footprints/power supported)
 open-eda capabilities
 
 # Create a native design document
@@ -190,7 +201,7 @@ open-eda undo blinker.oeda
 open-eda redo blinker.oeda
 
 # Run the supported checks and list objects
-open-eda inspect blinker.oeda --checks erc,nets,connectivity,footprints,power
+open-eda inspect blinker.oeda --checks erc,electrical,nets,connectivity,footprints,power
 open-eda inspect blinker.oeda --severity erc/unconnected-pin=warning --waive erc/dangling-net@net-3
 open-eda list blinker.oeda
 open-eda symbols blinker.oeda
@@ -198,6 +209,11 @@ open-eda connectivity blinker.oeda
 
 # Compare two revisions of a document
 open-eda diff before.oeda after.oeda
+
+# Type the role of component pins
+open-eda component pin-type blinker.oeda U1 1 output
+open-eda component pin-type blinker.oeda U1 2 power_in
+open-eda component pin-type blinker.oeda U1 1 --clear
 
 # Export supported projections
 open-eda export blinker.oeda --format net --out blinker.net
@@ -242,7 +258,7 @@ derives from their pins and lists the pin count, references, assigned footprints
 and missing footprint count per symbol.
 The JSON writer emits a deterministic, read-only document projection tagged
 `open-eda-projection` with the design header (id, title, revision, rev,
-company, date and units) and, per sheet, its components,
+company, date and units) and, per sheet, its components (including typed pins),
 nets, wires, junctions and text annotations; internal allocation counters are
 not part of it.
 The KiCad writer emits a KiCad 6/7 S-expression with a `lib_symbols` section,
@@ -270,7 +286,7 @@ flowchart LR
     Service --> Native["N-API bridge"]
     Native --> Model["open-eda-model"]
     Model --> Store["Handle store, history and .oeda document"]
-    Model --> Checks["ERC, nets, connectivity, footprints, power"]
+    Model --> Checks["ERC, electrical, nets, connectivity, footprints, power"]
     Model --> Writers["Netlist, SVG, BOM, PDF and report writers"]
     Studio["OpenEDA Studio"] <-->|"JSON-RPC"| Native
 ```
@@ -296,8 +312,10 @@ served by the desktop window and talks to the same operations over JSON-RPC.
 - It does not assign footprints: it stores the footprint text you set, and the
   BOM and KiCad writer emit it verbatim, but it never picks, validates or
   places a footprint. It does not run DRC or clearance checks.
-- Connectivity and power checks analyse the schematic's wires and nets only;
-  they do not model a board, copper or current flow.
+- Connectivity, electrical and power checks analyse the schematic's wires, nets
+  and typed pins only; they do not model a board, copper or current flow.
+- Pin electrical roles are modelled and checked natively, but the KiCad writer
+  and importer do not carry them yet.
 - It does not store undo history in the `.oeda` document itself; the optional
   sidecar is separate and is not carried with the design.
 - `diff` compares the modelled objects of two documents. It is not a textual or

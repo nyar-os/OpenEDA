@@ -8,8 +8,8 @@ description: Create, edit, inspect and deliver schematic design documents with O
 ## Status
 
 The schematic document core is executable. The CLI and SDK create, edit and
-reopen one `.oeda` document, run ERC, net, connectivity, footprint and power
-checks, compare two documents with `diff`, and write a netlist, SPICE netlist,
+reopen one `.oeda` document, run ERC, electrical, net, connectivity, footprint
+and power checks, compare two documents with `diff`, and write a netlist, SPICE netlist,
 SVG sheet, BOM CSV, one-page PDF or
 Markdown report projection. The design carries title-block properties (title,
 drawing revision, company and date) that `design set` edits and the KiCad writer
@@ -31,7 +31,7 @@ open-eda open <file.oeda>
 open-eda list <file.oeda>
 open-eda symbols <file.oeda>
 open-eda connectivity <file.oeda>
-open-eda inspect <file.oeda> [--checks erc,nets,connectivity,footprints,power] [--severity code=level,...] [--waive code[@objectId|@sheetId/objectId],...]
+open-eda inspect <file.oeda> [--checks erc,electrical,nets,connectivity,footprints,power] [--severity code=level,...] [--waive code[@objectId|@sheetId/objectId],...]
 open-eda diff <left.oeda> <right.oeda>
 open-eda export <file.oeda> --format net|net_csv|spice|svg|bom|bom_json|pdf|report|kicad_sch --out <file>
 open-eda import <file.kicad_sch> --out <file.oeda> [--overwrite]
@@ -41,6 +41,7 @@ open-eda component add <file.oeda> --ref <ref> --value <value> --x <n> --y <n> [
 open-eda component move <file.oeda> --ref <ref> --x <n> --y <n> [--rotation <deg>] [--sheet <sheet>]
 open-eda component update <file.oeda> --ref <ref> --value <value> [--sheet <sheet>]
 open-eda component footprint <file.oeda> --ref <ref> [--footprint <footprint>] [--sheet <sheet>]
+open-eda component pin-type <file.oeda> <ref> <pin> [type] [--clear] [--sheet <sheet>]
 open-eda component delete <file.oeda> --ref <ref> [--sheet <sheet>]
 open-eda net connect <file.oeda> --net <name> --nodes <ref.pin>,<ref.pin> [--sheet <sheet>]
 open-eda net derive <file.oeda> [--sheet <sheet>]
@@ -87,7 +88,7 @@ of the design and is never written into `.oeda`.
 |-------|--------|------------------|
 | create | Build a schematic document from a brief | `open-eda list` output, `open-eda inspect` report |
 | edit | Change an existing document without losing identity | `open-eda list` before and after, `open-eda inspect` |
-| review | Audit references, connectivity and component values | `open-eda inspect` findings with codes and objects |
+| review | Audit references, connectivity, pin roles and component values | `open-eda inspect` findings with codes and objects |
 | compare | See what changed between two revisions | `open-eda diff` report with changed objects and `equal` |
 | deliver | Write a netlist, SVG, BOM or PDF projection | the exported file plus `open-eda inspect` at the same revision |
 
@@ -119,8 +120,17 @@ user has not accepted.
 with `capability/not-implemented`. Never describe a design as DRC clean or
 clearance checked.
 
-## Drawing properties
+## Electrical check
 
+Pins may carry a role: `input`, `output`, `bidirectional`, `tri_state`,
+`passive`, `power_in`, `power_out`, `open_collector`, `open_emitter` or
+`unspecified`. `component pin-type` assigns one, and `--clear` removes it. The
+`electrical` check reads only typed pins and reports
+`erc/input-input-conflict`, `erc/output-output-conflict` and
+`erc/power-in-unpowered`; an untyped pin is never a finding. Roles are native to
+the document; the KiCad exchange does not carry them yet.
+
+## Drawing properties
 `title`, `rev`, `company` and `date` are design-wide title-block properties.
 `rev` is a text label such as `A`; it is not the edit revision counter. `design
 set` changes them in place, an empty string clears a field, and an update that

@@ -24,7 +24,7 @@ use std::{
 use open_eda_model::{
     AddBusRequest, AddComponentRequest, AddJunctionRequest, AddTextRequest, AddWireRequest, ConnectNetRequest, CreateRequest,
     DeleteNetRequest, DisconnectNetRequest, InspectOptions, MoveComponentRequest, RenameNetRequest, ServiceError,
-    SetFootprintRequest, UpdateComponentRequest, UpdateDesignRequest,
+    SetFootprintRequest, SetPinTypeRequest, UpdateComponentRequest, UpdateDesignRequest,
 };
 use serde_json::{Value, json};
 use wae::{
@@ -183,6 +183,15 @@ fn diff_documents(ctx: CallContext) -> Result<JsValue> {
     let left = text(&ctx, 0)?;
     let right = text(&ctx, 1)?;
     let report = open_eda_model::diff_documents(Path::new(&left), Path::new(&right)).map_err(fail)?;
+    respond(&ctx, &report)
+}
+
+/// Assigns or clears the electrical role of one component pin.
+#[function]
+fn design_set_pin_type(ctx: CallContext) -> Result<JsValue> {
+    let handle = handle(&ctx, 0)?;
+    let request: SetPinTypeRequest = decode(serde_json::from_str(&text(&ctx, 1)?))?;
+    let report = open_eda_model::set_pin_type(handle, request).map_err(fail)?;
     respond(&ctx, &report)
 }
 
@@ -800,6 +809,19 @@ impl IpcHandler for DesignIpcHandler {
                 }
                 Err(message) => failure(id, "error", message),
             },
+            "design.setPinType" => match ipc_handle(&value) {
+                Ok(handle) => {
+                    let request = value.get("request").cloned().unwrap_or(Value::Null);
+                    match serde_json::from_value::<SetPinTypeRequest>(request) {
+                        Ok(request) => match open_eda_model::set_pin_type(handle, request) {
+                            Ok(payload) => reply(id, "setPinTypeResult", payload),
+                            Err(error) => failed(id, &error),
+                        },
+                        Err(error) => failure(id, "error", format!("session/argument-invalid: {error}")),
+                    }
+                }
+                Err(message) => failure(id, "error", message),
+            },
             "design.renameNet" => match ipc_handle(&value) {
                 Ok(handle) => {
                     let request = value.get("request").cloned().unwrap_or(Value::Null);
@@ -1250,6 +1272,7 @@ register_module![
     design_open,
     design_save,
     design_set_properties,
+    design_set_pin_type,
     design_inspect,
     design_inspect_with,
     design_export,

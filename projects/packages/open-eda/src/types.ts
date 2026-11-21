@@ -57,7 +57,7 @@ export interface OpenEDAOptions {
 export type SupportLevel = 'supported' | 'partial' | 'unsupported';
 
 /** Inspection rules understood by `design.inspect()`. */
-export type InspectCheck = 'erc' | 'drc' | 'nets' | 'connectivity' | 'footprints' | 'clearance' | 'power';
+export type InspectCheck = 'erc' | 'electrical' | 'drc' | 'nets' | 'connectivity' | 'footprints' | 'clearance' | 'power';
 
 /** Render targets declared for preview surfaces. */
 export type RenderFormat = 'svg' | 'png' | 'pdf';
@@ -196,6 +196,19 @@ export interface DesignSummary {
 }
 
 /** One schematic component placed on a sheet. */
+/** Electrical role of one pin; names match the KiCad pin electrical types. */
+export type PinType =
+    | 'input'
+    | 'output'
+    | 'bidirectional'
+    | 'tri_state'
+    | 'passive'
+    | 'power_in'
+    | 'power_out'
+    | 'open_collector'
+    | 'open_emitter'
+    | 'unspecified';
+
 export interface Component {
     readonly id: ObjectId;
     /** Reference designator, unique inside the design. */
@@ -207,6 +220,8 @@ export interface Component {
     readonly y: number;
     readonly rotation: number;
     readonly pins: readonly string[];
+    /** Electrical role of the typed pins, keyed by pin name; absent when no pin is typed. */
+    readonly pinTypes?: Readonly<Record<string, PinType>>;
 }
 
 /** One end of a net. */
@@ -365,6 +380,26 @@ export interface ComponentInput {
     readonly y: number;
     readonly rotation?: number;
     readonly pins: readonly string[];
+}
+
+/** Input of `design.setPinType()`. */
+export interface SetPinTypeInput {
+    readonly sheet?: SheetId;
+    readonly reference: string;
+    readonly pin: string;
+    /** Role to assign; omit or pass null to clear the role. */
+    readonly pinType?: PinType | null;
+}
+
+/** Result of `design.setPinType()`. */
+export interface SetPinTypeResult {
+    readonly revision: number;
+    readonly design: DesignSummary;
+    readonly canUndo: boolean;
+    readonly canRedo: boolean;
+    readonly reference: string;
+    readonly pin: string;
+    readonly pinType: PinType | null;
 }
 
 /** Input of `design.connectNet()`. */
@@ -719,6 +754,8 @@ export interface Design {
     export(options: ExportOptions): Promise<ExportReport>;
     /** Updates title, drawing revision, company and date; an empty string clears a field. */
     setProperties(properties: DesignPropertiesInput): Promise<DesignPropertiesResult>;
+    /** Assigns or clears the electrical role of one pin; omitted `pinType` clears it. */
+    setPinType(input: SetPinTypeInput): Promise<SetPinTypeResult>;
     /** Restores the snapshot taken before the newest edit. */
     undo(): Promise<HistoryResult>;
     /** Reapplies the snapshot the newest undo displaced. */

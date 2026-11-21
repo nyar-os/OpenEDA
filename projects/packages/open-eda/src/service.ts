@@ -39,6 +39,8 @@ import type {
     RenameNetInput,
     SaveReport,
     SetFootprintInput,
+    SetPinTypeInput,
+    SetPinTypeResult,
     Sheet,
     SymbolLibraryResult,
     TextInput,
@@ -234,6 +236,21 @@ export function setDesignProperties(handle: number, input: DesignPropertiesInput
                 rev: input.rev,
                 company: input.company,
                 date: input.date,
+            }),
+        ),
+    );
+}
+
+/** Assigns or clears the electrical role of one component pin. */
+export function setPinType(handle: number, input: SetPinTypeInput): SetPinTypeResult {
+    return decode<SetPinTypeResult>(() =>
+        binding('design.setPinType').design_set_pin_type(
+            handle,
+            JSON.stringify({
+                sheet: input.sheet,
+                reference: input.reference,
+                pin: input.pin,
+                pinType: input.pinType,
             }),
         ),
     );

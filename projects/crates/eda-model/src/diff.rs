@@ -294,6 +294,7 @@ fn component_view(component: &Component) -> Value {
         "y": component.y,
         "rotation": component.rotation,
         "pins": component.pins,
+        "pinTypes": component.pin_types,
     })
 }
 
@@ -310,6 +311,7 @@ fn component_changes(before: &Component, after: &Component) -> Option<Value> {
     field("y", json!(before.y), json!(after.y));
     field("rotation", json!(before.rotation), json!(after.rotation));
     field("pins", json!(before.pins), json!(after.pins));
+    field("pinTypes", json!(before.pin_types), json!(after.pin_types));
     if changes.is_empty() { None } else { Some(Value::Object(changes)) }
 }
 
@@ -565,6 +567,7 @@ mod tests {
             y: 20.0,
             rotation: 0.0,
             pins: vec!["1".to_string(), "2".to_string()],
+            pin_types: BTreeMap::new(),
         }
     }
 

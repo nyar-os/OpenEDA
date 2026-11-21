@@ -470,7 +470,7 @@ fn read_symbol(
         losses.push(loss(MISSING_REFERENCE, format!("a symbol without a reference property was named `{fallback}`")));
         reference = fallback.to_string();
     }
-    Some(Component { id: String::new(), reference, value, footprint, x, y, rotation, pins })
+    Some(Component { id: String::new(), reference, value, footprint, x, y, rotation, pins, pin_types: Default::default() })
 }
 
 fn read_wire(node: &Node, losses: &mut Vec<Value>) -> Option<([f64; 2], [f64; 2])> {
@@ -662,6 +662,7 @@ mod tests {
             y: 0.0,
             rotation: 0.0,
             pins: vec!["1".to_string(), "2".to_string()],
+            pin_types: Default::default(),
         };
         assert_eq!(lib_id_for(&numeric), "open-eda:2pin");
         let named = Component { pins: vec!["A".to_string(), "K".to_string()], ..numeric };

@@ -44,10 +44,10 @@ pub const DESIGN_FORMATS: &[&str] =
     &["kicad_sch", "kicad_pcb", "sch", "brd", "net", "edif", "spice", "cir", "gbr", "drl", "step", "svg", "pdf", "png", "bom"];
 
 /// Rule checks declared by the studio inspector.
-const INSPECT_CHECKS: &[&str] = &["erc", "drc", "nets", "connectivity", "footprints", "clearance", "power"];
+const INSPECT_CHECKS: &[&str] = &["erc", "electrical", "drc", "nets", "connectivity", "footprints", "clearance", "power"];
 
 /// Rule checks this build actually runs.
-const SUPPORTED_CHECKS: &[&str] = &["erc", "nets", "connectivity", "footprints", "power"];
+const SUPPORTED_CHECKS: &[&str] = &["erc", "electrical", "nets", "connectivity", "footprints", "power"];
 
 /// Render targets declared for preview surfaces.
 const RENDER_FORMATS: &[&str] = &["svg", "png", "pdf"];
@@ -197,6 +197,36 @@ pub struct Bus {
     pub width: u64,
 }
 
+/// Electrical role of one pin.
+///
+/// The `electrical` inspection check reads these roles; an untyped pin is
+/// treated as unknown and never produces a finding. The names match the KiCad
+/// pin electrical types, so the same vocabulary is used on every surface.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PinType {
+    /// Logic or analogue input.
+    Input,
+    /// Logic or analogue output.
+    Output,
+    /// Input and output on the same pin.
+    Bidirectional,
+    /// Tri-state output.
+    TriState,
+    /// Pin with no electrical role, such as a resistor terminal.
+    Passive,
+    /// Power input consumed by the component.
+    PowerIn,
+    /// Power output supplied by the component.
+    PowerOut,
+    /// Open-collector output.
+    OpenCollector,
+    /// Open-emitter output.
+    OpenEmitter,
+    /// Role not specified.
+    Unspecified,
+}
+
 /// One schematic component placed on a sheet.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Component {
@@ -221,6 +251,12 @@ pub struct Component {
     pub rotation: f64,
     /// Pin names this component exposes.
     pub pins: Vec<String>,
+    /// Electrical role of the pins that have one, keyed by pin name.
+    ///
+    /// An empty map means no pin has been typed yet. The `electrical` check
+    /// only reads pins listed here and ignores the rest.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub pin_types: BTreeMap<String, PinType>,
 }
 
 /// One schematic wire segment.
@@ -471,6 +507,22 @@ pub struct SetFootprintRequest {
     /// string clears the assignment.
     #[serde(default)]
     pub footprint: String,
+}
+
+/// Request of [`set_pin_type`].
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetPinTypeRequest {
+    /// Target sheet id or name; the first sheet is used when omitted.
+    #[serde(default)]
+    pub sheet: Option<String>,
+    /// Reference designator of the placed component.
+    pub reference: String,
+    /// Pin name as declared by the component.
+    pub pin: String,
+    /// Electrical role to assign; a missing or null value clears the role.
+    #[serde(default)]
+    pub pin_type: Option<PinType>,
 }
 
 /// Request of [`rename_net`].
@@ -1067,6 +1119,7 @@ pub fn add_component(handle: u64, request: AddComponentRequest) -> Result<Value,
             y: request.y,
             rotation: request.rotation,
             pins: request.pins,
+            pin_types: BTreeMap::new(),
         };
         sheet.components.push(component.clone());
         design.revision += 1;
@@ -1184,6 +1237,40 @@ pub fn set_component_footprint(handle: u64, request: SetFootprintRequest) -> Res
         design.revision += 1;
         let mut payload = Map::new();
         payload.insert("component".to_string(), json!(component));
+        Ok(payload)
+    })
+}
+
+/// Assigns or clears the electrical role of one component pin.
+///
+/// The pin must be declared by the component. A missing or null `pin_type`
+/// clears the role. Assigning the role the pin already has is a no-op and adds
+/// no revision. The role feeds the `electrical` inspection check.
+pub fn set_pin_type(handle: u64, request: SetPinTypeRequest) -> Result<Value, ServiceError> {
+    mutate(handle, |design| {
+        let index = sheet_index(design, request.sheet.as_deref())?;
+        let sheet = &mut design.sheets[index];
+        let (reference, current, changed) = {
+            let component =
+                sheet.components.iter_mut().find(|component| component.reference == request.reference).ok_or_else(|| {
+                    not_found(format!("no component with reference `{}` is placed on this sheet", request.reference))
+                })?;
+            if !component.pins.contains(&request.pin) {
+                return Err(not_found(format!("component `{}` does not declare pin `{}`", request.reference, request.pin)));
+            }
+            let changed = match request.pin_type {
+                Some(pin_type) => component.pin_types.insert(request.pin.clone(), pin_type) != Some(pin_type),
+                None => component.pin_types.remove(&request.pin).is_some(),
+            };
+            (component.reference.clone(), component.pin_types.get(&request.pin).copied(), changed)
+        };
+        if changed {
+            design.revision += 1;
+        }
+        let mut payload = Map::new();
+        payload.insert("reference".to_string(), json!(reference));
+        payload.insert("pin".to_string(), json!(request.pin));
+        payload.insert("pinType".to_string(), json!(current));
         Ok(payload)
     })
 }
@@ -2028,6 +2115,11 @@ fn validate_design(design: &Design) -> Result<(), ServiceError> {
             if !component.x.is_finite() || !component.y.is_finite() || !component.rotation.is_finite() {
                 return Err(invalid(format!("component `{}` has a non-finite coordinate", component.reference)));
             }
+            for pin in component.pin_types.keys() {
+                if !component.pins.iter().any(|declared| declared == pin) {
+                    return Err(invalid(format!("component `{}` types missing pin `{pin}`", component.reference)));
+                }
+            }
         }
         for net in &sheet.nets {
             if !net_ids.insert(net.id.clone()) {
@@ -2304,6 +2396,84 @@ fn inspect_design(design: &Design, checks: &[String]) -> Vec<Value> {
                         &wire.id,
                         true,
                         format!("wire `{}` has {} unattached endpoint(s) at {}", wire.id, floating.len(), floating.join(", ")),
+                    ));
+                }
+            }
+        }
+    }
+    if checks.iter().any(|check| check == "electrical") {
+        for sheet in &design.sheets {
+            for net in &sheet.nets {
+                let mut inputs = Vec::new();
+                let mut outputs = Vec::new();
+                let mut power_inputs = Vec::new();
+                let mut power_outputs = Vec::new();
+                for node in &net.nodes {
+                    let Some(component) = sheet.components.iter().find(|component| component.reference == node.reference)
+                    else {
+                        continue;
+                    };
+                    let Some(pin_type) = component.pin_types.get(&node.pin).copied()
+                    else {
+                        continue;
+                    };
+                    let label = format!("{}.{}", node.reference, node.pin);
+                    match pin_type {
+                        PinType::Input => inputs.push(label),
+                        PinType::Output => outputs.push(label),
+                        PinType::PowerIn => power_inputs.push(label),
+                        PinType::PowerOut => power_outputs.push(label),
+                        PinType::Bidirectional
+                        | PinType::TriState
+                        | PinType::Passive
+                        | PinType::OpenCollector
+                        | PinType::OpenEmitter
+                        | PinType::Unspecified => {}
+                    }
+                }
+                if inputs.len() > 1 {
+                    issues.push(issue(
+                        "erc/input-input-conflict",
+                        "error",
+                        design.revision,
+                        &sheet.id,
+                        &net.id,
+                        true,
+                        format!(
+                            "net `{}` connects {} input pins; two inputs cannot drive the same net",
+                            net.name,
+                            inputs.len()
+                        ),
+                    ));
+                }
+                if outputs.len() > 1 {
+                    issues.push(issue(
+                        "erc/output-output-conflict",
+                        "error",
+                        design.revision,
+                        &sheet.id,
+                        &net.id,
+                        true,
+                        format!(
+                            "net `{}` connects {} output pins; they would drive against each other",
+                            net.name,
+                            outputs.len()
+                        ),
+                    ));
+                }
+                if !power_inputs.is_empty() && power_outputs.is_empty() {
+                    issues.push(issue(
+                        "erc/power-in-unpowered",
+                        "error",
+                        design.revision,
+                        &sheet.id,
+                        &net.id,
+                        true,
+                        format!(
+                            "net `{}` has {} power-input pin(s) but no power-output pin to drive it",
+                            net.name,
+                            power_inputs.len()
+                        ),
                     ));
                 }
             }
@@ -3312,6 +3482,7 @@ fn render_json_projection(design: &Design) -> Result<String, ServiceError> {
                         "y": component.y,
                         "rotation": component.rotation,
                         "pins": component.pins,
+                        "pinTypes": component.pin_types,
                     }))
                     .collect::<Vec<_>>(),
                 "nets": sheet
@@ -3923,6 +4094,7 @@ mod tests {
                         y: 0.0,
                         rotation: 0.0,
                         pins: vec!["1".to_string()],
+                        pin_types: BTreeMap::new(),
                     },
                     Component {
                         id: "component-2".to_string(),
@@ -3933,6 +4105,7 @@ mod tests {
                         y: 0.0,
                         rotation: 0.0,
                         pins: vec!["1".to_string()],
+                        pin_types: BTreeMap::new(),
                     },
                 ],
                 nets: Vec::new(),
@@ -4004,6 +4177,7 @@ mod tests {
                     y: 0.0,
                     rotation: 0.0,
                     pins: vec!["1".to_string(), "2".to_string(), "3".to_string(), "4".to_string()],
+                    pin_types: BTreeMap::new(),
                 }],
                 nets: vec![
                     Net {
@@ -4541,6 +4715,7 @@ mod tests {
                     y: 0.0,
                     rotation: 0.0,
                     pins: vec!["1".to_string()],
+                    pin_types: BTreeMap::new(),
                 }],
                 nets: Vec::new(),
                 wires: Vec::new(),
@@ -4764,6 +4939,106 @@ mod tests {
         let sheet = &imported["design"]["sheets"][0];
         assert_eq!(sheet["junctions"], json!([{ "x": 12.5, "y": 7.5 }]));
         assert_eq!(sheet["texts"], json!([{ "text": "Revision A", "x": 15.0, "y": 9.0 }]));
+        close(handle).expect("close");
+    }
+
+    #[test]
+    fn electrical_pin_types_report_conflicts_and_unpowered_inputs() {
+        let created = create(CreateRequest::default()).expect("create");
+        let handle = created["handle"].as_u64().expect("handle");
+        for (reference, x) in [("U1", 0.0), ("U2", 20.0)] {
+            add_component(
+                handle,
+                AddComponentRequest {
+                    sheet: None,
+                    reference: reference.to_string(),
+                    value: "gate".to_string(),
+                    x,
+                    y: 0.0,
+                    rotation: 0.0,
+                    pins: vec!["1".to_string(), "2".to_string()],
+                },
+            )
+            .expect("add component");
+        }
+        connect_net(
+            handle,
+            ConnectNetRequest { sheet: None, net: "SIGNAL".to_string(), nodes: vec!["U1.1".to_string(), "U2.1".to_string()] },
+        )
+        .expect("connect signal");
+        connect_net(
+            handle,
+            ConnectNetRequest { sheet: None, net: "VCC".to_string(), nodes: vec!["U1.2".to_string(), "U2.2".to_string()] },
+        )
+        .expect("connect rail");
+
+        let set = |reference: &str, pin: &str, pin_type: Option<PinType>| {
+            set_pin_type(
+                handle,
+                SetPinTypeRequest { sheet: None, reference: reference.to_string(), pin: pin.to_string(), pin_type },
+            )
+            .expect("set pin type")
+        };
+        set("U1", "1", Some(PinType::Output));
+        set("U2", "1", Some(PinType::Output));
+
+        let codes = |report: &Value| {
+            report["issues"]
+                .as_array()
+                .expect("issues")
+                .iter()
+                .map(|issue| issue["code"].as_str().unwrap_or("").to_string())
+                .collect::<Vec<_>>()
+        };
+        let conflict = inspect_with_options(
+            handle,
+            InspectOptions { checks: Some(vec!["electrical".to_string()]), ..InspectOptions::default() },
+        )
+        .expect("inspect");
+        assert!(codes(&conflict).contains(&"erc/output-output-conflict".to_string()));
+
+        set("U2", "1", Some(PinType::Input));
+        set("U1", "2", Some(PinType::PowerIn));
+        set("U2", "2", Some(PinType::PowerOut));
+        let unpowered_cleared = inspect_with_options(
+            handle,
+            InspectOptions { checks: Some(vec!["electrical".to_string()]), ..InspectOptions::default() },
+        )
+        .expect("inspect");
+        assert!(!codes(&unpowered_cleared).contains(&"erc/output-output-conflict".to_string()));
+        assert!(!codes(&unpowered_cleared).contains(&"erc/power-in-unpowered".to_string()));
+        assert!(!codes(&unpowered_cleared).contains(&"erc/input-input-conflict".to_string()));
+
+        let input_revision = set("U1", "1", Some(PinType::Input))["revision"].as_u64().expect("revision");
+        let inputs = inspect_with_options(
+            handle,
+            InspectOptions { checks: Some(vec!["electrical".to_string()]), ..InspectOptions::default() },
+        )
+        .expect("inspect");
+        assert!(codes(&inputs).contains(&"erc/input-input-conflict".to_string()));
+
+        let no_op = set("U1", "1", Some(PinType::Input));
+        assert_eq!(no_op["revision"].as_u64().expect("revision"), input_revision);
+        let cleared = set("U1", "1", None);
+        assert_eq!(cleared["pinType"], Value::Null);
+        let after_clear = inspect_with_options(
+            handle,
+            InspectOptions { checks: Some(vec!["electrical".to_string()]), ..InspectOptions::default() },
+        )
+        .expect("inspect");
+        assert!(!codes(&after_clear).contains(&"erc/input-input-conflict".to_string()));
+
+        let error = set_pin_type(
+            handle,
+            SetPinTypeRequest {
+                sheet: None,
+                reference: "U1".to_string(),
+                pin: "9".to_string(),
+                pin_type: Some(PinType::Output),
+            },
+        )
+        .expect_err("missing pin");
+        assert_eq!(error.code, "object/not-found");
         close(handle).expect("close");
     }
 
@@ -5161,6 +5436,7 @@ mod tests {
                     y: 0.0,
                     rotation: 0.0,
                     pins: vec!["1".to_string(), "2".to_string()],
+                    pin_types: BTreeMap::new(),
                 }],
                 nets: vec![
                     Net {
@@ -5495,6 +5771,7 @@ mod tests {
                     y: 0.0,
                     rotation: 0.0,
                     pins: vec!["1".to_string(), "1".to_string(), "2".to_string()],
+                    pin_types: BTreeMap::new(),
                 }],
                 nets: vec![Net { id: "net-1".to_string(), name: "SPARE".to_string(), nodes: Vec::new() }],
                 wires: Vec::new(),
@@ -5539,6 +5816,7 @@ mod tests {
                         y: 0.0,
                         rotation: 0.0,
                         pins: vec!["1".to_string(), "2".to_string()],
+                        pin_types: BTreeMap::new(),
                     },
                     Component {
                         id: "component-2".to_string(),
@@ -5549,6 +5827,7 @@ mod tests {
                         y: 0.0,
                         rotation: 0.0,
                         pins: vec!["1.2".to_string()],
+                        pin_types: BTreeMap::new(),
                     },
                 ],
                 nets: vec![Net {
@@ -5600,6 +5879,7 @@ mod tests {
                     y: 0.0,
                     rotation: 0.0,
                     pins: vec!["1".to_string(), "2".to_string()],
+                    pin_types: BTreeMap::new(),
                 }],
                 nets: vec![Net {
                     id: "net-1".to_string(),

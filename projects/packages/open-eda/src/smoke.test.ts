@@ -336,6 +336,47 @@ test('sidecar history persists undo and redo across sessions', { skip: withoutAd
     }
 });
 
+test('pin electrical types drive the electrical check', { skip: withoutAddon }, async () => {
+    const eda = new OpenEDA();
+    try {
+        const design = await eda.create({ title: 'Electrical' });
+        await design.addComponent({ reference: 'U1', value: 'gate', x: 0, y: 0, pins: ['1', '2'] });
+        await design.addComponent({ reference: 'U2', value: 'gate', x: 20, y: 0, pins: ['1', '2'] });
+        await design.connectNet({ net: 'SIGNAL', nodes: ['U1.1', 'U2.1'] });
+        await design.connectNet({ net: 'VCC', nodes: ['U1.2', 'U2.2'] });
+        const typed = await design.setPinType({ reference: 'U1', pin: '1', pinType: 'output' });
+        assert.equal(typed.pinType, 'output');
+        assert.equal(typed.design.revision, 6);
+        await design.setPinType({ reference: 'U2', pin: '1', pinType: 'output' });
+        const conflict = await design.inspect({ checks: ['electrical'] });
+        assert.ok(conflict.issues.some((issue) => issue.code === 'erc/output-output-conflict'));
+        await design.setPinType({ reference: 'U2', pin: '1', pinType: 'input' });
+        await design.setPinType({ reference: 'U1', pin: '2', pinType: 'power_in' });
+        const unpowered = await design.inspect({ checks: ['electrical'] });
+        assert.ok(unpowered.issues.some((issue) => issue.code === 'erc/power-in-unpowered'));
+        await design.setPinType({ reference: 'U2', pin: '2', pinType: 'power_out' });
+        await design.setPinType({ reference: 'U1', pin: '1', pinType: 'input' });
+        const inputs = await design.inspect({ checks: ['electrical'] });
+        assert.ok(inputs.issues.some((issue) => issue.code === 'erc/input-input-conflict'));
+        assert.ok(!inputs.issues.some((issue) => issue.code === 'erc/power-in-unpowered'));
+        const cleared = await design.setPinType({ reference: 'U1', pin: '1', pinType: null });
+        assert.equal(cleared.pinType, null);
+        const after = await design.inspect({ checks: ['electrical'] });
+        assert.ok(!after.issues.some((issue) => issue.code === 'erc/input-input-conflict'));
+        await assert.rejects(
+            design.setPinType({ reference: 'U1', pin: '9', pinType: 'output' }),
+            (error: unknown) => error instanceof OpenEDAError && error.code === 'object/not-found',
+        );
+        await assert.rejects(
+            design.setPinType({ reference: 'U1', pin: '1', pinType: 'bogus' as never }),
+            (error: unknown) => error instanceof OpenEDAError && error.code === 'session/argument-invalid',
+        );
+        await design.close();
+    } finally {
+        await eda.dispose();
+    }
+});
+
 test('drawing properties update, persist and reach the KiCad title block', { skip: withoutAddon }, async () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'open-eda-properties-'));
     const document = path.join(directory, 'title.oeda');

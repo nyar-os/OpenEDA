@@ -46,10 +46,13 @@ import type {
     MoveComponentInput,
     Net,
     OpenEDAOptions,
+    PinType,
     RenameNetInput,
     SaveOptions,
     SaveReport,
     SetFootprintInput,
+    SetPinTypeInput,
+    SetPinTypeResult,
     Sheet,
     SymbolLibraryResult,
     TextInput,
@@ -68,6 +71,19 @@ function loadHistory(): Promise<HistoryModule> {
     historyModule ??= import('./history.js');
     return historyModule;
 }
+
+const PIN_TYPES: readonly PinType[] = [
+    'input',
+    'output',
+    'bidirectional',
+    'tri_state',
+    'passive',
+    'power_in',
+    'power_out',
+    'open_collector',
+    'open_emitter',
+    'unspecified',
+];
 
 /** Authoring session. One instance may manage several designs. */
 export class OpenEDA {
@@ -361,6 +377,12 @@ function attach(opened: service.DesignHandle, options: AttachOptions): Design {
             current = result.design;
             return result;
         },
+        async setPinType(input: SetPinTypeInput): Promise<SetPinTypeResult> {
+            assertPinTypeInput(input);
+            const result = await mutate(() => service.setPinType(handle, input));
+            current = result.design;
+            return result;
+        },
         async undo(): Promise<HistoryResult> {
             if (sidecar && sourcePath !== undefined) {
                 return step('undo');
@@ -532,6 +554,18 @@ function assertCreateOptions(options: DesignCreateOptions): void {
     }
     if (options.template !== undefined && (typeof options.template !== 'string' || options.template.trim().length === 0)) {
         throw new OpenEDAError('session/argument-invalid', '`template` must be a non-empty string');
+    }
+}
+
+function assertPinTypeInput(input: SetPinTypeInput): void {
+    for (const key of ['reference', 'pin'] as const) {
+        const value = input?.[key];
+        if (typeof value !== 'string' || value.trim().length === 0) {
+            throw new OpenEDAError('session/argument-invalid', `\`${key}\` must be a non-empty string`);
+        }
+    }
+    if (input.pinType !== undefined && input.pinType !== null && !PIN_TYPES.includes(input.pinType)) {
+        throw new OpenEDAError('session/argument-invalid', `\`${input.pinType}\` is not a supported pin electrical type`);
     }
 }
 
