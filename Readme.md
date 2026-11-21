@@ -44,7 +44,7 @@ prints exactly which entries are supported.
 | reference annotation `annotate` | supported | renumbers per prefix by sheet and placement order; net nodes follow |
 | BOM variants and DNP | supported | named DNP designator lists and value overrides applied to `bom`/`bom_json` |
 | checks `erc`, `electrical`, `nets`, `connectivity`, `footprints`, `power` | supported | `drc` and `clearance` are unsupported |
-| export `net`, `net_csv`, `spice`, `svg`, `bom`, `bom_json`, `pdf`, `report`, `json`, `kicad_sch` | supported | read-only projections; `kicad_pcb` and `gbr` are unsupported |
+| export `net`, `net_csv`, `spice`, `svg`, `bom`, `bom_json`, `bom_html`, `pdf`, `report`, `json`, `kicad_sch` | supported | read-only projections; `kicad_pcb` and `gbr` are unsupported |
 | import `kicad_sch` | supported | symbols, wires, junctions, no-connect flags, text and labels; other constructs are reported as loss entries |
 | KiCad board, Gerber, drill, STEP | unsupported | declared in the capability matrix only |
 | interactive schematic/board renderer | unsupported | the preview is an SVG projection |
@@ -250,6 +250,7 @@ open-eda export blinker.oeda --format svg --out blinker.svg
 open-eda export blinker.oeda --format bom --out blinker.csv
 open-eda export blinker.oeda --format bom --variant lite --out blinker-lite.csv
 open-eda export blinker.oeda --format bom_json --out blinker-bom.json
+open-eda export blinker.oeda --format bom_html --out blinker-bom.html
 open-eda export blinker.oeda --format pdf --out blinker.pdf
 open-eda export blinker.oeda --format report --out blinker.md
 open-eda export blinker.oeda --format json --out blinker.json
@@ -279,7 +280,9 @@ overridden values, while the default export still describes the fully populated
 board. Every DNP or override designator must already be placed; a variant never
 invents a part, and any other export target rejects the variant instead of
 silently ignoring it. `bom_json`
-writes the same rows as a deterministic `open-eda-bom` projection. The PDF writer
+writes the same rows as a deterministic `open-eda-bom` projection. `bom_html`
+writes one self-contained HTML table with escaped comment, footprint,
+designator ranges and quantity, plus the design header and selected variant. The PDF writer
 emits a complete one-page A4 landscape vector document (`%PDF-1.4` header,
 cross-reference table, `%%EOF`) with sheet names, component boxes and wires.
 The report writer emits deterministic Markdown with a design header (including

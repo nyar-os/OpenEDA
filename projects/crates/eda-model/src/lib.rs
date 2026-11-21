@@ -53,11 +53,25 @@ const SUPPORTED_CHECKS: &[&str] = &["erc", "electrical", "nets", "connectivity",
 const RENDER_FORMATS: &[&str] = &["svg", "png", "pdf"];
 
 /// Export targets declared by the command line.
-const EXPORT_TARGETS: &[&str] =
-    &["kicad_sch", "kicad_pcb", "net", "net_csv", "spice", "gbr", "pdf", "svg", "bom", "bom_json", "report", "json"];
+const EXPORT_TARGETS: &[&str] = &[
+    "kicad_sch",
+    "kicad_pcb",
+    "net",
+    "net_csv",
+    "spice",
+    "gbr",
+    "pdf",
+    "svg",
+    "bom",
+    "bom_json",
+    "bom_html",
+    "report",
+    "json",
+];
 
 /// Export targets this build actually writes.
-const SUPPORTED_EXPORTS: &[&str] = &["kicad_sch", "net", "net_csv", "spice", "svg", "pdf", "bom", "bom_json", "report", "json"];
+const SUPPORTED_EXPORTS: &[&str] =
+    &["kicad_sch", "net", "net_csv", "spice", "svg", "pdf", "bom", "bom_json", "bom_html", "report", "json"];
 
 /// Tag written into the deterministic JSON document projection.
 const JSON_PROJECTION_FORMAT: &str = "open-eda-projection";
@@ -648,7 +662,7 @@ pub struct Waiver {
 ///
 /// The matrix is the single source of truth for the CLI, the SDK and the
 /// studio, so a method name is never treated as a capability. Netlist, SPICE,
-/// SVG, BOM (CSV and JSON), PDF, report, JSON document and KiCad schematic
+/// SVG, BOM (CSV, JSON and HTML), PDF, report, JSON document and KiCad schematic
 /// projections are supported,
 /// KiCad schematics are also imported, and every other exchange format and rule
 /// check is reported as unsupported. Design-level buses are edited through
@@ -2006,17 +2020,18 @@ pub fn export(handle: u64, format: &str, path: &Path) -> Result<Value, ServiceEr
 /// Projects one open design to an exchange target, optionally through a BOM
 /// variant.
 ///
-/// A variant only changes `bom` and `bom_json`: its DNP designators are left out
+/// A variant only changes `bom`, `bom_json` and `bom_html`: its DNP designators
+/// are left out
 /// and its value overrides replace the component value. Any other format rejects
 /// the variant instead of silently ignoring it.
 pub fn export_with_variant(handle: u64, format: &str, path: &Path, variant: Option<&str>) -> Result<Value, ServiceError> {
     if !SUPPORTED_EXPORTS.contains(&format) {
         return Err(not_implemented(&format!("export `{format}`")));
     }
-    if variant.is_some() && format != "bom" && format != "bom_json" {
+    if variant.is_some() && format != "bom" && format != "bom_json" && format != "bom_html" {
         return Err(ServiceError::new(
             "session/argument-invalid",
-            format!("a BOM variant applies to `bom` and `bom_json`, not `{format}`"),
+            format!("a BOM variant applies to `bom`, `bom_json` and `bom_html`, not `{format}`"),
         ));
     }
     let design = with_session(handle, |session| Ok(session.design.clone()))?;
@@ -2097,6 +2112,19 @@ pub fn export_with_variant(handle: u64, format: &str, path: &Path, variant: Opti
                 artifact["dnp"] = json!(variant.dnp.len());
             }
             (render_bom_json(&design, &rows)?, artifact)
+        }
+        "bom_html" => {
+            let rows = bom_rows(&design, selected);
+            let mut artifact = json!({
+                "kind": "bom_html",
+                "rows": rows.len(),
+                "components": rows.iter().map(|row| row.designators.len()).sum::<usize>(),
+            });
+            if let Some(variant) = selected {
+                artifact["variant"] = json!(variant.name);
+                artifact["dnp"] = json!(variant.dnp.len());
+            }
+            (render_bom_html(&design, &rows, selected), artifact)
         }
         "pdf" => {
             let artifact = json!({
@@ -3683,6 +3711,40 @@ fn render_bom_json(design: &Design, rows: &[BomRow]) -> Result<String, ServiceEr
     Ok(encoded)
 }
 
+/// Projects the BOM rows to a self-contained, deterministic HTML page.
+///
+/// Every field is escaped, so a value or footprint is shown verbatim instead of
+/// being read as markup. A selected variant names itself and its DNP count in
+/// the header; it never changes the rows beyond what [`bom_rows`] already did.
+fn render_bom_html(design: &Design, rows: &[BomRow], variant: Option<&Variant>) -> String {
+    let title = design.title.as_deref().filter(|title| !title.is_empty()).unwrap_or("OpenEDA BOM");
+    let mut html = String::from("<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n");
+    html.push_str(&format!("<title>{}</title>\n", escape_xml(&format!("{title} — BOM"))));
+    html.push_str("</head>\n<body>\n");
+    html.push_str(&format!("<h1>{}</h1>\n", escape_xml(&format!("{title} — BOM"))));
+    let mut properties =
+        vec![format!("Design: {}", design.id), format!("Revision: {}", design.revision), format!("Units: {}", design.units)];
+    if let Some(variant) = variant {
+        properties.push(format!("Variant: {}", variant.name));
+        properties.push(format!("DNP: {}", variant.dnp.len()));
+    }
+    html.push_str(&format!("<p>{}</p>\n", escape_xml(&properties.join(" · "))));
+    html.push_str(
+        "<table>\n<thead>\n<tr><th>Comment</th><th>Footprint</th><th>Designator</th><th>Quantity</th></tr>\n</thead>\n<tbody>\n",
+    );
+    for row in rows {
+        html.push_str(&format!(
+            "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>\n",
+            escape_xml(&row.comment),
+            escape_xml(&row.footprint),
+            escape_xml(&designator_ranges(&row.designators).join(", ")),
+            row.designators.len()
+        ));
+    }
+    html.push_str("</tbody>\n</table>\n</body>\n</html>\n");
+    html
+}
+
 /// Renders the deterministic Markdown design report.
 ///
 /// The document reports the design header, one object-count table, one net
@@ -4093,6 +4155,7 @@ mod tests {
         assert_eq!(matrix["exportTargets"]["pdf"], "supported");
         assert_eq!(matrix["exportTargets"]["bom"], "supported");
         assert_eq!(matrix["exportTargets"]["bom_json"], "supported");
+        assert_eq!(matrix["exportTargets"]["bom_html"], "supported");
         assert_eq!(matrix["exportTargets"]["report"], "supported");
         assert_eq!(matrix["exportTargets"]["json"], "supported");
         assert_eq!(matrix["exportTargets"]["kicad_sch"], "supported");
@@ -4825,6 +4888,7 @@ mod tests {
         let dir = TempDir::new("bom");
         let path = dir.join("blinker.csv");
         let json_path = dir.join("blinker-bom.json");
+        let html_path = dir.join("blinker-bom.html");
         let created = create(CreateRequest::default()).expect("create");
         let handle = created["handle"].as_u64().expect("handle");
         for reference in ["R1", "R2", "R3", "R5", "R6", "R7", "C1"] {
@@ -4893,6 +4957,17 @@ mod tests {
         assert_eq!(items[0]["designatorRanges"], json!(["R2", "R3", "R5-R7"]));
         assert_eq!(items[1]["footprint"], "Capacitor_SMD:C_0603_1608Metric");
         assert_eq!(items[2]["designatorRanges"], json!(["R1"]));
+
+        let html_report = export(handle, "bom_html", &html_path).expect("export bom_html");
+        assert_eq!(html_report["format"], "bom_html");
+        assert_eq!(html_report["artifact"]["rows"], 3);
+        assert_eq!(html_report["artifact"]["components"], 7);
+        let html = fs::read_to_string(&html_path).expect("read bom html");
+        assert!(html.starts_with("<!doctype html>"));
+        assert!(html.contains("<th>Comment</th><th>Footprint</th><th>Designator</th><th>Quantity</th>"));
+        assert!(html.contains("<td>10k</td><td></td><td>R2, R3, R5-R7</td><td>5</td>"));
+        assert!(html.contains("Resistor_SMD:R_0805_2012Metric"));
+        assert!(html.contains("</table>"));
         assert_eq!(
             set_component_footprint(
                 handle,

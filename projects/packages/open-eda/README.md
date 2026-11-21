@@ -19,7 +19,7 @@ crate. `new OpenEDA(options?)` creates a session synchronously, and the returned
 - `inspect` with `erc`, `nets`, `connectivity`, `footprints` and `power`, plus
   per-code `severity` overrides and `waivers` that move findings to `waived`
 - `save` to a native `.oeda` document and reopen it
-- `export` to `net`, `net_csv`, `spice`, `svg`, `bom`, `bom_json`, `pdf`, `report`, `json` or `kicad_sch`
+- `export` to `net`, `net_csv`, `spice`, `svg`, `bom`, `bom_json`, `bom_html`, `pdf`, `report`, `json` or `kicad_sch`
 - `OpenEDA.importKicadSch({ source, target? })` from KiCad schematic text or a
   file path, optionally materializing a native document
 
@@ -27,7 +27,7 @@ crate. `new OpenEDA(options?)` creates a session synchronously, and the returned
 | --- | --- | --- |
 | `.oeda` create/open/save/edit | supported | sheets, components, nets, buses, wires, undo/redo |
 | checks `erc`, `nets`, `connectivity`, `footprints`, `power` | supported | `drc` and `clearance` report `capability/not-implemented` |
-| export `net`, `net_csv`, `spice`, `svg`, `bom`, `bom_json`, `pdf`, `report`, `json` | supported | read-only projections |
+| export `net`, `net_csv`, `spice`, `svg`, `bom`, `bom_json`, `bom_html`, `pdf`, `report`, `json` | supported | read-only projections |
 | export `kicad_sch` | supported | KiCad 6/7 S-expression, deterministic identifiers |
 | import `kicad_sch` | supported | symbols, wires, junctions, no-connect flags, text and labels; other constructs return loss entries |
 | export `kicad_pcb`, `gbr` | unsupported | declared, not implemented |
@@ -45,8 +45,9 @@ are reported as `kicad/duplicate-reference` and `kicad/missing-reference`.
 
 A component stores an optional footprint. `setFootprint` assigns or clears it,
 the KiCad writer emits the `Footprint` property and the importer reads it back,
-`bom` groups by value and footprint with designator ranges, and `bom_json`
-projects the same rows as JSON. The model never picks or validates a footprint.
+`bom` groups by value and footprint with designator ranges, `bom_json`
+projects the same rows as JSON and `bom_html` writes them as an HTML table.
+The model never picks or validates a footprint.
 
 The package also exports the design types, stable error codes and the format
 registry (`kicad_sch`/`kicad_pcb`/`sch`/`brd`/`net`/`edif`/`spice`/`cir`/`gbr`/

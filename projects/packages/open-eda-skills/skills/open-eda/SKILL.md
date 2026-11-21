@@ -10,7 +10,7 @@ description: Create, edit, inspect and deliver schematic design documents with O
 The schematic document core is executable. The CLI and SDK create, edit and
 reopen one `.oeda` document, run ERC, electrical, net, connectivity, footprint
 and power checks, compare two documents with `diff`, and write a netlist, SPICE netlist,
-SVG sheet, BOM CSV, one-page PDF or
+SVG sheet, BOM CSV/JSON/HTML, one-page PDF or
 Markdown report projection. The design carries title-block properties (title,
 drawing revision, company and date) that `design set` edits and the KiCad writer
 reads and writes. The SDK keeps a bounded 32-step undo/redo history
@@ -35,7 +35,7 @@ open-eda connectivity <file.oeda>
 open-eda inspect <file.oeda> [--checks erc,electrical,nets,connectivity,footprints,power] [--severity code=level,...] [--waive code[@objectId|@sheetId/objectId],...]
 open-eda diff <left.oeda> <right.oeda>
 open-eda annotate <file.oeda>
-open-eda export <file.oeda> --format net|net_csv|spice|svg|bom|bom_json|pdf|report|kicad_sch --out <file> [--variant <name>]
+open-eda export <file.oeda> --format net|net_csv|spice|svg|bom|bom_json|bom_html|pdf|report|kicad_sch --out <file> [--variant <name>]
 open-eda variant add <file.oeda> --name <name> [--dnp R1,R2] [--values R1=22k]
 open-eda variant list <file.oeda>
 open-eda variant remove <file.oeda> --name <name>
@@ -156,7 +156,8 @@ without leading letters join the `U` group; the numerals in `TP_A` are replaced.
 designators that are not populated) and `--values` (`ref=value` overrides). It
 replaces a variant with the same name. Every designator must already be placed;
 a variant never invents a part. `export --variant <name>` applies the variant to
-`bom` and `bom_json` only: DNP rows disappear and overridden values replace the
+`bom` and `bom_json` and `bom_html` only: DNP rows disappear and overridden
+values replace the
 component value. Other export targets reject a variant with
 `session/argument-invalid`. Variants do not change the schematic, the KiCad
 `dnp` flag or any board output.
@@ -227,6 +228,8 @@ a footprint and never claims a library part exists outside the document.
   overrides.
 - `bom_json` writes the same rows as a deterministic `open-eda-bom` JSON
   projection with `designators` and `designatorRanges` arrays.
+- `bom_html` writes one self-contained HTML table with the same rows, escaped
+  fields and the design header; `--variant <name>` applies the variant.
 - `pdf` writes one A4 landscape vector page with sheet names, component boxes,
   wires and a cross-reference table.
 - `report` writes deterministic Markdown with a design header, per-sheet object
