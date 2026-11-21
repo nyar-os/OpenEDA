@@ -458,9 +458,11 @@ pub struct DeleteNetRequest {
 /// KiCad schematics are also imported, and every other exchange format and rule
 /// check is reported as unsupported. Design-level buses are edited through
 /// `add_bus`, `remove_bus` and `list_buses`, and ERC reports the stable codes
-/// `erc/duplicate-net-name`, `erc/single-node-net`, `erc/unconnected-pin` and
-/// `erc/floating-wire` next to the legacy codes. The JSON keys of this report
-/// are unchanged.
+/// `erc/duplicate-net-name`, `erc/duplicate-pin`, `erc/single-node-net`,
+/// `erc/dangling-net`, `erc/unconnected-pin` and `erc/floating-wire` next to the
+/// legacy codes. The `nets` check also reports `net-bus-member-collision` when a
+/// declared net would be written twice as a bus member. The JSON keys of this
+/// report are unchanged.
 pub fn capabilities() -> Value {
     let matrix = capability_matrix();
     let level = |id: String| if matrix.supports(&id) { "supported" } else { "unsupported" };
@@ -1844,6 +1846,20 @@ fn inspect_design(design: &Design, checks: &[String]) -> Vec<Value> {
                         format!("reference `{}` is declared more than once", component.reference),
                     ));
                 }
+                let mut pins = HashSet::new();
+                for pin in &component.pins {
+                    if !pins.insert(pin.as_str()) {
+                        issues.push(issue(
+                            "erc/duplicate-pin",
+                            "error",
+                            design.revision,
+                            &sheet.id,
+                            &component.id,
+                            true,
+                            format!("component `{}` declares pin `{pin}` more than once", component.reference),
+                        ));
+                    }
+                }
             }
             let mut net_names = HashSet::new();
             for net in &sheet.nets {
@@ -1869,7 +1885,18 @@ fn inspect_design(design: &Design, checks: &[String]) -> Vec<Value> {
                 }
             }
             for net in &sheet.nets {
-                if net.nodes.len() == 1 {
+                if net.nodes.is_empty() {
+                    issues.push(issue(
+                        "erc/dangling-net",
+                        "warning",
+                        design.revision,
+                        &sheet.id,
+                        &net.id,
+                        true,
+                        format!("net `{}` has no nodes; nothing is connected to it", net.name),
+                    ));
+                }
+                else if net.nodes.len() == 1 {
                     issues.push(issue(
                         "erc/single-node-net",
                         "warning",
@@ -2006,6 +2033,30 @@ fn inspect_design(design: &Design, checks: &[String]) -> Vec<Value> {
                         format!("wire `{}` references undeclared net `{net}`", wire.id),
                     )),
                     Some(_) => {}
+                }
+            }
+        }
+        // A bus member is a net name the netlist writes on its own. A declared
+        // net with the same name would emit `NET <member>` twice, so the
+        // collision is reported instead of passing the netlist through.
+        let mut members: HashMap<String, &str> = HashMap::new();
+        for bus in &design.buses {
+            for index in 0..bus.width {
+                members.insert(format!("{}{}", bus.name, index), bus.name.as_str());
+            }
+        }
+        for sheet in &design.sheets {
+            for net in &sheet.nets {
+                if let Some(bus) = members.get(&net.name) {
+                    issues.push(issue(
+                        "net-bus-member-collision",
+                        "error",
+                        design.revision,
+                        &sheet.id,
+                        &net.id,
+                        true,
+                        format!("net `{}` collides with a member of bus `{bus}`", net.name),
+                    ));
                 }
             }
         }
@@ -4238,6 +4289,92 @@ mod tests {
         assert_eq!(listing["nets"].as_array().expect("nets").len(), 0);
         assert_eq!(listing["wires"][0]["net"], Value::Null);
         close(handle).expect("close");
+    }
+
+    #[test]
+    fn inspection_flags_duplicate_pins_and_dangling_nets() {
+        let design = Design {
+            id: "design-1".to_string(),
+            title: None,
+            revision: 2,
+            units: "mm".to_string(),
+            sheets: vec![Sheet {
+                id: "sheet-1".to_string(),
+                name: "Sheet 1".to_string(),
+                components: vec![Component {
+                    id: "component-1".to_string(),
+                    reference: "U1".to_string(),
+                    value: "opamp".to_string(),
+                    x: 0.0,
+                    y: 0.0,
+                    rotation: 0.0,
+                    pins: vec!["1".to_string(), "1".to_string(), "2".to_string()],
+                }],
+                nets: vec![Net { id: "net-1".to_string(), name: "SPARE".to_string(), nodes: Vec::new() }],
+                wires: Vec::new(),
+                junctions: Vec::new(),
+                no_connects: Vec::new(),
+                texts: Vec::new(),
+            }],
+            buses: Vec::new(),
+            next_component: 2,
+            next_net: 2,
+            next_wire: 1,
+        };
+
+        let issues = inspect_design(&design, &["erc".to_string()]);
+        assert!(issues.iter().any(|issue| issue["code"] == "erc/duplicate-pin"));
+        let dangling = issues.iter().find(|issue| issue["code"] == "erc/dangling-net").expect("dangling net finding");
+        assert_eq!(dangling["severity"], "warning");
+        assert!(dangling["message"].as_str().expect("message").contains("SPARE"));
+        assert!(!issues.iter().any(|issue| issue["code"] == "erc/single-node-net"));
+    }
+
+    #[test]
+    fn nets_check_reports_bus_member_collisions() {
+        let design = Design {
+            id: "design-1".to_string(),
+            title: None,
+            revision: 2,
+            units: "mm".to_string(),
+            sheets: vec![Sheet {
+                id: "sheet-1".to_string(),
+                name: "Sheet 1".to_string(),
+                components: vec![Component {
+                    id: "component-1".to_string(),
+                    reference: "U1".to_string(),
+                    value: "buffer".to_string(),
+                    x: 0.0,
+                    y: 0.0,
+                    rotation: 0.0,
+                    pins: vec!["1".to_string(), "2".to_string()],
+                }],
+                nets: vec![Net {
+                    id: "net-1".to_string(),
+                    name: "DATA1".to_string(),
+                    nodes: vec![
+                        Node { reference: "U1".to_string(), pin: "1".to_string() },
+                        Node { reference: "U1".to_string(), pin: "2".to_string() },
+                    ],
+                }],
+                wires: Vec::new(),
+                junctions: Vec::new(),
+                no_connects: Vec::new(),
+                texts: Vec::new(),
+            }],
+            buses: vec![Bus { id: "bus-1".to_string(), name: "DATA".to_string(), width: 4 }],
+            next_component: 2,
+            next_net: 2,
+            next_wire: 1,
+        };
+
+        let issues = inspect_design(&design, &["nets".to_string()]);
+        let collision =
+            issues.iter().find(|issue| issue["code"] == "net-bus-member-collision").expect("bus member collision finding");
+        assert_eq!(collision["severity"], "error");
+        assert_eq!(collision["sheetId"], "sheet-1");
+        assert_eq!(collision["objectId"], "net-1");
+        assert!(collision["message"].as_str().expect("message").contains("DATA"));
     }
 
     #[test]
