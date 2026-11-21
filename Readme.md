@@ -24,7 +24,8 @@ annotations, net labels, including global and hierarchical labels, and the
 title-block title, date, revision and company. Hierarchical sheet symbols and
 their ports are read and written back as declarations; the child sheet file is
 not opened. A separate read-only reader reports the symbols a KiCad `.kicad_sym`
-library declares, with their units and pins. Editing
+library declares, with their units and pins, and the `kicad_sym` export writes
+the placed components' library symbols as an importable KiCad symbol library. Editing
 covers components, nets (derive, disconnect, delete), design-level buses
 (declare, list, remove), wires, junctions and text (move and delete by index),
 no-connect flags (add, delete, and mark one pin as deliberately open),
@@ -48,9 +49,10 @@ prints exactly which entries are supported.
 | reference annotation `annotate` | supported | renumbers per prefix by sheet and placement order; net nodes follow |
 | BOM variants and DNP | supported | named DNP designator lists and value overrides applied to `bom`/`bom_json` |
 | checks `erc`, `electrical`, `nets`, `connectivity`, `footprints`, `power` | supported | `drc` and `clearance` are unsupported |
-| export `net`, `net_csv`, `net_hier`, `spice`, `spice_subckt`, `svg`, `bom`, `bom_json`, `bom_html`, `pdf`, `report`, `json`, `kicad_sch` | supported | read-only projections; `kicad_pcb` and `gbr` are unsupported |
+| export `net`, `net_csv`, `net_hier`, `spice`, `spice_subckt`, `svg`, `bom`, `bom_json`, `bom_html`, `pdf`, `report`, `json`, `kicad_sch`, `kicad_sym` | supported | read-only projections; `kicad_pcb` and `gbr` are unsupported |
 | import `kicad_sch` | supported | symbols, wires, junctions, no-connect flags, text, labels, hierarchical sheet symbols and ports; other constructs are reported as loss entries |
 | import `kicad_sym` | supported | read-only symbol declarations: name, unit count and each pin's number, name, electrical role and unit |
+| export `kicad_sym` | supported | one library symbol per derived library id, with the pins and their electrical roles; no symbol body is invented |
 | KiCad board, Gerber, drill, STEP | unsupported | declared in the capability matrix only |
 | interactive schematic/board renderer | unsupported | the preview is an SVG projection |
 
@@ -281,6 +283,7 @@ open-eda export blinker.oeda --format pdf --out blinker.pdf
 open-eda export blinker.oeda --format report --out blinker.md
 open-eda export blinker.oeda --format json --out blinker.json
 open-eda export blinker.oeda --format kicad_sch --out blinker.kicad_sch
+open-eda export blinker.oeda --format kicad_sym --out blinker.kicad_sym
 
 # Import a KiCad schematic into a native document
 open-eda import blinker.kicad_sch --out blinker-imported.oeda
@@ -345,7 +348,10 @@ properties and `pin` ports per hierarchical sheet, and a `title_block` when a
 drawing property is set. Library pins carry their native electrical role
 (`passive` when untyped);
 identifiers are derived from the document ids, so the same design always writes
-byte-identical output.
+byte-identical output. The `kicad_sym` writer emits one `kicad_symbol_lib` with a
+symbol per derived library id, one `_1_1` unit holding the pins with their
+numbers, names and electrical roles; it writes no graphic body, value or
+footprint and never invents a library part.
 Every file is written through a temporary file and a rename.
 
 Because a CLI invocation is its own process, its `history: 'sidecar'` session

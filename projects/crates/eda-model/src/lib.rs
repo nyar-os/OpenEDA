@@ -55,6 +55,7 @@ const RENDER_FORMATS: &[&str] = &["svg", "png", "pdf"];
 /// Export targets declared by the command line.
 const EXPORT_TARGETS: &[&str] = &[
     "kicad_sch",
+    "kicad_sym",
     "kicad_pcb",
     "net",
     "net_csv",
@@ -74,6 +75,7 @@ const EXPORT_TARGETS: &[&str] = &[
 /// Export targets this build actually writes.
 const SUPPORTED_EXPORTS: &[&str] = &[
     "kicad_sch",
+    "kicad_sym",
     "net",
     "net_csv",
     "net_hier",
@@ -770,7 +772,8 @@ pub struct Waiver {
 ///
 /// The matrix is the single source of truth for the CLI, the SDK and the
 /// studio, so a method name is never treated as a capability. Netlist, SPICE,
-/// SVG, BOM (CSV, JSON and HTML), PDF, report, JSON document and KiCad schematic
+/// SVG, BOM (CSV, JSON and HTML), PDF, report, JSON document, KiCad schematic
+/// and KiCad symbol library
 /// projections are supported,
 /// KiCad schematics are also imported, and every other exchange format and rule
 /// check is reported as unsupported. Design-level buses are edited through
@@ -2400,6 +2403,24 @@ pub fn export_with_variant(handle: u64, format: &str, path: &Path, variant: Opti
                 "ports": design.hierarchy.iter().map(|sheet| sheet.ports.len()).sum::<usize>(),
             });
             (kicad::render(&design), artifact)
+        }
+        "kicad_sym" => {
+            let mut library_ids = BTreeSet::new();
+            let mut pins = 0usize;
+            for sheet in &design.sheets {
+                for component in &sheet.components {
+                    if library_ids.insert(kicad::lib_id_for(component)) {
+                        pins += component.pins.len();
+                    }
+                }
+            }
+            let artifact = json!({
+                "kind": "kicad_sym",
+                "symbols": library_ids.len(),
+                "pins": pins,
+                "components": design.sheets.iter().map(|sheet| sheet.components.len()).sum::<usize>(),
+            });
+            (kicad::render_symbol_library(&design), artifact)
         }
         _ => return Err(not_implemented(&format!("export `{format}`"))),
     };
@@ -4696,6 +4717,7 @@ mod tests {
         assert_eq!(matrix["exportTargets"]["report"], "supported");
         assert_eq!(matrix["exportTargets"]["json"], "supported");
         assert_eq!(matrix["exportTargets"]["kicad_sch"], "supported");
+        assert_eq!(matrix["exportTargets"]["kicad_sym"], "supported");
         assert_eq!(matrix["exportTargets"]["kicad_pcb"], "unsupported");
         assert_eq!(matrix["exportTargets"]["gbr"], "unsupported");
     }
@@ -6399,6 +6421,51 @@ mod tests {
         assert_eq!(names, vec!["VCC", "GND"]);
         assert_eq!(nets[0]["nodes"][0]["ref"], "R1");
 
+        close(handle).expect("close");
+    }
+
+    #[test]
+    fn kicad_sym_export_writes_importable_symbol_declarations() {
+        let dir = TempDir::new("kicad-sym-export");
+        let path = dir.join("blinker.kicad_sym");
+
+        let created = create(CreateRequest::default()).expect("create");
+        let handle = created["handle"].as_u64().expect("handle");
+        blinker(handle);
+        for reference in ["R1", "C1"] {
+            set_pin_type(
+                handle,
+                SetPinTypeRequest {
+                    sheet: None,
+                    reference: reference.to_string(),
+                    pin: "1".to_string(),
+                    pin_type: Some(PinType::Output),
+                },
+            )
+            .expect("type pin 1");
+        }
+
+        let report = export(handle, "kicad_sym", &path).expect("export kicad_sym");
+        assert_eq!(report["format"], "kicad_sym");
+        assert_eq!(report["artifact"], json!({ "kind": "kicad_sym", "symbols": 1, "pins": 2, "components": 2 }));
+        assert_eq!(report["bytes"], fs::metadata(&path).expect("metadata").len() as usize);
+
+        let text = fs::read_to_string(&path).expect("read kicad_sym");
+        assert!(text.starts_with("(kicad_symbol_lib (version 20231120) (generator \"open-eda\")\n"));
+        assert!(text.trim_end().ends_with(')'));
+        assert!(text.contains("(symbol \"open-eda_2pin_"));
+        assert!(text.contains("(pin output line"));
+        assert!(text.contains("(number \"2\""));
+        assert!(!text.contains("location:"), "the writer must not invent a body");
+
+        let imported = import_kicad_symbol(&text).expect("import symbol library");
+        assert_eq!(imported["losses"], json!([]));
+        assert_eq!(imported["totals"], json!({ "symbols": 1, "pins": 2 }));
+        let symbol = &imported["symbols"][0];
+        assert_eq!(symbol["unitCount"], 1);
+        assert_eq!(symbol["pins"][0]["number"], "1");
+        assert_eq!(symbol["pins"][0]["type"], "output");
+        assert_eq!(symbol["pins"][1]["type"], "passive");
         close(handle).expect("close");
     }
 

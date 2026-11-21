@@ -795,6 +795,40 @@ fn child_text<'a>(node: &'a Node, head: &str) -> Option<&'a str> {
     node.find(head).and_then(|item| item.children().first()).and_then(node_text)
 }
 
+/// Renders the component pins of one design as a KiCad 6/7 symbol library.
+///
+/// One symbol is written per distinct library id the schematic writer derives,
+/// with one nested `_1_1` unit holding the pins. Only the pin interface is
+/// exported: values, footprints and placement stay in the schematic writer, so
+/// this projection is deterministic and never invents a graphic body.
+pub(crate) fn render_symbol_library(design: &Design) -> String {
+    let mut out = String::new();
+    out.push_str("(kicad_symbol_lib (version 20231120) (generator \"open-eda\")\n");
+    for (lib_id, symbol) in library_symbols(design) {
+        let name = lib_id.replace(':', "_");
+        out.push_str(&format!("  (symbol {}\n", quote(&name)));
+        out.push_str("    (pin_names (offset 1.016))\n");
+        out.push_str("    (exclude_from_sim no) (in_bom yes) (on_board yes)\n");
+        out.push_str("    (property \"Reference\" \"U\" (at 0 2.54 0) (effects (font (size 1.27 1.27))))\n");
+        out.push_str("    (property \"Value\" \"\" (at 0 -2.54 0) (effects (font (size 1.27 1.27))))\n");
+        out.push_str(&format!("    (symbol {}\n", quote(&format!("{name}_1_1"))));
+        for (index, pin) in symbol.pins.iter().enumerate() {
+            let y = -(index as f64) * 2.54;
+            let pin_type = symbol.pin_types.get(pin).copied().unwrap_or(PinType::Passive);
+            out.push_str(&format!(
+                "      (pin {} line (at -5.08 {} 0) (length 2.54)\n        (name {} (effects (font (size 1.27 1.27))))\n        (number {} (effects (font (size 1.27 1.27)))))\n",
+                pin_type_name(pin_type),
+                num(y),
+                quote(pin),
+                quote(pin)
+            ));
+        }
+        out.push_str("    )\n  )\n");
+    }
+    out.push_str(")\n");
+    out
+}
+
 /// Reads a KiCad 6/7 symbol library and reports the symbols it declares.
 ///
 /// Only the declaration is read: each symbol reports its name, unit count and

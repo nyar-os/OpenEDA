@@ -65,6 +65,7 @@ export type RenderFormat = 'svg' | 'png' | 'pdf';
 /** Exchange targets `design.export()` declares. */
 export type ExportTarget =
     | 'kicad_sch'
+    | 'kicad_sym'
     | 'kicad_pcb'
     | 'net'
     | 'net_csv'
@@ -884,7 +885,7 @@ export interface Design {
     inspect(options?: InspectOptions): Promise<InspectReport>;
     /** Writes the native `.oeda` document; defaults to the path it was opened from. */
     save(options?: SaveOptions): Promise<SaveReport>;
-    /** Projects the design to `net`, `net_csv`, `spice`, `svg`, `bom`, `bom_json`, `bom_html`, `pdf`, `report`, `json` or `kicad_sch`; other targets report `capability/not-implemented`. */
+    /** Projects the design to `net`, `net_csv`, `spice`, `svg`, `bom`, `bom_json`, `bom_html`, `pdf`, `report`, `json`, `kicad_sch` or `kicad_sym`; other targets report `capability/not-implemented`. */
     export(options: ExportOptions): Promise<ExportReport>;
     /** Updates title, drawing revision, company and date; an empty string clears a field. */
     setProperties(properties: DesignPropertiesInput): Promise<DesignPropertiesResult>;

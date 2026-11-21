@@ -14,7 +14,8 @@ SVG sheet, BOM CSV/JSON/HTML, one-page PDF or
 Markdown report projection. The design carries title-block properties (title,
 drawing revision, company and date) that `design set` edits and the KiCad writer
 reads and writes. Hierarchical sheet symbols and their ports round-trip as
-declarations. The SDK keeps a bounded 32-step undo/redo history
+declarations, and `export --format kicad_sym` writes the placed components' pin
+interface as an importable KiCad symbol library. The SDK keeps a bounded 32-step undo/redo history
 per open handle, and the CLI mirrors it in a `<file>.history.json` sidecar so
 `undo` and `redo` work across separate command invocations. Sheet
 add/rename/delete, component move, update and delete, deterministic reference
@@ -37,7 +38,7 @@ open-eda connectivity <file.oeda>
 open-eda inspect <file.oeda> [--checks erc,electrical,nets,connectivity,footprints,power] [--severity code=level,...] [--waive code[@objectId|@sheetId/objectId],...]
 open-eda diff <left.oeda> <right.oeda>
 open-eda annotate <file.oeda>
-open-eda export <file.oeda> --format net|net_csv|net_hier|spice|spice_subckt|svg|bom|bom_json|bom_html|pdf|report|kicad_sch --out <file> [--variant <name>]
+open-eda export <file.oeda> --format net|net_csv|net_hier|spice|spice_subckt|svg|bom|bom_json|bom_html|pdf|report|kicad_sch|kicad_sym --out <file> [--variant <name>]
 open-eda variant add <file.oeda> --name <name> [--dnp R1,R2] [--values R1=22k]
 open-eda variant list <file.oeda>
 open-eda variant remove <file.oeda> --name <name>
@@ -219,6 +220,9 @@ design document. It reports every declared symbol with its unit count and each
 pin's number, name, electrical role and unit, plus a
 `kicad_sym/unsupported-element` loss entry for any construct outside that
 subset. It creates no design handle and writes no file.
+`open-eda export --format kicad_sym` is the reverse projection: it writes one
+library symbol per derived library id with the pins the schematic declares, and
+adds no body, value or footprint.
 
 ## Referential integrity
 
@@ -268,6 +272,10 @@ subset. It creates no design handle and writes no file.
   date, revision and company, the library pin electrical roles and hierarchical
   sheet symbols with their ports; `kicad_pcb`
   and `gbr` reject with `capability/not-implemented`.
+- `kicad_sym` writes one importable `kicad_symbol_lib` with one symbol per
+  derived library id and one `_1_1` unit holding the pins, their names and
+  electrical roles. It writes no graphics, value or footprint and invents no
+  library part.
 - No exchange format can be imported or edited. `.oeda` is the only editable
   document; `import` materializes a `.kicad_sch` into `.oeda`, while `library`
   only reads a `.kicad_sym` symbol declaration. Hierarchical
