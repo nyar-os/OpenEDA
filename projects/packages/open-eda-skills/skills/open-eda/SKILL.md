@@ -110,6 +110,9 @@ of the design and is never written into `.oeda`.
 
 `erc` reports duplicate references, empty references, duplicate net names and net
 nodes that point at a missing component or pin, and warns about unconnected pins.
+A hierarchical port that no net in the document names is reported as
+`erc/unconnected-hierarchical-port`, because the parent wires drawn on that pin
+are not part of the model.
 It also rejects names that would break the writer grammar:
 `erc/reference-illegal` and `erc/pin-name-illegal` for whitespace or a dot inside
 a `REF.PIN` token, and `erc/net-name-illegal` for whitespace or control

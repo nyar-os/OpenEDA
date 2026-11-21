@@ -781,7 +781,8 @@ pub struct Waiver {
 /// aliases that resolve to the same expansion. ERC reports the stable codes
 /// `erc/duplicate-net-name`, `erc/duplicate-pin`, `erc/single-node-net`,
 /// `erc/dangling-net`, `erc/unconnected-pin`, `erc/floating-wire`,
-/// `erc/reference-illegal`, `erc/pin-name-illegal` and `erc/net-name-illegal`
+/// `erc/reference-illegal`, `erc/pin-name-illegal`, `erc/net-name-illegal` and
+/// `erc/unconnected-hierarchical-port`
 /// next to the legacy codes. A no-connect flag that names a component pin
 /// removes `erc/unconnected-pin` and `unreferenced-pin` for that pin, because
 /// the open pin is deliberate. The `nets` check also reports `net-bus-member-collision` when a
@@ -3025,6 +3026,31 @@ fn inspect_design(design: &Design, checks: &[String]) -> Vec<Value> {
                         &wire.id,
                         true,
                         format!("wire `{}` has {} unattached endpoint(s) at {}", wire.id, floating.len(), floating.join(", ")),
+                    ));
+                }
+            }
+        }
+        // A hierarchical port is a declaration on the parent symbol; the model
+        // does not store the wires drawn on that pin. The only connectivity
+        // signal left is a net that shares the port name anywhere in the
+        // document, so a port no net names is reported instead of assumed
+        // connected.
+        let net_names: HashSet<&str> =
+            design.sheets.iter().flat_map(|sheet| sheet.nets.iter()).map(|net| net.name.as_str()).collect();
+        for sheet in &design.hierarchy {
+            for port in &sheet.ports {
+                if !net_names.contains(port.name.as_str()) {
+                    issues.push(issue(
+                        "erc/unconnected-hierarchical-port",
+                        "warning",
+                        design.revision,
+                        &sheet.id,
+                        &format!("{}:port:{}", sheet.id, port.name),
+                        true,
+                        format!(
+                            "hierarchical port `{}` on sheet `{}` matches no net, so nothing is connected to it",
+                            port.name, sheet.name
+                        ),
                     ));
                 }
             }
@@ -6113,6 +6139,55 @@ mod tests {
         let mut broken = design.clone();
         broken.hierarchy[0].width = 0.0;
         assert_eq!(validate_design(&broken).expect_err("non-positive size").code, "format/invalid");
+    }
+
+    #[test]
+    fn erc_reports_hierarchical_ports_that_no_net_names() {
+        let design = Design {
+            id: "design-1".to_string(),
+            title: None,
+            rev: String::new(),
+            company: String::new(),
+            date: String::new(),
+            revision: 1,
+            units: "mm".to_string(),
+            sheets: vec![Sheet {
+                id: "sheet-1".to_string(),
+                name: "Sheet 1".to_string(),
+                components: Vec::new(),
+                nets: vec![Net { id: "net-1".to_string(), name: "VIN".to_string(), nodes: Vec::new() }],
+                wires: Vec::new(),
+                junctions: Vec::new(),
+                no_connects: Vec::new(),
+                texts: Vec::new(),
+            }],
+            buses: Vec::new(),
+            variants: Vec::new(),
+            hierarchy: vec![HierarchicalSheet {
+                id: "hierarchy-1".to_string(),
+                name: "Power".to_string(),
+                file: "power.kicad_sch".to_string(),
+                x: 0.0,
+                y: 0.0,
+                width: 20.0,
+                height: 15.0,
+                ports: vec![
+                    SheetPort { name: "VIN".to_string(), direction: PortDirection::Input, x: 0.0, y: 0.0 },
+                    SheetPort { name: "VOUT".to_string(), direction: PortDirection::Output, x: 0.0, y: 0.0 },
+                ],
+            }],
+            next_component: 1,
+            next_net: 2,
+            next_wire: 1,
+        };
+
+        let issues = inspect_design(&design, &["erc".to_string()]);
+        let ports: Vec<&Value> = issues.iter().filter(|issue| issue["code"] == "erc/unconnected-hierarchical-port").collect();
+        assert_eq!(ports.len(), 1, "only VOUT matches no net");
+        assert_eq!(ports[0]["severity"], "warning");
+        assert_eq!(ports[0]["sheetId"], "hierarchy-1");
+        assert_eq!(ports[0]["objectId"], "hierarchy-1:port:VOUT");
+        assert!(ports[0]["message"].as_str().expect("message").contains("VOUT"));
     }
 
     #[test]

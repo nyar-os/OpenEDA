@@ -77,6 +77,9 @@ ERC keeps the inspection codes stable: `erc/duplicate-pin` reports a component
 that declares one pin name twice, `erc/dangling-net` reports a declared net with
 no nodes, and `erc/duplicate-net-name`, `erc/single-node-net`,
 `erc/unconnected-pin` and `erc/floating-wire` report the remaining findings.
+`erc/unconnected-hierarchical-port` reports a port that no net in the document
+names, because the model stores the port declaration but not the parent wires
+drawn on it.
 `erc/reference-illegal`, `erc/pin-name-illegal` and `erc/net-name-illegal` reject
 names that would break the `REF.PIN` node or `NET` line grammar the netlist and
 SPICE writers emit, so an illegal name fails inspection instead of producing an
