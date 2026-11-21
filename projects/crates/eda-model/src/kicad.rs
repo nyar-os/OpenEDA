@@ -14,7 +14,7 @@ use std::collections::{HashMap, HashSet};
 use data_format_sexpr::{Node, parse_all};
 use serde_json::{Value, json};
 
-use crate::{Component, Design, Junction, Net, Node as NetNode, ServiceError, Sheet, TextLabel, Wire, invalid};
+use crate::{Component, Design, Junction, Net, NoConnect, Node as NetNode, ServiceError, Sheet, TextLabel, Wire, invalid};
 
 /// Loss code reported for a KiCad construct the model cannot represent.
 pub(crate) const UNSUPPORTED_ELEMENT: &str = "kicad/unsupported-element";
@@ -22,6 +22,8 @@ pub(crate) const UNSUPPORTED_ELEMENT: &str = "kicad/unsupported-element";
 pub(crate) const DUPLICATE_REFERENCE: &str = "kicad/duplicate-reference";
 /// Loss code reported when a symbol carries no reference property.
 pub(crate) const MISSING_REFERENCE: &str = "kicad/missing-reference";
+/// Loss code reported when a design-scoped label becomes a sheet-local net.
+pub(crate) const LABEL_SCOPE: &str = "kicad/label-scope";
 
 /// Root tags of the schematic file that carry no design object.
 const STRUCTURAL_TAGS: &[&str] = &["version", "generator", "generator_version", "uuid", "paper", "lib_symbols", "title_block"];
@@ -55,6 +57,9 @@ pub(crate) fn render(design: &Design) -> String {
     for sheet in &design.sheets {
         for (index, junction) in sheet.junctions.iter().enumerate() {
             render_junction(&mut out, design, sheet, index, junction);
+        }
+        for (index, no_connect) in sheet.no_connects.iter().enumerate() {
+            render_no_connect(&mut out, design, sheet, index, no_connect);
         }
         for (index, text) in sheet.texts.iter().enumerate() {
             render_text(&mut out, design, sheet, index, text);
@@ -172,6 +177,15 @@ fn render_junction(out: &mut String, design: &Design, sheet: &Sheet, index: usiz
     ));
 }
 
+fn render_no_connect(out: &mut String, design: &Design, sheet: &Sheet, index: usize, no_connect: &NoConnect) {
+    out.push_str(&format!(
+        "  (no_connect (at {} {}) (uuid \"{}\"))\n",
+        num(no_connect.x),
+        num(no_connect.y),
+        uuid_for(&format!("{}:no-connect:{}:{}", design.id, sheet.id, index))
+    ));
+}
+
 fn render_text(out: &mut String, design: &Design, sheet: &Sheet, index: usize, text: &TextLabel) {
     out.push_str(&format!(
         "  (text {} (at {} {} 0) (effects (font (size 1.27 1.27))) (uuid \"{}\"))\n",
@@ -234,6 +248,7 @@ pub(crate) fn import(text: &str) -> Result<(Design, Vec<Value>), ServiceError> {
     let mut nets: Vec<Net> = Vec::new();
     let mut wires = Vec::new();
     let mut junctions = Vec::new();
+    let mut no_connects = Vec::new();
     let mut texts = Vec::new();
     for node in root.children() {
         match node.head() {
@@ -243,8 +258,19 @@ pub(crate) fn import(text: &str) -> Result<(Design, Vec<Value>), ServiceError> {
                 None => losses.push(loss(UNSUPPORTED_ELEMENT, "a wire without two `(xy ...)` points was skipped".to_string())),
             },
             Some("junction") => read_junction(node, &mut junctions, &mut losses),
+            Some("no_connect") => read_no_connect(node, &mut no_connects, &mut losses),
             Some("text") => read_text(node, &mut texts, &mut losses),
-            Some("label") => read_label(node, &components, &mut nets, &mut losses),
+            Some("label") => {
+                let _ = read_label(node, &components, &mut nets, &mut losses);
+            }
+            Some(tag @ ("global_label" | "hierarchical_label")) => {
+                if let Some(name) = read_label(node, &components, &mut nets, &mut losses) {
+                    losses.push(loss(
+                        LABEL_SCOPE,
+                        format!("`{tag}` `{name}` was imported as a sheet-local net label; cross-sheet scope is not modelled"),
+                    ));
+                }
+            }
             Some(tag) if STRUCTURAL_TAGS.contains(&tag) => {}
             Some(tag) => {
                 losses.push(loss(UNSUPPORTED_ELEMENT, format!("`{tag}` is outside the imported subset and was skipped")));
@@ -278,6 +304,7 @@ pub(crate) fn import(text: &str) -> Result<(Design, Vec<Value>), ServiceError> {
             nets,
             wires,
             junctions,
+            no_connects,
             texts,
         }],
         buses: Vec::new(),
@@ -414,15 +441,15 @@ fn read_text(node: &Node, texts: &mut Vec<TextLabel>, losses: &mut Vec<Value>) {
     }
 }
 
-fn read_label(node: &Node, components: &[Component], nets: &mut Vec<Net>, losses: &mut Vec<Value>) {
+fn read_label(node: &Node, components: &[Component], nets: &mut Vec<Net>, losses: &mut Vec<Value>) -> Option<String> {
     let Some(name) = node.children().first().and_then(node_text)
     else {
         losses.push(loss(UNSUPPORTED_ELEMENT, "a label without a name was skipped".to_string()));
-        return;
+        return None;
     };
     if name.trim().is_empty() {
         losses.push(loss(UNSUPPORTED_ELEMENT, "a label with an empty name was skipped".to_string()));
-        return;
+        return None;
     }
     let name = name.to_string();
     let (x, y, _) = read_at(node).unwrap_or((0.0, 0.0, 0.0));
@@ -436,12 +463,23 @@ fn read_label(node: &Node, components: &[Component], nets: &mut Vec<Net>, losses
     let Some(component) =
         components.iter().find(|component| (component.x - x).abs() < 1.0e-4 && (component.y - y).abs() < 1.0e-4)
     else {
-        return;
+        return Some(name);
     };
     if let Some(pin) = component.pins.first() {
         let node = NetNode { reference: component.reference.clone(), pin: pin.clone() };
         if !nets[index].nodes.contains(&node) {
             nets[index].nodes.push(node);
+        }
+    }
+    Some(name)
+}
+
+/// Reads one `(no_connect (at x y) ...)` flag.
+fn read_no_connect(node: &Node, no_connects: &mut Vec<NoConnect>, losses: &mut Vec<Value>) {
+    match read_at(node) {
+        Some((x, y, _)) if x.is_finite() && y.is_finite() => no_connects.push(NoConnect { x, y }),
+        _ => {
+            losses.push(loss(UNSUPPORTED_ELEMENT, "a no-connect flag without an `(at x y)` placement was skipped".to_string()))
         }
     }
 }

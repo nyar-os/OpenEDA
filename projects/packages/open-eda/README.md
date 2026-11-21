@@ -18,7 +18,7 @@ crate. `new OpenEDA(options?)` creates a session synchronously, and the returned
 - `listObjects`, `listComponents`, `listNets`
 - `inspect` with `erc`, `nets` and `footprints`
 - `save` to a native `.oeda` document and reopen it
-- `export` to `net`, `spice`, `svg`, `bom`, `pdf` or `kicad_sch`
+- `export` to `net`, `spice`, `svg`, `bom`, `pdf`, `report`, `json` or `kicad_sch`
 - `OpenEDA.importKicadSch({ source, target? })` from KiCad schematic text or a
   file path, optionally materializing a native document
 
@@ -26,19 +26,21 @@ crate. `new OpenEDA(options?)` creates a session synchronously, and the returned
 | --- | --- | --- |
 | `.oeda` create/open/save/edit | supported | sheets, components, nets, wires, undo/redo |
 | checks `erc`, `nets`, `footprints` | supported | `drc`, `clearance` and `power` report `capability/not-implemented` |
-| export `net`, `svg`, `bom`, `pdf` | supported | read-only projections |
+| export `net`, `spice`, `svg`, `bom`, `pdf`, `report`, `json` | supported | read-only projections |
 | export `kicad_sch` | supported | KiCad 6/7 S-expression, deterministic identifiers |
-| import `kicad_sch` | supported | symbols, wires and labels; other constructs return loss entries |
+| import `kicad_sch` | supported | symbols, wires, junctions, no-connect flags, text and labels; other constructs return loss entries |
 | export `kicad_pcb`, `gbr` | unsupported | declared, not implemented |
 | import `kicad_pcb`, `sch`, `brd`, `gbr`, `step`, ... | unsupported | declared, not implemented |
 | interactive renderer | unsupported | the preview is an SVG projection |
 
 The KiCad importer reports everything outside its subset instead of dropping it:
-junctions, buses, hierarchical sheets, arcs, global and hierarchical labels,
-text, images and unknown root constructs each add a
+buses, hierarchical sheets, arcs, images and unknown root constructs each add a
 `{"code": "kicad/unsupported-element", "detail": "..."}` entry to `losses`.
-Duplicate references and symbols without a reference are reported as
-`kicad/duplicate-reference` and `kicad/missing-reference`.
+Global and hierarchical labels are imported as sheet-local net labels and add a
+`{"code": "kicad/label-scope", "detail": "..."}` entry because cross-sheet
+label scope is not modelled. Junctions, no-connect flags and text annotations
+are part of the subset. Duplicate references and symbols without a reference
+are reported as `kicad/duplicate-reference` and `kicad/missing-reference`.
 
 The package also exports the design types, stable error codes and the format
 registry (`kicad_sch`/`kicad_pcb`/`sch`/`brd`/`net`/`edif`/`spice`/`cir`/`gbr`/

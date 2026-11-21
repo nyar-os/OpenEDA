@@ -8,7 +8,8 @@
 //!
 //! The MVP covers schematic capture only: sheets, components, nets, wires,
 //! junctions and text annotations, with per-handle undo/redo, netlist, SPICE,
-//! SVG, BOM and PDF projections, plus KiCad schematic exchange for that subset.
+//! SVG, BOM, PDF and JSON projections, plus KiCad schematic exchange for that
+//! subset.
 //! Board layout, clearance analysis, board exchange and Gerber output are
 //! declared but not implemented, and the capability matrix says so.
 
@@ -51,10 +52,16 @@ const SUPPORTED_CHECKS: &[&str] = &["erc", "nets", "connectivity", "footprints",
 const RENDER_FORMATS: &[&str] = &["svg", "png", "pdf"];
 
 /// Export targets declared by the command line.
-const EXPORT_TARGETS: &[&str] = &["kicad_sch", "kicad_pcb", "net", "spice", "gbr", "pdf", "svg", "bom", "report"];
+const EXPORT_TARGETS: &[&str] = &["kicad_sch", "kicad_pcb", "net", "spice", "gbr", "pdf", "svg", "bom", "report", "json"];
 
 /// Export targets this build actually writes.
-const SUPPORTED_EXPORTS: &[&str] = &["kicad_sch", "net", "spice", "svg", "pdf", "bom", "report"];
+const SUPPORTED_EXPORTS: &[&str] = &["kicad_sch", "net", "spice", "svg", "pdf", "bom", "report", "json"];
+
+/// Tag written into the deterministic JSON document projection.
+const JSON_PROJECTION_FORMAT: &str = "open-eda-projection";
+
+/// Version written into the deterministic JSON document projection.
+const JSON_PROJECTION_VERSION: u64 = 1;
 
 /// Loss code reported when a SPICE element pin has no net and gets an NC node.
 const SPICE_OPEN_PIN: &str = "spice/open-pin";
@@ -66,7 +73,8 @@ const SPICE_PIN_COUNT: &str = "spice/pin-count";
 const SUPPORTED_IMPORTS: &[&str] = &["kicad_sch"];
 
 /// Loss codes the KiCad schematic importer reports.
-const KICAD_LOSS_CODES: &[&str] = &[kicad::UNSUPPORTED_ELEMENT, kicad::DUPLICATE_REFERENCE, kicad::MISSING_REFERENCE];
+const KICAD_LOSS_CODES: &[&str] =
+    &[kicad::UNSUPPORTED_ELEMENT, kicad::DUPLICATE_REFERENCE, kicad::MISSING_REFERENCE, kicad::LABEL_SCOPE];
 
 /// Render targets this build actually renders for preview. Only `svg` is a
 /// preview projection; `pdf` is written by the export writer, not the preview.
@@ -211,6 +219,20 @@ pub struct Junction {
     pub y: f64,
 }
 
+/// One no-connect flag placed on a schematic sheet.
+///
+/// The flag records that the point is deliberately left unconnected. The model
+/// keeps its placement so the flag survives a KiCad round trip; it does not
+/// attach the flag to a component pin, because the document stores placement
+/// but not per-pin geometry.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct NoConnect {
+    /// Placement X coordinate in design units.
+    pub x: f64,
+    /// Placement Y coordinate in design units.
+    pub y: f64,
+}
+
 /// One free text annotation drawn on a schematic sheet.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TextLabel {
@@ -238,6 +260,9 @@ pub struct Sheet {
     /// Junctions drawn on this sheet; absent in older documents.
     #[serde(default)]
     pub junctions: Vec<Junction>,
+    /// No-connect flags drawn on this sheet; absent in older documents.
+    #[serde(default)]
+    pub no_connects: Vec<NoConnect>,
     /// Free text annotations drawn on this sheet; absent in older documents.
     #[serde(default)]
     pub texts: Vec<TextLabel>,
@@ -428,13 +453,14 @@ pub struct DeleteNetRequest {
 /// What this build can actually do.
 ///
 /// The matrix is the single source of truth for the CLI, the SDK and the
-/// studio, so a method name is never treated as a capability. Netlist, SVG, BOM,
-/// PDF and KiCad schematic projections are supported, KiCad schematics are also
-/// imported, and every other exchange format and rule check is reported as
-/// unsupported. Design-level buses are edited through `add_bus`, `remove_bus`
-/// and `list_buses`, and ERC reports the stable codes `erc/duplicate-net-name`,
-/// `erc/single-node-net`, `erc/unconnected-pin` and `erc/floating-wire` next to
-/// the legacy codes. The JSON keys of this report are unchanged.
+/// studio, so a method name is never treated as a capability. Netlist, SPICE,
+/// SVG, BOM, PDF, report, JSON and KiCad schematic projections are supported,
+/// KiCad schematics are also imported, and every other exchange format and rule
+/// check is reported as unsupported. Design-level buses are edited through
+/// `add_bus`, `remove_bus` and `list_buses`, and ERC reports the stable codes
+/// `erc/duplicate-net-name`, `erc/single-node-net`, `erc/unconnected-pin` and
+/// `erc/floating-wire` next to the legacy codes. The JSON keys of this report
+/// are unchanged.
 pub fn capabilities() -> Value {
     let matrix = capability_matrix();
     let level = |id: String| if matrix.supports(&id) { "supported" } else { "unsupported" };
@@ -592,6 +618,7 @@ pub fn create(request: CreateRequest) -> Result<Value, ServiceError> {
             nets: Vec::new(),
             wires: Vec::new(),
             junctions: Vec::new(),
+            no_connects: Vec::new(),
             texts: Vec::new(),
         }],
         buses: Vec::new(),
@@ -1325,6 +1352,7 @@ pub fn add_sheet(handle: u64, name: Option<&str>) -> Result<Value, ServiceError>
             nets: Vec::new(),
             wires: Vec::new(),
             junctions: Vec::new(),
+            no_connects: Vec::new(),
             texts: Vec::new(),
         };
         design.sheets.push(sheet.clone());
@@ -1501,6 +1529,19 @@ pub fn export(handle: u64, format: &str, path: &Path) -> Result<Value, ServiceEr
                 "issues": issue_count,
             });
             (contents, artifact)
+        }
+        "json" => {
+            let artifact = json!({
+                "kind": "json",
+                "sheets": design.sheets.len(),
+                "components": design.sheets.iter().map(|sheet| sheet.components.len()).sum::<usize>(),
+                "nets": design.sheets.iter().map(|sheet| sheet.nets.len()).sum::<usize>(),
+                "wires": design.sheets.iter().map(|sheet| sheet.wires.len()).sum::<usize>(),
+                "junctions": design.sheets.iter().map(|sheet| sheet.junctions.len()).sum::<usize>(),
+                "noConnects": design.sheets.iter().map(|sheet| sheet.no_connects.len()).sum::<usize>(),
+                "texts": design.sheets.iter().map(|sheet| sheet.texts.len()).sum::<usize>(),
+            });
+            (render_json_projection(&design)?, artifact)
         }
         "kicad_sch" => {
             let artifact = json!({
@@ -1759,6 +1800,11 @@ fn validate_design(design: &Design) -> Result<(), ServiceError> {
         for junction in &sheet.junctions {
             if !junction.x.is_finite() || !junction.y.is_finite() {
                 return Err(invalid(format!("sheet `{}` has a junction with a non-finite coordinate", sheet.id)));
+            }
+        }
+        for no_connect in &sheet.no_connects {
+            if !no_connect.x.is_finite() || !no_connect.y.is_finite() {
+                return Err(invalid(format!("sheet `{}` has a no-connect with a non-finite coordinate", sheet.id)));
             }
         }
         for text in &sheet.texts {
@@ -2553,6 +2599,91 @@ fn render_report(design: &Design) -> (String, usize, usize) {
     (text, sections, issues.len())
 }
 
+/// Projects one design to a deterministic, read-only JSON document.
+///
+/// The projection carries the design header and, for every sheet in document
+/// order, its components, nets, wires, junctions and text annotations. Object
+/// arrays keep the insertion order of the model and object keys are serialized
+/// in a fixed order, so exporting one document twice is byte-identical. The
+/// counters and identities used internally to allocate new objects are not
+/// part of the projection.
+fn render_json_projection(design: &Design) -> Result<String, ServiceError> {
+    let sheets = design
+        .sheets
+        .iter()
+        .map(|sheet| {
+            json!({
+                "id": sheet.id,
+                "name": sheet.name,
+                "components": sheet
+                    .components
+                    .iter()
+                    .map(|component| json!({
+                        "id": component.id,
+                        "ref": component.reference,
+                        "value": component.value,
+                        "x": component.x,
+                        "y": component.y,
+                        "rotation": component.rotation,
+                        "pins": component.pins,
+                    }))
+                    .collect::<Vec<_>>(),
+                "nets": sheet
+                    .nets
+                    .iter()
+                    .map(|net| json!({
+                        "id": net.id,
+                        "name": net.name,
+                        "nodes": net
+                            .nodes
+                            .iter()
+                            .map(|node| json!({ "ref": node.reference, "pin": node.pin }))
+                            .collect::<Vec<_>>(),
+                    }))
+                    .collect::<Vec<_>>(),
+                "wires": sheet
+                    .wires
+                    .iter()
+                    .map(|wire| json!({
+                        "id": wire.id,
+                        "net": wire.net,
+                        "from": wire.from,
+                        "to": wire.to,
+                    }))
+                    .collect::<Vec<_>>(),
+                "junctions": sheet
+                    .junctions
+                    .iter()
+                    .map(|junction| json!({ "x": junction.x, "y": junction.y }))
+                    .collect::<Vec<_>>(),
+                "noConnects": sheet
+                    .no_connects
+                    .iter()
+                    .map(|no_connect| json!({ "x": no_connect.x, "y": no_connect.y }))
+                    .collect::<Vec<_>>(),
+                "texts": sheet
+                    .texts
+                    .iter()
+                    .map(|text| json!({ "text": text.text, "x": text.x, "y": text.y }))
+                    .collect::<Vec<_>>(),
+            })
+        })
+        .collect::<Vec<_>>();
+    let projection = json!({
+        "format": JSON_PROJECTION_FORMAT,
+        "version": JSON_PROJECTION_VERSION,
+        "design": design.id,
+        "title": design.title,
+        "revision": design.revision,
+        "units": design.units,
+        "sheets": sheets,
+    });
+    let mut encoded = serde_json::to_string_pretty(&projection)
+        .map_err(|error| invalid(format!("the JSON projection could not be encoded: {error}")))?;
+    encoded.push('\n');
+    Ok(encoded)
+}
+
 fn severity_title(severity: &str) -> String {
     let mut chars = severity.chars();
     match chars.next() {
@@ -2789,6 +2920,7 @@ mod tests {
         assert_eq!(matrix["exportTargets"]["pdf"], "supported");
         assert_eq!(matrix["exportTargets"]["bom"], "supported");
         assert_eq!(matrix["exportTargets"]["report"], "supported");
+        assert_eq!(matrix["exportTargets"]["json"], "supported");
         assert_eq!(matrix["exportTargets"]["kicad_sch"], "supported");
         assert_eq!(matrix["exportTargets"]["kicad_pcb"], "unsupported");
         assert_eq!(matrix["exportTargets"]["gbr"], "unsupported");
@@ -3049,6 +3181,7 @@ mod tests {
                 nets: Vec::new(),
                 wires: Vec::new(),
                 junctions: Vec::new(),
+                no_connects: Vec::new(),
                 texts: Vec::new(),
             }],
             buses: Vec::new(),
@@ -3077,6 +3210,7 @@ mod tests {
                 ],
                 wires: Vec::new(),
                 junctions: Vec::new(),
+                no_connects: Vec::new(),
                 texts: Vec::new(),
             }],
             buses: Vec::new(),
@@ -3413,6 +3547,7 @@ mod tests {
                 nets: Vec::new(),
                 wires: Vec::new(),
                 junctions: Vec::new(),
+                no_connects: Vec::new(),
                 texts: Vec::new(),
             }],
             buses: Vec::new(),
@@ -3590,6 +3725,7 @@ mod tests {
                 nets: Vec::new(),
                 wires: Vec::new(),
                 junctions: vec![Junction { x: f64::NAN, y: 0.0 }],
+                no_connects: Vec::new(),
                 texts: Vec::new(),
             }],
             buses: Vec::new(),
@@ -3699,7 +3835,7 @@ mod tests {
 (kicad_sch (version 20211123) (generator \"open-eda\") (uuid \"u\") (paper \"A4\")
   (lib_symbols)
   (junction (at 1 2) (diameter 0) (uuid \"j\"))
-  (global_label \"GND\" (at 0 0 0))
+  (bus (width 4) (at 0 0))
   (text \"note\" (at 3 4 0) (effects (font (size 1.27 1.27))) (uuid \"t\"))
   (wire (pts (xy 0 0) (xy 5 0)) (stroke (width 0) (type default)) (uuid \"w\"))
 )
@@ -3710,13 +3846,56 @@ mod tests {
         for entry in losses {
             assert_eq!(entry["code"], "kicad/unsupported-element");
             assert!(!entry["detail"].as_str().expect("detail").is_empty());
-            assert!(entry["detail"].as_str().expect("detail").contains("global_label"));
+            assert!(entry["detail"].as_str().expect("detail").contains("bus"));
         }
         let sheet = &imported["design"]["sheets"][0];
         assert_eq!(sheet["junctions"], json!([{ "x": 1.0, "y": 2.0 }]));
         assert_eq!(sheet["texts"], json!([{ "text": "note", "x": 3.0, "y": 4.0 }]));
         assert_eq!(sheet["wires"].as_array().expect("wires").len(), 1);
         assert_eq!(imported["design"]["next_wire"], 2);
+    }
+
+    #[test]
+    fn kicad_import_reads_global_and_hierarchical_labels_and_no_connect_flags() {
+        let text = "\
+(kicad_sch (version 20211123) (generator \"open-eda\") (paper \"A4\")
+  (lib_symbols)
+  (symbol (lib_id \"Device:R\") (at 10 20 0)
+    (property \"Reference\" \"R1\" (at 10 18 0) (effects (font (size 1.27 1.27))))
+    (property \"Value\" \"10k\" (at 10 22 0) (effects (font (size 1.27 1.27))))
+    (pin \"1\" (uuid \"p1\"))
+    (pin \"2\" (uuid \"p2\")))
+  (global_label \"VCC\" (shape input) (at 10 20 0) (effects (font (size 1.27 1.27))))
+  (hierarchical_label \"SIG\" (shape input) (at 30 40 0) (effects (font (size 1.27 1.27))))
+  (no_connect (at 50 60) (uuid \"n\"))
+)
+";
+        let imported = import_kicad_sch(text).expect("import");
+        let losses = imported["losses"].as_array().expect("losses");
+        assert_eq!(losses.len(), 2);
+        for entry in losses {
+            assert_eq!(entry["code"], "kicad/label-scope");
+            let detail = entry["detail"].as_str().expect("detail");
+            assert!(detail.contains("VCC") || detail.contains("SIG"));
+            assert!(detail.contains("sheet-local net label"));
+        }
+
+        let sheet = &imported["design"]["sheets"][0];
+        assert_eq!(sheet["no_connects"], json!([{ "x": 50.0, "y": 60.0 }]));
+        let nets = sheet["nets"].as_array().expect("nets");
+        let names: Vec<&str> = nets.iter().filter_map(|net| net["name"].as_str()).collect();
+        assert_eq!(names, vec!["VCC", "SIG"]);
+        assert_eq!(nets[0]["nodes"], json!([{ "ref": "R1", "pin": "1" }]));
+        assert_eq!(nets[1]["nodes"], json!([]));
+
+        let design: Design = serde_json::from_value(imported["design"].clone()).expect("design");
+        let rendered = kicad::render(&design);
+        assert!(rendered.contains("(no_connect (at 50 60)"));
+        assert!(rendered.contains("(label \"VCC\""));
+
+        let again = import_kicad_sch(&rendered).expect("reimport");
+        assert_eq!(again["losses"], json!([]));
+        assert_eq!(again["design"]["sheets"][0]["no_connects"], json!([{ "x": 50.0, "y": 60.0 }]));
     }
 
     #[test]
@@ -3919,6 +4098,64 @@ mod tests {
         assert!(text.contains("| VCC | 2 | R1.1, C1.1 |"));
         assert!(text.contains("## Objects"));
         assert!(text.contains("## Inspection"));
+        close(handle).expect("close");
+    }
+
+    #[test]
+    fn json_export_projects_stable_document_sections() {
+        let dir = TempDir::new("json-projection");
+        let first = dir.join("blinker.json");
+        let second = dir.join("blinker-again.json");
+        let created = create(CreateRequest { title: Some("Blinker".to_string()), template: None }).expect("create");
+        let handle = created["handle"].as_u64().expect("handle");
+        blinker(handle);
+        add_junction(handle, AddJunctionRequest { sheet: None, x: 55.0, y: 30.0 }).expect("junction");
+        add_text(handle, AddTextRequest { sheet: None, text: "Revision A".to_string(), x: 20.0, y: 12.0 }).expect("text");
+
+        let report = export(handle, "json", &first).expect("export json");
+        assert_eq!(report["format"], "json");
+        assert_eq!(report["editable"], false);
+        assert_eq!(report["artifact"]["kind"], "json");
+        assert_eq!(report["artifact"]["sheets"], 1);
+        assert_eq!(report["artifact"]["components"], 2);
+        assert_eq!(report["artifact"]["nets"], 2);
+        assert_eq!(report["artifact"]["wires"], 1);
+        assert_eq!(report["artifact"]["junctions"], 1);
+        assert_eq!(report["artifact"]["noConnects"], 0);
+        assert_eq!(report["artifact"]["texts"], 1);
+        assert_eq!(report["bytes"], fs::metadata(&first).expect("metadata").len() as usize);
+
+        let text = fs::read_to_string(&first).expect("read json");
+        assert!(text.starts_with("{\n"));
+        assert!(text.ends_with('\n'));
+        assert!(!text.contains("next_component"), "internal counters stay out of the projection");
+        let projection: Value = serde_json::from_str(&text).expect("projection is valid JSON");
+        assert_eq!(projection["format"], "open-eda-projection");
+        assert_eq!(projection["version"], 1);
+        assert_eq!(projection["design"], "design-1");
+        assert_eq!(projection["title"], "Blinker");
+        assert_eq!(projection["revision"], report["revision"]);
+        assert_eq!(projection["units"], "mm");
+
+        let sheets = projection["sheets"].as_array().expect("sheets");
+        assert_eq!(sheets.len(), 1);
+        let sheet = &sheets[0];
+        assert_eq!(sheet["id"], "sheet-1");
+        assert_eq!(sheet["name"], "Sheet 1");
+        assert_eq!(sheet["components"][0]["ref"], "R1");
+        assert_eq!(sheet["components"][0]["value"], "10k");
+        assert_eq!(sheet["components"][0]["x"], 40.0);
+        assert_eq!(sheet["components"][0]["pins"], json!(["1", "2"]));
+        assert_eq!(sheet["nets"][0]["name"], "VCC");
+        assert_eq!(sheet["nets"][0]["nodes"][1], json!({ "ref": "C1", "pin": "1" }));
+        assert_eq!(sheet["wires"][0]["net"], "VCC");
+        assert_eq!(sheet["wires"][0]["from"], json!([40.0, 30.0]));
+        assert_eq!(sheet["wires"][0]["to"], json!([70.0, 30.0]));
+        assert_eq!(sheet["junctions"][0], json!({ "x": 55.0, "y": 30.0 }));
+        assert_eq!(sheet["texts"][0], json!({ "text": "Revision A", "x": 20.0, "y": 12.0 }));
+
+        export(handle, "json", &second).expect("export json again");
+        assert_eq!(text, fs::read_to_string(&second).expect("read second json"), "export must be byte-stable");
         close(handle).expect("close");
     }
 

@@ -85,7 +85,7 @@ async function withDesign<T>(file: string, run: (design: Design) => Promise<T>):
 }
 
 /** Export targets the CLI accepts, mirroring the declared capability matrix. */
-const exportTargets: readonly ExportTarget[] = ['kicad_sch', 'kicad_pcb', 'net', 'spice', 'gbr', 'pdf', 'svg', 'bom', 'report'];
+const exportTargets: readonly ExportTarget[] = ['kicad_sch', 'kicad_pcb', 'net', 'spice', 'gbr', 'pdf', 'svg', 'bom', 'report', 'json'];
 
 function asExportTarget(value: string | undefined): ExportTarget | undefined {
     return value !== undefined && (exportTargets as readonly string[]).includes(value) ? (value as ExportTarget) : undefined;
@@ -869,7 +869,7 @@ cli
         const format = asExportTarget(text(options, 'format'));
         if (format === undefined) {
             ctx.fail('open-eda.cli.format-required', {
-                message: '`--format` must be one of kicad_sch, kicad_pcb, net, spice, gbr, pdf, svg, bom, report',
+                message: '`--format` must be one of kicad_sch, kicad_pcb, net, spice, gbr, pdf, svg, bom, report, json',
             });
             return 2;
         }

@@ -16,10 +16,10 @@ files.
 
 The schematic document core works. The native model creates, edits, saves and
 reopens one `.oeda` document, runs ERC, net, connectivity, footprint and power
-checks, and writes netlist, SPICE, SVG, BOM, PDF and Markdown report
-projections. It also exports and imports the same schematic subset as a KiCad
-6/7 schematic (`kicad_sch`): symbols, wires, junctions, text annotations and net
-labels. Editing covers components, nets (derive, disconnect, delete), wires,
+checks, and writes netlist, SPICE, SVG, BOM, PDF, Markdown report and JSON
+document projections. It also exports and imports the same schematic subset as a KiCad
+6/7 schematic (`kicad_sch`): symbols, wires, junctions, no-connect flags, text
+annotations and net labels, including global and hierarchical labels. Editing covers components, nets (derive, disconnect, delete), wires,
 junctions and text (move and delete by index), sheet add/rename/delete, and
 undo/redo. The SDK and studio keep a bounded 32-step history per open handle. A
 session created with `history: 'sidecar'` additionally records each replaced
@@ -36,17 +36,19 @@ prints exactly which entries are supported.
 | --- | --- | --- |
 | `.oeda` create/open/save/edit | supported | sheets, components, nets, wires, junctions, text, undo/redo |
 | checks `erc`, `nets`, `connectivity`, `footprints`, `power` | supported | `drc` and `clearance` are unsupported |
-| export `net`, `spice`, `svg`, `bom`, `pdf`, `report`, `kicad_sch` | supported | read-only projections; `kicad_pcb` and `gbr` are unsupported |
-| import `kicad_sch` | supported | symbols, wires, junctions, text and labels; other constructs are reported as loss entries |
+| export `net`, `spice`, `svg`, `bom`, `pdf`, `report`, `json`, `kicad_sch` | supported | read-only projections; `kicad_pcb` and `gbr` are unsupported |
+| import `kicad_sch` | supported | symbols, wires, junctions, no-connect flags, text and labels; other constructs are reported as loss entries |
 | KiCad board, Gerber, drill, STEP | unsupported | declared in the capability matrix only |
 | interactive schematic/board renderer | unsupported | the preview is an SVG projection |
 
 The KiCad importer is deliberately narrow. Buses, hierarchical sheets, arcs,
-global and hierarchical labels, images and every other construct outside that
-subset are not dropped silently: each occurrence adds a
-`{"code": "kicad/unsupported-element", "detail": "..."}` entry to the import
-losses. Junctions and text annotations are part of the subset and round-trip
-without a loss entry.
+images and every other construct outside that subset are not dropped silently:
+each occurrence adds a `{"code": "kicad/unsupported-element", "detail": "..."}`
+entry to the import losses. Global and hierarchical labels are imported as
+sheet-local net labels and each occurrence adds a
+`{"code": "kicad/label-scope", "detail": "..."}` entry, because the document
+does not model cross-sheet label scope. Junctions, no-connect flags and text
+annotations are part of the subset and round-trip without a loss entry.
 
 The SPICE writer projects the schematic to a deterministic `.cir` netlist.
 Elements follow their reference prefix (`R`/`C`/`L` two-pin, `D` two-pin with a
@@ -91,7 +93,7 @@ only for file-backed work. The CLI below is a thin shell over this same session
 and enables the sidecar so `undo`/`redo` survive invocations.
 
 ```bash
-# Print the capability matrix (net, spice, svg, bom, pdf, report export; erc/nets/connectivity/footprints/power supported)
+# Print the capability matrix (net, spice, svg, bom, pdf, report, json export; erc/nets/connectivity/footprints/power supported)
 open-eda capabilities
 
 # Create a native design document
@@ -137,6 +139,7 @@ open-eda export blinker.oeda --format svg --out blinker.svg
 open-eda export blinker.oeda --format bom --out blinker.csv
 open-eda export blinker.oeda --format pdf --out blinker.pdf
 open-eda export blinker.oeda --format report --out blinker.md
+open-eda export blinker.oeda --format json --out blinker.json
 open-eda export blinker.oeda --format kicad_sch --out blinker.kicad_sch
 
 # Import a KiCad schematic into a native document
@@ -159,6 +162,10 @@ cross-reference table, `%%EOF`) with sheet names, component boxes and wires.
 The report writer emits deterministic Markdown with a design header, a
 per-sheet object-count table, one `Net | Nodes | Pins` table per sheet and an
 inspection section grouped by severity.
+The JSON writer emits a deterministic, read-only document projection tagged
+`open-eda-projection` with the design header and, per sheet, its components,
+nets, wires, junctions and text annotations; internal allocation counters are
+not part of it.
 The KiCad writer emits a KiCad 6/7 S-expression with a `lib_symbols` section,
 one symbol per component, one `wire` per segment, one `junction` per connection
 dot, one `text` per annotation and one `label` per net;
@@ -199,8 +206,10 @@ served by the desktop window and talks to the same operations over JSON-RPC.
 - It does not import or write KiCad boards, Gerber or STEP files, and it does
   not simulate a design: the SPICE projection is a netlist export only.
 - It imports and writes only the schematic subset it models: components, wires,
-  junctions, text annotations and net labels. Buses, hierarchy, arcs and global
-  labels are reported as import losses instead of being reconstructed.
+  junctions, no-connect flags, text annotations and net labels. Buses, hierarchy
+  and arcs are reported as import losses instead of being reconstructed; global
+  and hierarchical labels are flattened to sheet-local nets and reported as
+  `kicad/label-scope`.
 - It does not draw an interactive schematic or board, route, or check clearance.
 - It does not assign footprints or run DRC or clearance checks.
 - Connectivity and power checks analyse the schematic's wires and nets only;

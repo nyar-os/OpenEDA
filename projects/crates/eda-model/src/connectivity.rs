@@ -228,6 +228,7 @@ mod tests {
             nets: Vec::new(),
             wires,
             junctions,
+            no_connects: Vec::new(),
             texts: Vec::new(),
         }
     }

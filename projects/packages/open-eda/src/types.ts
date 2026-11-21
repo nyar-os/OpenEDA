@@ -63,7 +63,17 @@ export type InspectCheck = 'erc' | 'drc' | 'nets' | 'connectivity' | 'footprints
 export type RenderFormat = 'svg' | 'png' | 'pdf';
 
 /** Exchange targets `design.export()` declares. */
-export type ExportTarget = 'kicad_sch' | 'kicad_pcb' | 'net' | 'spice' | 'gbr' | 'pdf' | 'svg' | 'bom' | 'report';
+export type ExportTarget =
+    | 'kicad_sch'
+    | 'kicad_pcb'
+    | 'net'
+    | 'spice'
+    | 'gbr'
+    | 'pdf'
+    | 'svg'
+    | 'bom'
+    | 'report'
+    | 'json';
 
 /** What the installed engine can do, per format. */
 export interface FormatCapability {
@@ -195,6 +205,12 @@ export interface Bus {
 
 /** One schematic junction (connection dot). */
 export interface Junction {
+    readonly x: number;
+    readonly y: number;
+}
+
+/** One no-connect flag at a sheet position. */
+export interface NoConnect {
     readonly x: number;
     readonly y: number;
 }
@@ -433,6 +449,7 @@ export interface Sheet {
     readonly nets: readonly Net[];
     readonly wires: readonly Wire[];
     readonly junctions: readonly Junction[];
+    readonly no_connects: readonly NoConnect[];
     readonly texts: readonly TextLabel[];
 }
 
@@ -449,7 +466,7 @@ export interface Design {
     inspect(options?: InspectOptions): Promise<InspectReport>;
     /** Writes the native `.oeda` document; defaults to the path it was opened from. */
     save(options?: SaveOptions): Promise<SaveReport>;
-    /** Projects the design to `net`, `spice`, `svg`, `bom`, `pdf`, `report` or `kicad_sch`; other targets report `capability/not-implemented`. */
+    /** Projects the design to `net`, `spice`, `svg`, `bom`, `pdf`, `report`, `json` or `kicad_sch`; other targets report `capability/not-implemented`. */
     export(options: ExportOptions): Promise<ExportReport>;
     /** Restores the snapshot taken before the newest edit. */
     undo(): Promise<HistoryResult>;

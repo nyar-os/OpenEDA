@@ -44,7 +44,7 @@
             "template": "Template the design starts from (only blank is implemented)",
             "overwrite": "Replace the output file when it already exists",
             "checks": "Comma-separated checks: erc, nets, connectivity, footprints, power (drc and clearance are unsupported)",
-            "format": "Export target: net, spice, svg, pdf, bom, report or kicad_sch (kicad_pcb and gbr are unsupported)",
+            "format": "Export target: net, spice, svg, pdf, bom, report, json or kicad_sch (kicad_pcb and gbr are unsupported)",
             "ref": "Reference designator, for example R1",
             "value": "Component value, for example 10k",
             "x": "Placement X coordinate",
