@@ -102,7 +102,9 @@ as added or removed, so a deleted sheet never hides its contents. The report is
 tagged `open-eda-diff`, lists only the changed sheets, and records field-level
 changes (value, footprint, position, rotation, pins, net node sets, wire
 endpoints and bus width). Net node order is not a change. Two documents with the
-same modelled objects compare equal even when their bytes differ.
+same modelled objects compare equal even when their bytes differ; the internal
+edit counter is ignored, while a changed title, drawing revision, company, date
+or unit makes the report unequal.
 
 Drawing properties are design-wide: `title`, `rev` (the drawing revision label,
 which is separate from the revision counter), `company` and `date`. They are

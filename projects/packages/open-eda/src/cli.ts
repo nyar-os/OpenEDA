@@ -247,6 +247,9 @@ function describeDiff(report: DesignDiffReport): string {
         `wires +${totals.wires.added} -${totals.wires.removed} ~${totals.wires.modified}`,
         `buses +${totals.buses.added} -${totals.buses.removed} ~${totals.buses.modified}`,
     ];
+    if (report.design.changes !== null) {
+        lines.push(`  design ${changeText(report.design.changes)}`);
+    }
     for (const bus of report.buses.added) {
         lines.push(`  bus +${bus.name} width=${bus.width}`);
     }

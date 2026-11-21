@@ -145,8 +145,10 @@ documents and never writes a file. Sheets match by id, components by reference,
 nets by name inside a sheet and buses by name. Only changed sheets appear; a
 sheet on one side only lists all its objects as added or removed. The report,
 tagged `open-eda-diff`, records field-level changes (value, footprint, position,
-rotation, pins, net node sets, wire endpoints and bus width), and `equal` is
-true when nothing changed. Net node order is not a change. This is not a textual
+rotation, pins, pin roles, net node sets, wire endpoints and bus width), and
+`equal` is true when nothing changed. Net node order is not a change, and the
+internal edit counter is ignored, but changed drawing properties (title, rev,
+company, date, units) make the report unequal. This is not a textual
 or byte diff, and it never merges, applies or repairs a difference.
 
 ## Connectivity report

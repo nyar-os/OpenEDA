@@ -98,7 +98,8 @@ pub(crate) fn compare(left_path: &str, left: &Design, right_path: &str, right: &
     }
 
     let buses = compare_buses(left, right);
-    let equal = added + removed + modified == 0 && !buses.changed();
+    let design = compare_design(left, right);
+    let equal = added + removed + modified == 0 && !buses.changed() && design.is_none();
 
     json!({
         "format": DIFF_FORMAT,
@@ -115,7 +116,9 @@ pub(crate) fn compare(left_path: &str, left: &Design, right_path: &str, right: &
             "noConnects": totals.no_connects.json(),
             "texts": totals.texts.json(),
             "buses": buses.counts.json(),
+            "design": { "modified": usize::from(design.is_some()) },
         },
+        "design": { "changes": design },
         "sheets": sheets,
         "buses": {
             "added": buses.added,
@@ -123,6 +126,26 @@ pub(crate) fn compare(left_path: &str, left: &Design, right_path: &str, right: &
             "modified": buses.modified,
         },
     })
+}
+
+/// Compares the drawing properties that are visible on both documents.
+///
+/// The edit revision counter is deliberately ignored: two files written from the
+/// same objects at different times would otherwise always differ. Title, drawing
+/// revision, company, date and units are real content, so they are reported.
+fn compare_design(left: &Design, right: &Design) -> Option<Value> {
+    let mut changes = serde_json::Map::new();
+    let mut field = |name: &str, from: Value, to: Value| {
+        if from != to {
+            changes.insert(name.to_string(), json!({ "from": from, "to": to }));
+        }
+    };
+    field("title", json!(left.title), json!(right.title));
+    field("rev", json!(left.rev), json!(right.rev));
+    field("company", json!(left.company), json!(right.company));
+    field("date", json!(left.date), json!(right.date));
+    field("units", json!(left.units), json!(right.units));
+    if changes.is_empty() { None } else { Some(Value::Object(changes)) }
 }
 
 fn side(path: &str, design: &Design) -> Value {
@@ -693,6 +716,24 @@ mod tests {
         assert_eq!(report["sheets"][0]["changes"]["name"]["to"], "Core");
         assert_eq!(report["buses"]["modified"][0]["changes"]["width"]["to"], 8);
         assert_eq!(report["summary"]["buses"], json!({ "added": 0, "removed": 0, "modified": 1 }));
+    }
+
+    #[test]
+    fn drawing_properties_are_compared_but_the_edit_counter_is_not() {
+        let left = design("Blinker", 1, vec![sheet("sheet-1", "Main")], vec![]);
+        let mut right = design("Blinker II", 2, vec![sheet("sheet-1", "Main")], vec![]);
+        right.rev = "B".to_string();
+        let report = compare("a.oeda", &left, "b.oeda", &right);
+        assert_eq!(report["equal"], false);
+        assert_eq!(report["summary"]["design"]["modified"], 1);
+        assert_eq!(report["design"]["changes"]["title"]["to"], "Blinker II");
+        assert_eq!(report["design"]["changes"]["rev"]["to"], "B");
+
+        let mut same_objects = left.clone();
+        same_objects.revision = 9;
+        let unchanged = compare("a.oeda", &left, "b.oeda", &same_objects);
+        assert_eq!(unchanged["equal"], true);
+        assert_eq!(unchanged["summary"]["design"]["modified"], 0);
     }
 
     #[test]

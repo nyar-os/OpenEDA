@@ -731,7 +731,10 @@ export interface DesignDiffReport {
         readonly noConnects: DesignDiffCounts;
         readonly texts: DesignDiffCounts;
         readonly buses: DesignDiffCounts;
+        readonly design: { readonly modified: number };
     };
+    /** Drawing property changes; null when title, rev, company, date and units all match. */
+    readonly design: { readonly changes: Readonly<Record<string, DesignDiffFieldChange>> | null };
     /** Only the sheets that changed. */
     readonly sheets: readonly DesignDiffSheet[];
     readonly buses: DesignDiffSet<Bus>;
