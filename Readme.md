@@ -16,7 +16,8 @@ files.
 
 The schematic document core works. The native model creates, edits, saves and
 reopens one `.oeda` document, runs ERC, net, connectivity, footprint and power
-checks, and writes netlist, SPICE, SVG, BOM, PDF, Markdown report and JSON
+checks, compares two documents with `diff`, and writes netlist, SPICE, SVG,
+BOM, PDF, Markdown report and JSON
 document projections. It also exports and imports the same schematic subset as a KiCad
 6/7 schematic (`kicad_sch`): symbols, wires, junctions, no-connect flags, text
 annotations and net labels, including global and hierarchical labels. Editing
@@ -36,6 +37,7 @@ prints exactly which entries are supported.
 | Capability | Status | Notes |
 | --- | --- | --- |
 | `.oeda` create/open/save/edit | supported | sheets, components, nets, buses, wires, junctions, text, undo/redo |
+| design compare `diff` | supported | read-only report of added, removed and modified sheets, components, nets, wires and buses |
 | checks `erc`, `nets`, `connectivity`, `footprints`, `power` | supported | `drc` and `clearance` are unsupported |
 | export `net`, `net_csv`, `spice`, `svg`, `bom`, `bom_json`, `pdf`, `report`, `json`, `kicad_sch` | supported | read-only projections; `kicad_pcb` and `gbr` are unsupported |
 | import `kicad_sch` | supported | symbols, wires, junctions, no-connect flags, text and labels; other constructs are reported as loss entries |
@@ -77,6 +79,15 @@ The `connectivity` report is the read-only companion of the connectivity check:
 it lists every net with its node count and `REF.PIN` pin list, the pins no net
 reaches, and the per-sheet wire-group and junction totals, tagged
 `open-eda-connectivity` and deterministic for one revision.
+
+`diff` compares two `.oeda` documents without opening either one for editing.
+Sheets are matched by id, components by reference, nets by name inside a sheet
+and buses by name. A sheet present on one side only reports all of its objects
+as added or removed, so a deleted sheet never hides its contents. The report is
+tagged `open-eda-diff`, lists only the changed sheets, and records field-level
+changes (value, footprint, position, rotation, pins, net node sets, wire
+endpoints and bus width). Net node order is not a change. Two documents with the
+same modelled objects compare equal even when their bytes differ.
 
 The SPICE writer projects the schematic to a deterministic `.cir` netlist.
 Elements follow their reference prefix (`R`/`C`/`L` two-pin, `D` two-pin with a
@@ -169,6 +180,9 @@ open-eda inspect blinker.oeda --severity erc/unconnected-pin=warning --waive erc
 open-eda list blinker.oeda
 open-eda symbols blinker.oeda
 open-eda connectivity blinker.oeda
+
+# Compare two revisions of a document
+open-eda diff before.oeda after.oeda
 
 # Export supported projections
 open-eda export blinker.oeda --format net --out blinker.net
@@ -268,6 +282,8 @@ served by the desktop window and talks to the same operations over JSON-RPC.
   they do not model a board, copper or current flow.
 - It does not store undo history in the `.oeda` document itself; the optional
   sidecar is separate and is not carried with the design.
+- `diff` compares the modelled objects of two documents. It is not a textual or
+  byte comparison and it does not merge, apply or repair a difference.
 - It does not ship fabricated previews, sample boards or placeholder reports.
 - It does not claim a format is supported because an extension is known.
 

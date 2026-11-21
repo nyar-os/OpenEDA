@@ -165,6 +165,15 @@ fn import_kicad_sch(ctx: CallContext) -> Result<JsValue> {
     respond(&ctx, &report)
 }
 
+/// Compares two native design documents without opening either for editing.
+#[function]
+fn diff_documents(ctx: CallContext) -> Result<JsValue> {
+    let left = text(&ctx, 0)?;
+    let right = text(&ctx, 1)?;
+    let report = open_eda_model::diff_documents(Path::new(&left), Path::new(&right)).map_err(fail)?;
+    respond(&ctx, &report)
+}
+
 /// Closes one open design and releases its handle.
 #[function]
 fn design_close(ctx: CallContext) -> Result<JsValue> {
@@ -1216,6 +1225,7 @@ register_module![
     design_inspect_with,
     design_export,
     import_kicad_sch,
+    diff_documents,
     design_close,
     design_summary,
     design_list,

@@ -18,6 +18,8 @@ import type {
     DeleteNetInput,
     DesignCapabilities,
     DesignCreateOptions,
+    DesignDiffInput,
+    DesignDiffReport,
     DesignObjects,
     DesignSummary,
     DeriveNetsResult,
@@ -247,6 +249,16 @@ export function exportDesign(handle: number, format: ExportTarget, target: strin
  */
 export function importKicadSch(source: string): KicadImportResult {
     return decode<KicadImportResult>(() => binding('import.kicadSch').import_kicad_sch(source));
+}
+
+/**
+ * Compares two native documents without opening either for editing.
+ *
+ * The report lists added, removed and modified sheets, components, nets, wires
+ * and buses; nothing is written to disk.
+ */
+export function diff(input: DesignDiffInput): DesignDiffReport {
+    return decode<DesignDiffReport>(() => binding('diffDocuments').diff_documents(input.left, input.right));
 }
 
 /** Releases one design handle. */

@@ -24,6 +24,8 @@ import type {
     Design,
     DesignCapabilities,
     DesignCreateOptions,
+    DesignDiffInput,
+    DesignDiffReport,
     DesignHistoryMode,
     DesignInput,
     DesignObjects,
@@ -159,6 +161,18 @@ export class OpenEDA {
         } finally {
             service.close(opened.handle);
         }
+    }
+
+    /**
+     * Compares two native documents without opening either for editing.
+     *
+     * The report lists added, removed and modified sheets, components, nets,
+     * wires and buses, and says whether the two documents are equal.
+     */
+    async diff(input: DesignDiffInput): Promise<DesignDiffReport> {
+        this.assertActive();
+        assertDiffInput(input);
+        return service.diff(input);
     }
 
     /** Releases the session and every handle it owns. Idempotent. */
@@ -507,8 +521,16 @@ function assertCreateOptions(options: DesignCreateOptions): void {
     }
 }
 
-function assertImportOptions(options: KicadImportOptions): void {
-    if (typeof options.source !== 'string' || options.source.trim().length === 0) {
+function assertDiffInput(input: DesignDiffInput): void {
+    for (const key of ['left', 'right'] as const) {
+        const value = input?.[key];
+        if (typeof value !== 'string' || value.trim().length === 0) {
+            throw new OpenEDAError('session/argument-invalid', `\`${key}\` must be a non-empty document path`);
+        }
+    }
+}
+
+function assertImportOptions(options: KicadImportOptions): void {    if (typeof options.source !== 'string' || options.source.trim().length === 0) {
         throw new OpenEDAError('session/argument-invalid', '`source` must be non-empty KiCad schematic text or a path');
     }
     if (options.target !== undefined && (typeof options.target !== 'string' || options.target.trim().length === 0)) {

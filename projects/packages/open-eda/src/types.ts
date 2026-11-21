@@ -582,6 +582,90 @@ export interface Sheet {
     readonly texts: readonly TextLabel[];
 }
 
+/** Input of `OpenEDA.diff()`. */
+export interface DesignDiffInput {
+    /** Path of the before document. */
+    readonly left: string;
+    /** Path of the after document. */
+    readonly right: string;
+}
+
+/** One side of a diff report. */
+export interface DesignDiffSide {
+    readonly path: string;
+    readonly id: DesignId;
+    readonly revision: number;
+    readonly title: string | null;
+}
+
+/** Added, removed and modified counters of one object family. */
+export interface DesignDiffCounts {
+    readonly added: number;
+    readonly removed: number;
+    readonly modified: number;
+}
+
+/** One field change of a compared object. */
+export interface DesignDiffFieldChange {
+    readonly from: unknown;
+    readonly to: unknown;
+}
+
+/** One modified object, keyed by its reference or name. */
+export interface DesignDiffObjectChange {
+    readonly ref?: string;
+    readonly name?: string;
+    readonly id?: string;
+    readonly changes: Readonly<Record<string, DesignDiffFieldChange>>;
+}
+
+/** Added, removed and modified lists of one object family. */
+export interface DesignDiffSet<T> {
+    readonly added: readonly T[];
+    readonly removed: readonly T[];
+    readonly modified: readonly DesignDiffObjectChange[];
+}
+
+/** One sheet entry of a diff report. */
+export interface DesignDiffSheet {
+    readonly id: SheetId;
+    readonly name: string;
+    readonly leftName: string | null;
+    readonly rightName: string | null;
+    readonly status: 'added' | 'removed' | 'modified' | 'unchanged';
+    /** Present only when the sheet itself was renamed. */
+    readonly changes?: Readonly<Record<string, DesignDiffFieldChange>>;
+    readonly components: DesignDiffSet<Component>;
+    readonly nets: DesignDiffSet<Net>;
+    readonly wires: DesignDiffSet<Wire>;
+    readonly junctions: Omit<DesignDiffSet<Junction>, 'modified'>;
+    readonly noConnects: Omit<DesignDiffSet<NoConnect>, 'modified'>;
+    readonly texts: Omit<DesignDiffSet<TextLabel>, 'modified'>;
+}
+
+/** Result of `OpenEDA.diff()`, tagged `open-eda-diff`. */
+export interface DesignDiffReport {
+    readonly format: 'open-eda-diff';
+    readonly version: number;
+    /** True when no sheet, object or bus changed. */
+    readonly equal: boolean;
+    readonly left: DesignDiffSide;
+    readonly right: DesignDiffSide;
+    readonly summary: {
+        readonly sheets: DesignDiffCounts & { readonly unchanged: number };
+        readonly components: DesignDiffCounts;
+        readonly nets: DesignDiffCounts;
+        readonly wires: DesignDiffCounts;
+        readonly junctions: DesignDiffCounts;
+        readonly noConnects: DesignDiffCounts;
+        readonly texts: DesignDiffCounts;
+        readonly buses: DesignDiffCounts;
+    };
+    /** Only the sheets that changed. */
+    readonly sheets: readonly DesignDiffSheet[];
+    readonly buses: DesignDiffSet<Bus>;
+}
+
 /** An open design document. Every operation keeps its own stable code. */
 export interface Design {
     readonly id: DesignId;

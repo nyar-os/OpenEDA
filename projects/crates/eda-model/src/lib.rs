@@ -16,6 +16,7 @@
 #![deny(missing_docs)]
 
 mod connectivity;
+mod diff;
 mod kicad;
 
 use std::{
@@ -706,6 +707,15 @@ pub fn create(request: CreateRequest) -> Result<Value, ServiceError> {
 
 /// Opens a native design document and returns its handle and summary.
 pub fn open(path: &Path) -> Result<Value, ServiceError> {
+    let design = read_design(path)?;
+    let session = Session::new(design);
+    let summary = summary_of(&session);
+    let handle = insert_design(session.design);
+    Ok(json!({ "handle": handle, "design": summary }))
+}
+
+/// Reads and validates one native design document without opening a handle.
+fn read_design(path: &Path) -> Result<Design, ServiceError> {
     let text = fs::read_to_string(path).map_err(|error| invalid(format!("cannot read `{}`: {error}", path.display())))?;
     let value: Value =
         serde_json::from_str(&text).map_err(|error| invalid(format!("`{}` is not valid JSON: {error}", path.display())))?;
@@ -725,11 +735,18 @@ pub fn open(path: &Path) -> Result<Value, ServiceError> {
     let design: Design = serde_json::from_value(document)
         .map_err(|error| invalid(format!("the document does not match the design schema: {error}")))?;
     validate_design(&design)?;
+    Ok(design)
+}
 
-    let session = Session::new(design);
-    let summary = summary_of(&session);
-    let handle = insert_design(session.design);
-    Ok(json!({ "handle": handle, "design": summary }))
+/// Compares two native design documents and returns a read-only diff report.
+///
+/// Both documents are read and validated but no handle is opened, so the report
+/// never changes either file. Missing or malformed inputs fail with the same
+/// codes as [`open`].
+pub fn diff_documents(left: &Path, right: &Path) -> Result<Value, ServiceError> {
+    let left_design = read_design(left)?;
+    let right_design = read_design(right)?;
+    Ok(diff::compare(&left.display().to_string(), &left_design, &right.display().to_string(), &right_design))
 }
 
 /// Writes one open design to a native document path.
@@ -3730,6 +3747,63 @@ mod tests {
         let deleted = delete_component(handle, "R1", None).expect("delete");
         assert_eq!(deleted["deleted"], "R1");
         assert_eq!(list_components(handle, None).expect("list")["components"], json!([]));
+
+        close(handle).expect("close");
+    }
+
+    #[test]
+    fn diff_documents_reads_two_files_and_reports_changes() {
+        let dir = TempDir::new("diff");
+        let left = dir.join("left.oeda");
+        let right = dir.join("right.oeda");
+
+        let created = create(CreateRequest { title: Some("Blinker".to_string()), template: None }).expect("create");
+        let handle = created["handle"].as_u64().expect("handle");
+        add_component(
+            handle,
+            AddComponentRequest {
+                sheet: None,
+                reference: "R1".to_string(),
+                value: "10k".to_string(),
+                x: 10.0,
+                y: 20.0,
+                rotation: 0.0,
+                pins: vec!["1".to_string(), "2".to_string()],
+            },
+        )
+        .expect("add R1");
+        save(handle, &left, false).expect("save left");
+
+        update_component(handle, UpdateComponentRequest { sheet: None, reference: "R1".to_string(), value: "22k".to_string() })
+            .expect("update R1");
+        add_component(
+            handle,
+            AddComponentRequest {
+                sheet: None,
+                reference: "C1".to_string(),
+                value: "100n".to_string(),
+                x: 30.0,
+                y: 20.0,
+                rotation: 0.0,
+                pins: vec!["1".to_string(), "2".to_string()],
+            },
+        )
+        .expect("add C1");
+        save(handle, &right, false).expect("save right");
+
+        let report = diff_documents(&left, &right).expect("diff");
+        assert_eq!(report["format"], "open-eda-diff");
+        assert_eq!(report["equal"], false);
+        assert_eq!(report["summary"]["components"], json!({ "added": 1, "removed": 0, "modified": 1 }));
+        assert_eq!(report["left"]["path"], left.display().to_string());
+        assert_eq!(report["right"]["path"], right.display().to_string());
+        assert!(
+            report["right"]["revision"].as_u64().expect("revision") > report["left"]["revision"].as_u64().expect("revision")
+        );
+
+        let unchanged = diff_documents(&left, &left).expect("same file");
+        assert_eq!(unchanged["equal"], true);
+        assert_eq!(unchanged["sheets"], json!([]));
 
         close(handle).expect("close");
     }

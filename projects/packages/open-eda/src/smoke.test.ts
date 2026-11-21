@@ -336,8 +336,45 @@ test('sidecar history persists undo and redo across sessions', { skip: withoutAd
     }
 });
 
-test('inspection reports findings and refuses unsupported checks', { skip: withoutAddon }, async () => {
+test('diff compares two documents without opening them for editing', { skip: withoutAddon }, async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'open-eda-diff-'));
+    const left = path.join(directory, 'left.oeda');
+    const right = path.join(directory, 'right.oeda');
     const eda = new OpenEDA();
+    try {
+        const design = await eda.create({ title: 'Blinker' });
+        await design.addComponent({ reference: 'R1', value: '10k', x: 10, y: 20, pins: ['1', '2'] });
+        await design.save({ target: left, overwrite: true });
+        await design.updateComponent({ reference: 'R1', value: '22k' });
+        await design.addComponent({ reference: 'C1', value: '100n', x: 30, y: 20, pins: ['1', '2'] });
+        await design.save({ target: right, overwrite: true });
+        await design.close();
+
+        const report = await eda.diff({ left, right });
+        assert.equal(report.format, 'open-eda-diff');
+        assert.equal(report.equal, false);
+        assert.deepEqual(report.summary.components, { added: 1, removed: 0, modified: 1 });
+        assert.equal(report.summary.sheets.modified, 1);
+        assert.equal(report.sheets[0]?.status, 'modified');
+        assert.equal(report.sheets[0]?.components.added[0]?.ref, 'C1');
+        assert.equal(report.sheets[0]?.components.modified[0]?.ref, 'R1');
+        assert.equal(report.left.path, left);
+        assert.equal(report.right.path, right);
+
+        const unchanged = await eda.diff({ left, right: left });
+        assert.equal(unchanged.equal, true);
+        assert.deepEqual(unchanged.sheets, []);
+        await assert.rejects(
+            eda.diff({ left: '', right }),
+            (error: unknown) => error instanceof OpenEDAError && error.code === 'session/argument-invalid',
+        );
+    } finally {
+        await eda.dispose();
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
+});
+
+test('inspection reports findings and refuses unsupported checks', { skip: withoutAddon }, async () => {    const eda = new OpenEDA();
     try {
         const design = await eda.create();
         await design.addComponent({ reference: 'R1', value: '', x: 0, y: 0, pins: ['1', '2'] });

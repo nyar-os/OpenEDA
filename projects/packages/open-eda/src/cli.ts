@@ -21,6 +21,7 @@ import type {
     ConnectivityReport,
     Design,
     DesignCapabilities,
+    DesignDiffReport,
     DesignObjects,
     DesignSummary,
     ExportTarget,
@@ -223,8 +224,75 @@ function describeSymbols(library: SymbolLibraryResult): string {    const totals
     return lines.join('\n');
 }
 
-function describeConnectivity(report: ConnectivityReport): string {
-    const totals = report.totals;
+const changeText = (changes: Readonly<Record<string, { readonly from: unknown; readonly to: unknown }>>): string =>
+    Object.entries(changes)
+        .map(([field, change]) => `${field} ${JSON.stringify(change.from)} -> ${JSON.stringify(change.to)}`)
+        .join(', ');
+
+function describeDiff(report: DesignDiffReport): string {
+    const totals = report.summary;
+    const lines = [
+        `diff ${report.left.path} (revision ${report.left.revision}) -> ${report.right.path} (revision ${report.right.revision}) equal=${report.equal}`,
+        `sheets +${totals.sheets.added} -${totals.sheets.removed} ~${totals.sheets.modified} unchanged=${totals.sheets.unchanged}`,
+        `components +${totals.components.added} -${totals.components.removed} ~${totals.components.modified}`,
+        `nets +${totals.nets.added} -${totals.nets.removed} ~${totals.nets.modified}`,
+        `wires +${totals.wires.added} -${totals.wires.removed} ~${totals.wires.modified}`,
+        `buses +${totals.buses.added} -${totals.buses.removed} ~${totals.buses.modified}`,
+    ];
+    for (const bus of report.buses.added) {
+        lines.push(`  bus +${bus.name} width=${bus.width}`);
+    }
+    for (const bus of report.buses.removed) {
+        lines.push(`  bus -${bus.name} width=${bus.width}`);
+    }
+    for (const bus of report.buses.modified) {
+        lines.push(`  bus ~${bus.name ?? '?'} ${changeText(bus.changes)}`);
+    }
+    for (const sheet of report.sheets) {
+        lines.push(`  [${sheet.id}] ${sheet.name} ${sheet.status}`);
+        for (const component of sheet.components.added) {
+            lines.push(`    component +${component.ref} ${component.value}`);
+        }
+        for (const component of sheet.components.removed) {
+            lines.push(`    component -${component.ref} ${component.value}`);
+        }
+        for (const component of sheet.components.modified) {
+            lines.push(`    component ~${component.ref ?? '?'} ${changeText(component.changes)}`);
+        }
+        for (const net of sheet.nets.added) {
+            lines.push(`    net +${net.name} nodes=${net.nodes.length}`);
+        }
+        for (const net of sheet.nets.removed) {
+            lines.push(`    net -${net.name} nodes=${net.nodes.length}`);
+        }
+        for (const net of sheet.nets.modified) {
+            lines.push(`    net ~${net.name ?? '?'} ${changeText(net.changes)}`);
+        }
+        const minor = [
+            sheet.junctions.added.length + sheet.junctions.removed.length > 0
+                ? `junctions +${sheet.junctions.added.length} -${sheet.junctions.removed.length}`
+                : undefined,
+            sheet.noConnects.added.length + sheet.noConnects.removed.length > 0
+                ? `noConnects +${sheet.noConnects.added.length} -${sheet.noConnects.removed.length}`
+                : undefined,
+            sheet.texts.added.length + sheet.texts.removed.length > 0
+                ? `texts +${sheet.texts.added.length} -${sheet.texts.removed.length}`
+                : undefined,
+            sheet.wires.added.length + sheet.wires.removed.length + sheet.wires.modified.length > 0
+                ? `wires +${sheet.wires.added.length} -${sheet.wires.removed.length} ~${sheet.wires.modified.length}`
+                : undefined,
+        ].filter((entry): entry is string => entry !== undefined);
+        if (minor.length > 0) {
+            lines.push(`    ${minor.join(' ')}`);
+        }
+        if (sheet.changes !== undefined) {
+            lines.push(`    ${changeText(sheet.changes)}`);
+        }
+    }
+    return lines.join('\n');
+}
+
+function describeConnectivity(report: ConnectivityReport): string {    const totals = report.totals;
     const lines = [
         `connectivity revision=${report.revision} nets=${totals.nets} nodes=${totals.nodes} unconnectedPins=${totals.unconnectedPins} singleNodeNets=${totals.singleNodeNets} danglingNets=${totals.danglingNets} wireGroups=${totals.wireGroups} conflictingWireGroups=${totals.conflictingWireGroups} unassignedWireGroups=${totals.unassignedWireGroups} floatingJunctions=${totals.floatingJunctions}`,
     ];
@@ -287,6 +355,17 @@ cli.command('open', 'cli.cmd.open').actionCtx(async (options, _args, ctx) => {
     }
     const design = await withDesign(file, async (opened) => opened.summary);
     ctx.emitResult(design, describeDesign(design));
+    return 0;
+});
+
+cli.command('diff', 'cli.cmd.diff').actionCtx(async (options, _args, ctx) => {
+    const [left, right] = options._ ?? [];
+    if (left === undefined || right === undefined) {
+        ctx.fail('open-eda.cli.file-required', { message: 'two design documents are required' });
+        return 2;
+    }
+    const report = await app.diff({ left, right });
+    ctx.emitResult(report, describeDiff(report));
     return 0;
 });
 

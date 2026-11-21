@@ -9,7 +9,8 @@ description: Create, edit, inspect and deliver schematic design documents with O
 
 The schematic document core is executable. The CLI and SDK create, edit and
 reopen one `.oeda` document, run ERC, net, connectivity, footprint and power
-checks, and write a netlist, SPICE netlist, SVG sheet, BOM CSV, one-page PDF or
+checks, compare two documents with `diff`, and write a netlist, SPICE netlist,
+SVG sheet, BOM CSV, one-page PDF or
 Markdown report projection. The SDK keeps a bounded 32-step undo/redo history
 per open handle, and the CLI mirrors it in a `<file>.history.json` sidecar so
 `undo` and `redo` work across separate command invocations. Sheet
@@ -28,6 +29,7 @@ open-eda list <file.oeda>
 open-eda symbols <file.oeda>
 open-eda connectivity <file.oeda>
 open-eda inspect <file.oeda> [--checks erc,nets,connectivity,footprints,power] [--severity code=level,...] [--waive code[@objectId|@sheetId/objectId],...]
+open-eda diff <left.oeda> <right.oeda>
 open-eda export <file.oeda> --format net|net_csv|spice|svg|bom|bom_json|pdf|report|kicad_sch --out <file>
 open-eda import <file.kicad_sch> --out <file.oeda> [--overwrite]
 open-eda undo <file.oeda>
@@ -55,9 +57,9 @@ open-eda sheet delete <file.oeda> --id <sheet-id>
 open-eda gui
 ```
 
-Every editing command except `capabilities`, `open`, `list`, `inspect` and `gui`
-rewrites the input document in place through a temporary file and a rename.
-Confirm the path before running them.
+Every editing command except `capabilities`, `open`, `diff`, `list`, `inspect`
+and `gui` rewrites the input document in place through a temporary file and a
+rename. Confirm the path before running them.
 
 `undo` and `redo` restore the newest snapshot from `<file>.history.json`, bump
 the restored revision relative to the current file, and move the replaced text to
@@ -83,6 +85,7 @@ of the design and is never written into `.oeda`.
 | create | Build a schematic document from a brief | `open-eda list` output, `open-eda inspect` report |
 | edit | Change an existing document without losing identity | `open-eda list` before and after, `open-eda inspect` |
 | review | Audit references, connectivity and component values | `open-eda inspect` findings with codes and objects |
+| compare | See what changed between two revisions | `open-eda diff` report with changed objects and `equal` |
 | deliver | Write a netlist, SVG, BOM or PDF projection | the exported file plus `open-eda inspect` at the same revision |
 
 ## Inspection checks
@@ -112,6 +115,17 @@ user has not accepted.
 `drc` and `clearance` are declared but not implemented; requesting them rejects
 with `capability/not-implemented`. Never describe a design as DRC clean or
 clearance checked.
+
+## Design diff
+
+`open-eda diff <left.oeda> <right.oeda>` compares the modelled objects of two
+documents and never writes a file. Sheets match by id, components by reference,
+nets by name inside a sheet and buses by name. Only changed sheets appear; a
+sheet on one side only lists all its objects as added or removed. The report,
+tagged `open-eda-diff`, records field-level changes (value, footprint, position,
+rotation, pins, net node sets, wire endpoints and bus width), and `equal` is
+true when nothing changed. Net node order is not a change. This is not a textual
+or byte diff, and it never merges, applies or repairs a difference.
 
 ## Connectivity report
 
