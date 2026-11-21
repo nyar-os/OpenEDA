@@ -52,16 +52,23 @@ const SUPPORTED_CHECKS: &[&str] = &["erc", "nets", "connectivity", "footprints",
 const RENDER_FORMATS: &[&str] = &["svg", "png", "pdf"];
 
 /// Export targets declared by the command line.
-const EXPORT_TARGETS: &[&str] = &["kicad_sch", "kicad_pcb", "net", "spice", "gbr", "pdf", "svg", "bom", "report", "json"];
+const EXPORT_TARGETS: &[&str] =
+    &["kicad_sch", "kicad_pcb", "net", "spice", "gbr", "pdf", "svg", "bom", "bom_json", "report", "json"];
 
 /// Export targets this build actually writes.
-const SUPPORTED_EXPORTS: &[&str] = &["kicad_sch", "net", "spice", "svg", "pdf", "bom", "report", "json"];
+const SUPPORTED_EXPORTS: &[&str] = &["kicad_sch", "net", "spice", "svg", "pdf", "bom", "bom_json", "report", "json"];
 
 /// Tag written into the deterministic JSON document projection.
 const JSON_PROJECTION_FORMAT: &str = "open-eda-projection";
 
 /// Version written into the deterministic JSON document projection.
 const JSON_PROJECTION_VERSION: u64 = 1;
+
+/// Tag written into the deterministic JSON BOM projection.
+const BOM_PROJECTION_FORMAT: &str = "open-eda-bom";
+
+/// Version written into the deterministic JSON BOM projection.
+const BOM_PROJECTION_VERSION: u64 = 1;
 
 /// Loss code reported when a SPICE element pin has no net and gets an NC node.
 const SPICE_OPEN_PIN: &str = "spice/open-pin";
@@ -187,6 +194,12 @@ pub struct Component {
     pub reference: String,
     /// Value text, for example `10k`.
     pub value: String,
+    /// Optional footprint assignment, for example `Resistor_SMD:R_0805_2012Metric`.
+    ///
+    /// An empty string means no footprint has been assigned. The BOM groups by
+    /// value and footprint, and the KiCad writer emits the property verbatim.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub footprint: String,
     /// Placement X coordinate in design units.
     pub x: f64,
     /// Placement Y coordinate in design units.
@@ -402,6 +415,21 @@ pub struct UpdateComponentRequest {
     pub value: String,
 }
 
+/// Request of [`set_component_footprint`].
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetFootprintRequest {
+    /// Target sheet id or name; the first sheet is used when omitted.
+    #[serde(default)]
+    pub sheet: Option<String>,
+    /// Reference designator of the placed component.
+    pub reference: String,
+    /// Footprint text, for example `Resistor_SMD:R_0805_2012Metric`; an empty
+    /// string clears the assignment.
+    #[serde(default)]
+    pub footprint: String,
+}
+
 /// Request of [`rename_net`].
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -454,7 +482,8 @@ pub struct DeleteNetRequest {
 ///
 /// The matrix is the single source of truth for the CLI, the SDK and the
 /// studio, so a method name is never treated as a capability. Netlist, SPICE,
-/// SVG, BOM, PDF, report, JSON and KiCad schematic projections are supported,
+/// SVG, BOM (CSV and JSON), PDF, report, JSON document and KiCad schematic
+/// projections are supported,
 /// KiCad schematics are also imported, and every other exchange format and rule
 /// check is reported as unsupported. Design-level buses are edited through
 /// `add_bus`, `remove_bus` and `list_buses`, and ERC reports the stable codes
@@ -840,6 +869,7 @@ pub fn add_component(handle: u64, request: AddComponentRequest) -> Result<Value,
             id,
             reference: request.reference,
             value: request.value,
+            footprint: String::new(),
             x: request.x,
             y: request.y,
             rotation: request.rotation,
@@ -935,6 +965,28 @@ pub fn update_component(handle: u64, request: UpdateComponentRequest) -> Result<
                 not_found(format!("no component with reference `{}` is placed on this sheet", request.reference))
             })?;
         component.value = request.value;
+        let component = component.clone();
+        design.revision += 1;
+        let mut payload = Map::new();
+        payload.insert("component".to_string(), json!(component));
+        Ok(payload)
+    })
+}
+
+/// Assigns or clears the footprint text of one placed component.
+///
+/// An empty `footprint` clears the assignment. The operation never invents a
+/// footprint: it stores exactly the text the caller passed, trimmed, so the BOM
+/// and KiCad writer emit it verbatim.
+pub fn set_component_footprint(handle: u64, request: SetFootprintRequest) -> Result<Value, ServiceError> {
+    mutate(handle, |design| {
+        let index = sheet_index(design, request.sheet.as_deref())?;
+        let sheet = &mut design.sheets[index];
+        let component =
+            sheet.components.iter_mut().find(|component| component.reference == request.reference).ok_or_else(|| {
+                not_found(format!("no component with reference `{}` is placed on this sheet", request.reference))
+            })?;
+        component.footprint = request.footprint.trim().to_string();
         let component = component.clone();
         design.revision += 1;
         let mut payload = Map::new();
@@ -1509,9 +1561,18 @@ pub fn export(handle: u64, format: &str, path: &Path) -> Result<Value, ServiceEr
             let artifact = json!({
                 "kind": "bom",
                 "rows": rows.len(),
-                "components": rows.iter().map(|(_, designators)| designators.len()).sum::<usize>(),
+                "components": rows.iter().map(|row| row.designators.len()).sum::<usize>(),
             });
             (render_bom(&rows), artifact)
+        }
+        "bom_json" => {
+            let rows = bom_rows(&design);
+            let artifact = json!({
+                "kind": "bom_json",
+                "rows": rows.len(),
+                "components": rows.iter().map(|row| row.designators.len()).sum::<usize>(),
+            });
+            (render_bom_json(&design, &rows)?, artifact)
         }
         "pdf" => {
             let artifact = json!({
@@ -2545,35 +2606,121 @@ fn escape_xml(text: &str) -> String {
     text.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;").replace('\'', "&apos;")
 }
 
-/// Groups designators by value; the model has no footprint field, so a BOM row
-/// is one distinct value.
-fn bom_rows(design: &Design) -> Vec<(String, Vec<String>)> {
-    let mut groups: std::collections::BTreeMap<String, Vec<String>> = std::collections::BTreeMap::new();
+/// One BOM row: a value and footprint shared by the listed designators.
+struct BomRow {
+    comment: String,
+    footprint: String,
+    designators: Vec<String>,
+}
+
+/// Groups designators by value and footprint; both are the model's own text, so
+/// a row never invents a part number. Rows and designators are sorted, making
+/// the projection deterministic.
+fn bom_rows(design: &Design) -> Vec<BomRow> {
+    let mut groups: BTreeMap<(String, String), Vec<String>> = BTreeMap::new();
     for sheet in &design.sheets {
         for component in &sheet.components {
-            groups.entry(component.value.clone()).or_default().push(component.reference.clone());
+            groups.entry((component.value.clone(), component.footprint.clone())).or_default().push(component.reference.clone());
         }
     }
     groups
         .into_iter()
-        .map(|(value, mut designators)| {
+        .map(|((comment, footprint), mut designators)| {
             designators.sort();
-            (value, designators)
+            BomRow { comment, footprint, designators }
         })
         .collect()
 }
 
-fn render_bom(rows: &[(String, Vec<String>)]) -> String {
-    let mut text = String::from("Comment,Designator,Quantity\n");
-    for (comment, designators) in rows {
-        text.push_str(&csv_field(comment));
+fn render_bom(rows: &[BomRow]) -> String {
+    let mut text = String::from("Comment,Footprint,Designator,Quantity\n");
+    for row in rows {
+        text.push_str(&csv_field(&row.comment));
         text.push(',');
-        text.push_str(&csv_field(&designators.join(" ")));
+        text.push_str(&csv_field(&row.footprint));
         text.push(',');
-        text.push_str(&designators.len().to_string());
+        text.push_str(&csv_field(&designator_ranges(&row.designators).join(",")));
+        text.push(',');
+        text.push_str(&row.designators.len().to_string());
         text.push('\n');
     }
     text
+}
+
+/// Splits a reference designator into its letter prefix and trailing number.
+///
+/// A designator without trailing digits, for example `TP_A`, is kept whole and
+/// never participates in a range.
+fn split_designator(reference: &str) -> (&str, Option<u64>) {
+    let digits = reference.len() - reference.trim_end_matches(|character: char| character.is_ascii_digit()).len();
+    if digits == 0 { (reference, None) } else { (reference.split_at(digits).0, reference[digits..].parse::<u64>().ok()) }
+}
+
+/// Compresses consecutive designators into inclusive ranges.
+///
+/// Only runs of three or more are collapsed, so `R1 R2 R5 R6 R7` becomes
+/// `R1,R2,R5-R7` and short pairs stay explicit. The input must be sorted.
+fn designator_ranges(designators: &[String]) -> Vec<String> {
+    let mut ranges = Vec::new();
+    let mut index = 0;
+    while index < designators.len() {
+        let (prefix, number) = split_designator(&designators[index]);
+        let Some(first) = number
+        else {
+            ranges.push(designators[index].clone());
+            index += 1;
+            continue;
+        };
+        let start = index;
+        let mut last = first;
+        while index + 1 < designators.len() {
+            let (next_prefix, next_number) = split_designator(&designators[index + 1]);
+            if next_prefix == prefix && next_number == Some(last + 1) {
+                last += 1;
+                index += 1;
+            }
+            else {
+                break;
+            }
+        }
+        if index - start + 1 >= 3 {
+            ranges.push(format!("{prefix}{first}-{prefix}{last}"));
+        }
+        else {
+            ranges.extend(designators[start..=index].iter().cloned());
+        }
+        index += 1;
+    }
+    ranges
+}
+
+/// Projects the BOM rows to deterministic JSON, including the compressed
+/// designator ranges the CSV writer emits.
+fn render_bom_json(design: &Design, rows: &[BomRow]) -> Result<String, ServiceError> {
+    let items = rows
+        .iter()
+        .map(|row| {
+            let ranges = designator_ranges(&row.designators);
+            json!({
+                "comment": row.comment,
+                "footprint": row.footprint,
+                "quantity": row.designators.len(),
+                "designators": row.designators,
+                "designatorRanges": ranges,
+            })
+        })
+        .collect::<Vec<_>>();
+    let projection = json!({
+        "format": BOM_PROJECTION_FORMAT,
+        "version": BOM_PROJECTION_VERSION,
+        "design": design.id,
+        "revision": design.revision,
+        "items": items,
+    });
+    let mut encoded = serde_json::to_string_pretty(&projection)
+        .map_err(|error| invalid(format!("the BOM projection could not be encoded: {error}")))?;
+    encoded.push('\n');
+    Ok(encoded)
 }
 
 /// Renders the deterministic Markdown design report.
@@ -2673,6 +2820,7 @@ fn render_json_projection(design: &Design) -> Result<String, ServiceError> {
                         "id": component.id,
                         "ref": component.reference,
                         "value": component.value,
+                        "footprint": component.footprint,
                         "x": component.x,
                         "y": component.y,
                         "rotation": component.rotation,
@@ -2970,6 +3118,7 @@ mod tests {
         assert_eq!(matrix["exportTargets"]["svg"], "supported");
         assert_eq!(matrix["exportTargets"]["pdf"], "supported");
         assert_eq!(matrix["exportTargets"]["bom"], "supported");
+        assert_eq!(matrix["exportTargets"]["bom_json"], "supported");
         assert_eq!(matrix["exportTargets"]["report"], "supported");
         assert_eq!(matrix["exportTargets"]["json"], "supported");
         assert_eq!(matrix["exportTargets"]["kicad_sch"], "supported");
@@ -3214,6 +3363,7 @@ mod tests {
                         id: "component-1".to_string(),
                         reference: "R1".to_string(),
                         value: "1k".to_string(),
+                        footprint: String::new(),
                         x: 0.0,
                         y: 0.0,
                         rotation: 0.0,
@@ -3223,6 +3373,7 @@ mod tests {
                         id: "component-2".to_string(),
                         reference: "R1".to_string(),
                         value: "2k".to_string(),
+                        footprint: String::new(),
                         x: 10.0,
                         y: 0.0,
                         rotation: 0.0,
@@ -3499,18 +3650,19 @@ mod tests {
     }
 
     #[test]
-    fn bom_export_groups_values_and_sorts_designators() {
+    fn bom_export_groups_by_value_and_footprint_and_compresses_designators() {
         let dir = TempDir::new("bom");
         let path = dir.join("blinker.csv");
+        let json_path = dir.join("blinker-bom.json");
         let created = create(CreateRequest::default()).expect("create");
         let handle = created["handle"].as_u64().expect("handle");
-        for (reference, value) in [("R2", "10k"), ("R1", "10k"), ("C1", "4k7")] {
+        for reference in ["R1", "R2", "R3", "R5", "R6", "R7", "C1"] {
             add_component(
                 handle,
                 AddComponentRequest {
                     sheet: None,
                     reference: reference.to_string(),
-                    value: value.to_string(),
+                    value: "10k".to_string(),
                     x: 0.0,
                     y: 0.0,
                     rotation: 0.0,
@@ -3519,13 +3671,66 @@ mod tests {
             )
             .expect("add");
         }
+        set_component_footprint(
+            handle,
+            SetFootprintRequest {
+                sheet: None,
+                reference: "R1".to_string(),
+                footprint: "Resistor_SMD:R_0805_2012Metric".to_string(),
+            },
+        )
+        .expect("assign R1 footprint");
+        let assigned = set_component_footprint(
+            handle,
+            SetFootprintRequest {
+                sheet: None,
+                reference: "C1".to_string(),
+                footprint: " Capacitor_SMD:C_0603_1608Metric ".to_string(),
+            },
+        )
+        .expect("assign C1 footprint");
+        assert_eq!(assigned["component"]["footprint"], "Capacitor_SMD:C_0603_1608Metric");
+
         let report = export(handle, "bom", &path).expect("export bom");
         assert_eq!(report["format"], "bom");
-        assert_eq!(report["artifact"]["rows"], 2);
-        assert_eq!(report["artifact"]["components"], 3);
+        assert_eq!(report["artifact"]["rows"], 3);
+        assert_eq!(report["artifact"]["components"], 7);
         assert_eq!(report["bytes"], fs::metadata(&path).expect("metadata").len() as usize);
         let text = fs::read_to_string(&path).expect("read bom");
-        assert_eq!(text, "Comment,Designator,Quantity\n10k,R1 R2,2\n4k7,C1,1\n");
+        assert_eq!(
+            text,
+            "Comment,Footprint,Designator,Quantity\n\
+             10k,,\"R2,R3,R5-R7\",5\n\
+             10k,Capacitor_SMD:C_0603_1608Metric,C1,1\n\
+             10k,Resistor_SMD:R_0805_2012Metric,R1,1\n"
+        );
+
+        let json_report = export(handle, "bom_json", &json_path).expect("export bom_json");
+        assert_eq!(json_report["format"], "bom_json");
+        assert_eq!(json_report["artifact"]["rows"], 3);
+        let projection: Value =
+            serde_json::from_str(&fs::read_to_string(&json_path).expect("read bom json")).expect("bom json");
+        assert_eq!(projection["format"], "open-eda-bom");
+        assert_eq!(projection["version"], 1);
+        assert_eq!(projection["design"], "design-1");
+        let items = projection["items"].as_array().expect("items");
+        assert_eq!(items.len(), 3);
+        assert_eq!(items[0]["comment"], "10k");
+        assert_eq!(items[0]["footprint"], "");
+        assert_eq!(items[0]["quantity"], 5);
+        assert_eq!(items[0]["designators"], json!(["R2", "R3", "R5", "R6", "R7"]));
+        assert_eq!(items[0]["designatorRanges"], json!(["R2", "R3", "R5-R7"]));
+        assert_eq!(items[1]["footprint"], "Capacitor_SMD:C_0603_1608Metric");
+        assert_eq!(items[2]["designatorRanges"], json!(["R1"]));
+        assert_eq!(
+            set_component_footprint(
+                handle,
+                SetFootprintRequest { sheet: None, reference: "R9".to_string(), footprint: String::new() }
+            )
+            .unwrap_err()
+            .code,
+            "object/not-found"
+        );
         close(handle).expect("close");
     }
 
@@ -3590,6 +3795,7 @@ mod tests {
                     id: "component-1".to_string(),
                     reference: "R1".to_string(),
                     value: "1k".to_string(),
+                    footprint: String::new(),
                     x: 0.0,
                     y: 0.0,
                     rotation: 0.0,
@@ -3822,6 +4028,15 @@ mod tests {
         let created = create(CreateRequest { title: Some("Blinker".to_string()), template: None }).expect("create");
         let handle = created["handle"].as_u64().expect("handle");
         blinker(handle);
+        set_component_footprint(
+            handle,
+            SetFootprintRequest {
+                sheet: None,
+                reference: "R1".to_string(),
+                footprint: "Resistor_SMD:R_0805_2012Metric".to_string(),
+            },
+        )
+        .expect("assign footprint");
 
         let report = export(handle, "kicad_sch", &first).expect("export kicad_sch");
         assert_eq!(report["format"], "kicad_sch");
@@ -3840,6 +4055,7 @@ mod tests {
         assert!(text.contains("(symbol (lib_id \"open-eda:2pin\") (at 40 30 0)"));
         assert!(text.contains("(property \"Reference\" \"R1\""));
         assert!(text.contains("(property \"Value\" \"10k\""));
+        assert!(text.contains("(property \"Footprint\" \"Resistor_SMD:R_0805_2012Metric\""));
         assert!(text.contains("(property \"Footprint\" \"\""));
         assert!(text.contains("(pin \"1\" (uuid \"00000000-0000-0000-0000-"));
         assert!(text.contains("(wire (pts (xy 40 30) (xy 70 30)) (stroke (width 0) (type default)) (uuid \""));
@@ -3865,7 +4081,9 @@ mod tests {
         assert_eq!(components[0]["y"], 30.0);
         assert_eq!(components[0]["rotation"], 0.0);
         assert_eq!(components[0]["pins"], json!(["1", "2"]));
+        assert_eq!(components[0]["footprint"], "Resistor_SMD:R_0805_2012Metric");
         assert_eq!(components[1]["ref"], "C1");
+        assert_eq!(components[1]["footprint"], Value::Null);
 
         let wires = sheet["wires"].as_array().expect("wires");
         assert_eq!(wires.len(), 1);
@@ -4195,6 +4413,7 @@ mod tests {
         assert_eq!(sheet["name"], "Sheet 1");
         assert_eq!(sheet["components"][0]["ref"], "R1");
         assert_eq!(sheet["components"][0]["value"], "10k");
+        assert_eq!(sheet["components"][0]["footprint"], "");
         assert_eq!(sheet["components"][0]["x"], 40.0);
         assert_eq!(sheet["components"][0]["pins"], json!(["1", "2"]));
         assert_eq!(sheet["nets"][0]["name"], "VCC");
@@ -4305,6 +4524,7 @@ mod tests {
                     id: "component-1".to_string(),
                     reference: "U1".to_string(),
                     value: "opamp".to_string(),
+                    footprint: String::new(),
                     x: 0.0,
                     y: 0.0,
                     rotation: 0.0,
@@ -4344,6 +4564,7 @@ mod tests {
                     id: "component-1".to_string(),
                     reference: "U1".to_string(),
                     value: "buffer".to_string(),
+                    footprint: String::new(),
                     x: 0.0,
                     y: 0.0,
                     rotation: 0.0,

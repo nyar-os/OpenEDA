@@ -44,6 +44,7 @@ import type {
     RenameNetInput,
     SaveOptions,
     SaveReport,
+    SetFootprintInput,
     Sheet,
     TextInput,
     TextLabel,
@@ -388,6 +389,11 @@ function attach(opened: service.DesignHandle, options: AttachOptions): Design {
         },
         async updateComponent(input: UpdateComponentInput): Promise<Component> {
             const result = await mutate(() => service.updateComponent(handle, input));
+            current = result.design;
+            return result.component;
+        },
+        async setFootprint(input: SetFootprintInput): Promise<Component> {
+            const result = await mutate(() => service.setComponentFootprint(handle, input));
             current = result.design;
             return result.component;
         },

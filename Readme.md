@@ -37,7 +37,7 @@ prints exactly which entries are supported.
 | --- | --- | --- |
 | `.oeda` create/open/save/edit | supported | sheets, components, nets, buses, wires, junctions, text, undo/redo |
 | checks `erc`, `nets`, `connectivity`, `footprints`, `power` | supported | `drc` and `clearance` are unsupported |
-| export `net`, `spice`, `svg`, `bom`, `pdf`, `report`, `json`, `kicad_sch` | supported | read-only projections; `kicad_pcb` and `gbr` are unsupported |
+| export `net`, `spice`, `svg`, `bom`, `bom_json`, `pdf`, `report`, `json`, `kicad_sch` | supported | read-only projections; `kicad_pcb` and `gbr` are unsupported |
 | import `kicad_sch` | supported | symbols, wires, junctions, no-connect flags, text and labels; other constructs are reported as loss entries |
 | KiCad board, Gerber, drill, STEP | unsupported | declared in the capability matrix only |
 | interactive schematic/board renderer | unsupported | the preview is an SVG projection |
@@ -88,6 +88,7 @@ const eda = new OpenEDA({ history: 'sidecar' });
 const design = await eda.create({ title: 'Blinker' });
 
 await design.addComponent({ reference: 'R1', value: '10k', x: 40, y: 30, pins: ['1', '2'] });
+await design.setFootprint({ reference: 'R1', footprint: 'Resistor_SMD:R_0805_2012Metric' });
 await design.connectNet({ net: 'VCC', nodes: ['R1.1'] });
 await design.addJunction({ x: 55, y: 30 });
 await design.addText({ text: 'Revision A', x: 20, y: 12 });
@@ -118,6 +119,7 @@ open-eda create --out blinker.oeda --title "Blinker"
 # Add two components to the existing document, in place
 open-eda component add blinker.oeda --ref R1 --value 10k --x 40 --y 30 --pins 1,2
 open-eda component add blinker.oeda --ref C1 --value 100n --x 70 --y 30 --pins 1,2
+open-eda component footprint blinker.oeda --ref R1 --footprint Resistor_SMD:R_0805_2012Metric
 
 # Connect pins to a net, then edit the objects
 open-eda net connect blinker.oeda --net VCC --nodes R1.1,C1.1
@@ -156,6 +158,7 @@ open-eda export blinker.oeda --format net --out blinker.net
 open-eda export blinker.oeda --format spice --out blinker.cir
 open-eda export blinker.oeda --format svg --out blinker.svg
 open-eda export blinker.oeda --format bom --out blinker.csv
+open-eda export blinker.oeda --format bom_json --out blinker-bom.json
 open-eda export blinker.oeda --format pdf --out blinker.pdf
 open-eda export blinker.oeda --format report --out blinker.md
 open-eda export blinker.oeda --format json --out blinker.json
@@ -175,8 +178,10 @@ SPICE writer emits `* OpenEDA SPICE netlist v1`,
 one element line per component, `NC_<ref>_<pin>` nodes for open pins, and
 `.END`. The SVG writer draws a frame, wires, junctions, text annotations and
 component boxes with reference and value labels. The BOM writer groups
-components by value
-and emits `Comment,Designator,Quantity` with sorted designators. The PDF writer
+components by value and footprint and emits
+`Comment,Footprint,Designator,Quantity` with sorted designators compressed into
+inclusive ranges (`R5-R7` for three or more consecutive numbers); `bom_json`
+writes the same rows as a deterministic `open-eda-bom` projection. The PDF writer
 emits a complete one-page A4 landscape vector document (`%PDF-1.4` header,
 cross-reference table, `%%EOF`) with sheet names, component boxes and wires.
 The report writer emits deterministic Markdown with a design header, a
@@ -233,7 +238,9 @@ served by the desktop window and talks to the same operations over JSON-RPC.
 - It models buses as design-level name and width declarations. It does not draw
   bus wires or infer bus membership from schematic geometry.
 - It does not draw an interactive schematic or board, route, or check clearance.
-- It does not assign footprints or run DRC or clearance checks.
+- It does not assign footprints: it stores the footprint text you set, and the
+  BOM and KiCad writer emit it verbatim, but it never picks, validates or
+  places a footprint. It does not run DRC or clearance checks.
 - Connectivity and power checks analyse the schematic's wires and nets only;
   they do not model a board, copper or current flow.
 - It does not store undo history in the `.oeda` document itself; the optional

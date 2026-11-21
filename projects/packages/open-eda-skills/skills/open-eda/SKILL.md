@@ -26,13 +26,14 @@ open-eda create --out <file.oeda> [--title <title>] [--overwrite]
 open-eda open <file.oeda>
 open-eda list <file.oeda>
 open-eda inspect <file.oeda> [--checks erc,nets,connectivity,footprints,power]
-open-eda export <file.oeda> --format net|spice|svg|bom|pdf|report|kicad_sch --out <file>
+open-eda export <file.oeda> --format net|spice|svg|bom|bom_json|pdf|report|kicad_sch --out <file>
 open-eda import <file.kicad_sch> --out <file.oeda> [--overwrite]
 open-eda undo <file.oeda>
 open-eda redo <file.oeda>
 open-eda component add <file.oeda> --ref <ref> --value <value> --x <n> --y <n> [--rotation <deg>] [--pins 1,2] [--sheet <sheet>]
 open-eda component move <file.oeda> --ref <ref> --x <n> --y <n> [--rotation <deg>] [--sheet <sheet>]
 open-eda component update <file.oeda> --ref <ref> --value <value> [--sheet <sheet>]
+open-eda component footprint <file.oeda> --ref <ref> [--footprint <footprint>] [--sheet <sheet>]
 open-eda component delete <file.oeda> --ref <ref> [--sheet <sheet>]
 open-eda net connect <file.oeda> --net <name> --nodes <ref.pin>,<ref.pin> [--sheet <sheet>]
 open-eda net derive <file.oeda> [--sheet <sheet>]
@@ -116,9 +117,12 @@ clearance checked.
   `NC_<ref>_<pin>` and are reported with `spice/open-pin`.
 - `svg` writes a sheet frame, wires and component boxes with reference and value
   labels; the viewBox is derived from the placed geometry.
-- `bom` writes `Comment,Designator,Quantity`, grouped by value with sorted
-  designators. The model has no footprint field, so footprint grouping is not
-  available.
+- `bom` writes `Comment,Footprint,Designator,Quantity`, grouped by value and
+  footprint with sorted designators compressed into inclusive ranges (`R5-R7`
+  for three or more consecutive numbers). Footprint text is whatever was
+  assigned with `component footprint`; the model never picks one.
+- `bom_json` writes the same rows as a deterministic `open-eda-bom` JSON
+  projection with `designators` and `designatorRanges` arrays.
 - `pdf` writes one A4 landscape vector page with sheet names, component boxes,
   wires and a cross-reference table.
 - `report` writes deterministic Markdown with a design header, per-sheet object

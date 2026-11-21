@@ -72,6 +72,7 @@ export type ExportTarget =
     | 'pdf'
     | 'svg'
     | 'bom'
+    | 'bom_json'
     | 'report'
     | 'json';
 
@@ -163,6 +164,8 @@ export interface Component {
     /** Reference designator, unique inside the design. */
     readonly ref: string;
     readonly value: string;
+    /** Assigned footprint, for example `Resistor_SMD:R_0805_2012Metric`; empty when unassigned. */
+    readonly footprint: string;
     readonly x: number;
     readonly y: number;
     readonly rotation: number;
@@ -288,6 +291,13 @@ export interface UpdateComponentInput {
     readonly sheet?: SheetId;
     readonly reference: string;
     readonly value: string;
+}
+
+/** Input of `design.setFootprint()`; an empty footprint clears the assignment. */
+export interface SetFootprintInput {
+    readonly sheet?: SheetId;
+    readonly reference: string;
+    readonly footprint: string;
 }
 
 /** Input of `design.renameNet()`. Wires that named the old net follow it. */
@@ -496,6 +506,8 @@ export interface Design {
     moveComponent(input: MoveComponentInput): Promise<Component>;
     /** Replaces the value text of one component. */
     updateComponent(input: UpdateComponentInput): Promise<Component>;
+    /** Assigns or clears the footprint of one component; the BOM and KiCad writer use it verbatim. */
+    setFootprint(input: SetFootprintInput): Promise<Component>;
     /** Renames a net; wires that named it follow the new name. */
     renameNet(input: RenameNetInput): Promise<Net>;
     /** Deletes one wire segment. */

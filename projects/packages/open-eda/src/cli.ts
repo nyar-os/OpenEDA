@@ -85,7 +85,19 @@ async function withDesign<T>(file: string, run: (design: Design) => Promise<T>):
 }
 
 /** Export targets the CLI accepts, mirroring the declared capability matrix. */
-const exportTargets: readonly ExportTarget[] = ['kicad_sch', 'kicad_pcb', 'net', 'spice', 'gbr', 'pdf', 'svg', 'bom', 'report', 'json'];
+const exportTargets: readonly ExportTarget[] = [
+    'kicad_sch',
+    'kicad_pcb',
+    'net',
+    'spice',
+    'gbr',
+    'pdf',
+    'svg',
+    'bom',
+    'bom_json',
+    'report',
+    'json',
+];
 
 function asExportTarget(value: string | undefined): ExportTarget | undefined {
     return value !== undefined && (exportTargets as readonly string[]).includes(value) ? (value as ExportTarget) : undefined;
@@ -101,10 +113,14 @@ function describeCapabilities(matrix: DesignCapabilities): string {
     const checks = Object.entries(matrix.checks)
         .filter(([, level]) => level === 'supported')
         .map(([name]) => name);
+    const targets = Object.entries(matrix.exportTargets)
+        .filter(([, level]) => level === 'supported')
+        .map(([name]) => name);
     return [
         `engine: ${matrix.engine.package} ${matrix.engine.version}`,
         `import formats: ${formats.length > 0 ? formats.join(', ') : 'none supported'}`,
         `export formats: ${exports.length > 0 ? exports.join(', ') : 'none supported'}`,
+        `export targets: ${targets.length > 0 ? targets.join(', ') : 'none supported'}`,
         `checks: ${checks.length > 0 ? checks.join(', ') : 'none supported'}`,
         `project: import=${matrix.project.import} edit=${matrix.project.edit} export=${matrix.project.export}`,
     ].join('\n');
@@ -331,6 +347,39 @@ componentCommand
         ctx.emitResult(
             { ...saved, revision: saved.revision, component },
             `updated ${reference} to ${value} in ${file} revision=${saved.revision}`,
+        );
+        return 0;
+    });
+
+componentCommand
+    .command('footprint', 'cli.cmd.component-footprint')
+    .option('--ref <ref>', 'cli.opt.ref')
+    .option('--footprint <name>', 'cli.opt.footprint')
+    .option('--sheet <sheet>', 'cli.opt.sheet')
+    .actionCtx(async (options, _args, ctx) => {
+        const file = input(options);
+        if (file === undefined) {
+            ctx.fail('open-eda.cli.file-required', { message: 'a design document is required' });
+            return 2;
+        }
+        const reference = text(options, 'ref');
+        if (reference === undefined || reference.trim().length === 0) {
+            ctx.fail('open-eda.cli.arguments-invalid', { message: '`--ref` is required' });
+            return 2;
+        }
+        const footprint = text(options, 'footprint') ?? '';
+        const { component, saved } = await withDesign(file, async (design) => {
+            const component = await design.setFootprint({
+                sheet: text(options, 'sheet'),
+                reference,
+                footprint,
+            });
+            return { component, saved: await savedReport(design) };
+        });
+        const shown = component.footprint.length > 0 ? component.footprint : '(cleared)';
+        ctx.emitResult(
+            { ...saved, revision: saved.revision, component },
+            `set footprint of ${reference} to ${shown} in ${file} revision=${saved.revision}`,
         );
         return 0;
     });
@@ -939,7 +988,7 @@ cli
         const format = asExportTarget(text(options, 'format'));
         if (format === undefined) {
             ctx.fail('open-eda.cli.format-required', {
-                message: '`--format` must be one of kicad_sch, kicad_pcb, net, spice, gbr, pdf, svg, bom, report, json',
+                message: '`--format` must be one of kicad_sch, kicad_pcb, net, spice, gbr, pdf, svg, bom, bom_json, report, json',
             });
             return 2;
         }

@@ -33,6 +33,7 @@ import type {
     Net,
     RenameNetInput,
     SaveReport,
+    SetFootprintInput,
     Sheet,
     TextInput,
     TextLabel,
@@ -353,6 +354,16 @@ export function updateComponent(handle: number, input: UpdateComponentInput): Co
         binding('design.updateComponent').design_update_component(
             handle,
             JSON.stringify({ sheet: input.sheet, reference: input.reference, value: input.value }),
+        ),
+    );
+}
+
+/** Assigns or clears the footprint text of one component. */
+export function setComponentFootprint(handle: number, input: SetFootprintInput): ComponentResult {
+    return decode<ComponentResult>(() =>
+        binding('design.setComponentFootprint').design_set_component_footprint(
+            handle,
+            JSON.stringify({ sheet: input.sheet, reference: input.reference, footprint: input.footprint }),
         ),
     );
 }

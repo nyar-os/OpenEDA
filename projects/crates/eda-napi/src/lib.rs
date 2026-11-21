@@ -23,7 +23,8 @@ use std::{
 
 use open_eda_model::{
     AddBusRequest, AddComponentRequest, AddJunctionRequest, AddTextRequest, AddWireRequest, ConnectNetRequest, CreateRequest,
-    DeleteNetRequest, DisconnectNetRequest, MoveComponentRequest, RenameNetRequest, ServiceError, UpdateComponentRequest,
+    DeleteNetRequest, DisconnectNetRequest, MoveComponentRequest, RenameNetRequest, ServiceError, SetFootprintRequest,
+    UpdateComponentRequest,
 };
 use serde_json::{Value, json};
 use wae::{
@@ -337,6 +338,15 @@ fn design_update_component(ctx: CallContext) -> Result<JsValue> {
     let handle = handle(&ctx, 0)?;
     let request: UpdateComponentRequest = decode(serde_json::from_str(&text(&ctx, 1)?))?;
     let report = open_eda_model::update_component(handle, request).map_err(fail)?;
+    respond(&ctx, &report)
+}
+
+/// Assigns or clears the footprint text of one placed component.
+#[function]
+fn design_set_component_footprint(ctx: CallContext) -> Result<JsValue> {
+    let handle = handle(&ctx, 0)?;
+    let request: SetFootprintRequest = decode(serde_json::from_str(&text(&ctx, 1)?))?;
+    let report = open_eda_model::set_component_footprint(handle, request).map_err(fail)?;
     respond(&ctx, &report)
 }
 
@@ -1201,6 +1211,7 @@ register_module![
     design_delete_sheet,
     design_move_component,
     design_update_component,
+    design_set_component_footprint,
     design_rename_net,
     design_delete_wire,
     design_derive_nets,

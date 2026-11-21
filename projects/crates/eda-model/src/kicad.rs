@@ -143,7 +143,8 @@ fn render_component(out: &mut String, design: &Design, component: &Component) {
         num(component.y + 2.54)
     ));
     out.push_str(&format!(
-        "    (property \"Footprint\" \"\" (at {} {} 0) (effects (font (size 1.27 1.27)) hide))\n",
+        "    (property \"Footprint\" {} (at {} {} 0) (effects (font (size 1.27 1.27)) hide))\n",
+        quote(&component.footprint),
         num(component.x),
         num(component.y)
     ));
@@ -367,6 +368,7 @@ fn read_symbol(
 
     let mut reference = String::new();
     let mut value = String::new();
+    let mut footprint = String::new();
     for property in node.children().iter().filter(|item| item.head() == Some("property")) {
         let Some(name) = property.children().first().and_then(node_text)
         else {
@@ -376,6 +378,7 @@ fn read_symbol(
         match name {
             "Reference" => reference = text.to_string(),
             "Value" => value = text.to_string(),
+            "Footprint" => footprint = text.to_string(),
             _ => {}
         }
     }
@@ -399,7 +402,7 @@ fn read_symbol(
         losses.push(loss(MISSING_REFERENCE, format!("a symbol without a reference property was named `{fallback}`")));
         reference = fallback.to_string();
     }
-    Some(Component { id: String::new(), reference, value, x, y, rotation, pins })
+    Some(Component { id: String::new(), reference, value, footprint, x, y, rotation, pins })
 }
 
 fn read_wire(node: &Node, losses: &mut Vec<Value>) -> Option<([f64; 2], [f64; 2])> {
@@ -586,6 +589,7 @@ mod tests {
             id: "component-1".to_string(),
             reference: "R1".to_string(),
             value: "10k".to_string(),
+            footprint: String::new(),
             x: 0.0,
             y: 0.0,
             rotation: 0.0,
