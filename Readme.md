@@ -39,7 +39,7 @@ prints exactly which entries are supported.
 | --- | --- | --- |
 | `.oeda` create/open/save/edit | supported | sheets, components, nets, buses, wires, junctions, text, title block, undo/redo |
 | design compare `diff` | supported | read-only report of added, removed and modified sheets, components, nets, wires and buses |
-| pin electrical types | supported | per-pin roles and the `electrical` check for input, output and power conflicts |
+| pin electrical types | supported | per-pin roles, the `electrical` check and the KiCad library pin types |
 | checks `erc`, `electrical`, `nets`, `connectivity`, `footprints`, `power` | supported | `drc` and `clearance` are unsupported |
 | export `net`, `net_csv`, `spice`, `svg`, `bom`, `bom_json`, `pdf`, `report`, `json`, `kicad_sch` | supported | read-only projections; `kicad_pcb` and `gbr` are unsupported |
 | import `kicad_sch` | supported | symbols, wires, junctions, no-connect flags, text and labels; other constructs are reported as loss entries |
@@ -51,7 +51,8 @@ images and every other construct outside that subset are not dropped silently:
 each occurrence adds a `{"code": "kicad/unsupported-element", "detail": "..."}`
 entry to the import losses. The title-block `title`, `date`, `rev` and
 `company` fields are part of the subset; other title-block fields, such as
-numbered comments, add a loss entry. Global and hierarchical labels are
+numbered comments, add a loss entry. Pin electrical roles are read from the
+library symbols; an unknown type adds a loss entry and leaves that pin untyped. Global and hierarchical labels are
 imported as sheet-local net labels and each occurrence adds a
 `{"code": "kicad/label-scope", "detail": "..."}` entry, because the document
 does not model cross-sheet label scope. Junctions, no-connect flags and text
@@ -74,9 +75,9 @@ Pins may carry an electrical role, one of `input`, `output`, `bidirectional`,
 check only reads typed pins and reports `erc/input-input-conflict` and
 `erc/output-output-conflict` when two inputs or two outputs share one net, and
 `erc/power-in-unpowered` when power-input pins have no power-output pin on their
-net. Pin roles are native to the `.oeda` document and are not part of the KiCad
-exchange yet: the writer emits every KiCad library pin as `passive` and the
-importer leaves the roles unset.
+net. Pin roles are written into the KiCad library symbols and read back from
+them; a role the importer does not know is reported as an unsupported element
+instead of being guessed.
 
 Inspection accepts per-code severity overrides and waivers. An override promotes,
 demotes or silences one finding code (`error`, `warning`, `info` or `off`); a
@@ -264,7 +265,8 @@ not part of it.
 The KiCad writer emits a KiCad 6/7 S-expression with a `lib_symbols` section,
 one symbol per component, one `wire` per segment, one `junction` per connection
 dot, one `text` per annotation, one `label` per net and a `title_block` when a
-drawing property is set;
+drawing property is set. Library pins carry their native electrical role
+(`passive` when untyped);
 identifiers are derived from the document ids, so the same design always writes
 byte-identical output.
 Every file is written through a temporary file and a rename.
@@ -314,8 +316,6 @@ served by the desktop window and talks to the same operations over JSON-RPC.
   places a footprint. It does not run DRC or clearance checks.
 - Connectivity, electrical and power checks analyse the schematic's wires, nets
   and typed pins only; they do not model a board, copper or current flow.
-- Pin electrical roles are modelled and checked natively, but the KiCad writer
-  and importer do not carry them yet.
 - It does not store undo history in the `.oeda` document itself; the optional
   sidecar is separate and is not carried with the design.
 - `diff` compares the modelled objects of two documents. It is not a textual or

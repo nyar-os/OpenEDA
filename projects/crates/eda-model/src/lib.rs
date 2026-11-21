@@ -5111,6 +5111,61 @@ mod tests {
     }
 
     #[test]
+    fn kicad_round_trip_carries_pin_electrical_types() {
+        let dir = TempDir::new("pin-types");
+        let document = dir.join("typed.oeda");
+        let kicad_path = dir.join("typed.kicad_sch");
+
+        let created = create(CreateRequest::default()).expect("create");
+        let handle = created["handle"].as_u64().expect("handle");
+        add_component(
+            handle,
+            AddComponentRequest {
+                sheet: None,
+                reference: "U1".to_string(),
+                value: "driver".to_string(),
+                x: 10.0,
+                y: 20.0,
+                rotation: 0.0,
+                pins: vec!["1".to_string(), "2".to_string()],
+            },
+        )
+        .expect("add");
+        set_pin_type(
+            handle,
+            SetPinTypeRequest {
+                sheet: None,
+                reference: "U1".to_string(),
+                pin: "1".to_string(),
+                pin_type: Some(PinType::Output),
+            },
+        )
+        .expect("type pin 1");
+        set_pin_type(
+            handle,
+            SetPinTypeRequest {
+                sheet: None,
+                reference: "U1".to_string(),
+                pin: "2".to_string(),
+                pin_type: Some(PinType::PowerIn),
+            },
+        )
+        .expect("type pin 2");
+        save(handle, &document, false).expect("save");
+        export(handle, "kicad_sch", &kicad_path).expect("export");
+        let text = fs::read_to_string(&kicad_path).expect("read");
+        assert!(text.contains("(pin output line"));
+        assert!(text.contains("(pin power_in line"));
+
+        let (imported, losses) = crate::kicad::import(&text).expect("import");
+        assert!(losses.is_empty(), "unexpected losses: {losses:?}");
+        let component = imported.sheets[0].components.iter().find(|component| component.reference == "U1").expect("U1");
+        assert_eq!(component.pin_types.get("1"), Some(&PinType::Output));
+        assert_eq!(component.pin_types.get("2"), Some(&PinType::PowerIn));
+        close(handle).expect("close");
+    }
+
+    #[test]
     fn kicad_sch_export_is_deterministic_and_round_trips() {
         let dir = TempDir::new("kicad");
         let first = dir.join("blinker.kicad_sch");

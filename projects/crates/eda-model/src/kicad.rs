@@ -9,12 +9,54 @@
 //! identity and the object ids with a fixed hash, so exporting one document
 //! twice produces byte-identical files and no random source is involved.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use data_format_sexpr::{Node, parse_all};
 use serde_json::{Value, json};
 
-use crate::{Component, Design, Junction, Net, NoConnect, Node as NetNode, ServiceError, Sheet, TextLabel, Wire, invalid};
+use crate::{
+    Component, Design, Junction, Net, NoConnect, Node as NetNode, PinType, ServiceError, Sheet, TextLabel, Wire, invalid,
+};
+
+/// The pins and pin roles one KiCad library symbol declares.
+#[derive(Debug, Clone, Default)]
+struct LibrarySymbol {
+    pins: Vec<String>,
+    pin_types: BTreeMap<String, PinType>,
+}
+
+/// KiCad spelling of one electrical pin type.
+fn pin_type_name(pin_type: PinType) -> &'static str {
+    match pin_type {
+        PinType::Input => "input",
+        PinType::Output => "output",
+        PinType::Bidirectional => "bidirectional",
+        PinType::TriState => "tri_state",
+        PinType::Passive => "passive",
+        PinType::PowerIn => "power_in",
+        PinType::PowerOut => "power_out",
+        PinType::OpenCollector => "open_collector",
+        PinType::OpenEmitter => "open_emitter",
+        PinType::Unspecified => "unspecified",
+    }
+}
+
+/// Reads a KiCad pin type; `free` is KiCad's older name for `unspecified`.
+fn read_pin_type(name: &str) -> Option<PinType> {
+    Some(match name {
+        "input" => PinType::Input,
+        "output" => PinType::Output,
+        "bidirectional" => PinType::Bidirectional,
+        "tri_state" => PinType::TriState,
+        "passive" => PinType::Passive,
+        "power_in" => PinType::PowerIn,
+        "power_out" => PinType::PowerOut,
+        "open_collector" => PinType::OpenCollector,
+        "open_emitter" => PinType::OpenEmitter,
+        "free" | "unspecified" => PinType::Unspecified,
+        _ => return None,
+    })
+}
 
 /// Loss code reported for a KiCad construct the model cannot represent.
 pub(crate) const UNSUPPORTED_ELEMENT: &str = "kicad/unsupported-element";
@@ -79,8 +121,8 @@ pub(crate) fn render(design: &Design) -> String {
     out.push_str("  (paper \"A4\")\n");
     render_title_block(&mut out, design);
     out.push_str("  (lib_symbols\n");
-    for (lib_id, pins) in library_symbols(design) {
-        render_library_symbol(&mut out, &lib_id, &pins);
+    for (lib_id, symbol) in library_symbols(design) {
+        render_library_symbol(&mut out, &lib_id, &symbol);
     }
     out.push_str("  )\n");
     for sheet in &design.sheets {
@@ -139,13 +181,13 @@ fn render_title_block(out: &mut String, design: &Design) {
 }
 
 /// Collects one library symbol per distinct `lib_id`, keyed for stable order.
-fn library_symbols(design: &Design) -> Vec<(String, Vec<String>)> {
-    let mut symbols: Vec<(String, Vec<String>)> = Vec::new();
+fn library_symbols(design: &Design) -> Vec<(String, LibrarySymbol)> {
+    let mut symbols: Vec<(String, LibrarySymbol)> = Vec::new();
     for sheet in &design.sheets {
         for component in &sheet.components {
             let lib_id = lib_id_for(component);
             if !symbols.iter().any(|(candidate, _)| *candidate == lib_id) {
-                symbols.push((lib_id, component.pins.clone()));
+                symbols.push((lib_id, LibrarySymbol { pins: component.pins.clone(), pin_types: component.pin_types.clone() }));
             }
         }
     }
@@ -153,30 +195,47 @@ fn library_symbols(design: &Design) -> Vec<(String, Vec<String>)> {
     symbols
 }
 
-/// Builds a legal, stable library id from the component pins.
+/// Builds a legal, stable library id from the component pins and pin roles.
 ///
 /// Components whose pins are the numeric sequence `1..n` share one symbol per
 /// pin count; any other pin set gets a short hash suffix so the library symbol
-/// declares exactly the pins the placed symbols reference.
+/// declares exactly the pins the placed symbols reference. A component with
+/// typed pins adds a second suffix, so symbols that differ only in a pin role
+/// never share one library entry.
 pub(crate) fn lib_id_for(component: &Component) -> String {
     let numeric = component.pins.iter().enumerate().all(|(index, pin)| *pin == (index + 1).to_string());
-    if numeric {
+    let base = if numeric {
         format!("open-eda:{}pin", component.pins.len())
     }
     else {
         format!("open-eda:{}pin_{:08x}", component.pins.len(), hash64(&component.pins.join(",")) & 0xffff_ffff)
+    };
+    if component.pin_types.is_empty() {
+        return base;
     }
+    let signature = component
+        .pins
+        .iter()
+        .map(|pin| {
+            let pin_type = component.pin_types.get(pin).copied().unwrap_or(PinType::Passive);
+            format!("{pin}={}", pin_type_name(pin_type))
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    format!("{base}_{:08x}", hash64(&signature) & 0xffff_ffff)
 }
 
-fn render_library_symbol(out: &mut String, lib_id: &str, pins: &[String]) {
+fn render_library_symbol(out: &mut String, lib_id: &str, symbol: &LibrarySymbol) {
     out.push_str(&format!("    (symbol {} (pin_names (offset 1.016)) (in_bom yes) (on_board yes)\n", quote(lib_id)));
     out.push_str("      (property \"Reference\" \"U\" (at 0 2.54 0) (effects (font (size 1.27 1.27))))\n");
     out.push_str("      (property \"Value\" \"\" (at 0 -2.54 0) (effects (font (size 1.27 1.27))))\n");
     out.push_str(&format!("      (symbol {}\n", quote(&format!("{lib_id}_1_1"))));
-    for (index, pin) in pins.iter().enumerate() {
+    for (index, pin) in symbol.pins.iter().enumerate() {
         let y = -(index as f64) * 2.54;
+        let pin_type = symbol.pin_types.get(pin).copied().unwrap_or(PinType::Passive);
         out.push_str(&format!(
-            "        (pin passive line (at -5.08 {} 0) (length 2.54)\n          (name {} (effects (font (size 1.27 1.27))))\n          (number {} (effects (font (size 1.27 1.27)))))\n",
+            "        (pin {} line (at -5.08 {} 0) (length 2.54)\n          (name {} (effects (font (size 1.27 1.27))))\n          (number {} (effects (font (size 1.27 1.27)))))\n",
+            pin_type_name(pin_type),
             num(y),
             quote(pin),
             quote(pin)
@@ -291,7 +350,7 @@ pub(crate) fn import(text: &str) -> Result<(Design, Vec<Value>), ServiceError> {
         .ok_or_else(|| invalid("the file is not a KiCad schematic: no `(kicad_sch ...)` root was found"))?;
 
     let mut losses = Vec::new();
-    let library = read_library(root);
+    let library = read_library(root, &mut losses);
     let (title, rev, company, date) = read_title_block(root, &mut losses);
     let mut components = Vec::new();
     let mut references = HashSet::new();
@@ -387,7 +446,7 @@ fn loss(code: &str, detail: String) -> Value {
 
 /// Reads the pin numbers each library symbol declares, so placed symbols that
 /// omit their `(pin ...)` lines still import with their pins.
-fn read_library(root: &Node) -> HashMap<String, Vec<String>> {
+fn read_library(root: &Node, losses: &mut Vec<Value>) -> HashMap<String, LibrarySymbol> {
     let mut library = HashMap::new();
     let Some(section) = root.find("lib_symbols")
     else {
@@ -398,24 +457,37 @@ fn read_library(root: &Node) -> HashMap<String, Vec<String>> {
         else {
             continue;
         };
-        let mut pins = Vec::new();
-        collect_pins(symbol, &mut pins);
-        library.insert(name.to_string(), pins);
+        let mut entry = LibrarySymbol::default();
+        collect_pins(symbol, &mut entry, losses);
+        library.insert(name.to_string(), entry);
     }
     library
 }
 
-fn collect_pins(node: &Node, pins: &mut Vec<String>) {
+fn collect_pins(node: &Node, symbol: &mut LibrarySymbol, losses: &mut Vec<Value>) {
     for item in node.children() {
         match item.head() {
             Some("pin") => {
-                if let Some(number) = child_text(item, "number")
-                    && !pins.iter().any(|pin| pin == number)
-                {
-                    pins.push(number.to_string());
+                let Some(number) = child_text(item, "number")
+                else {
+                    continue;
+                };
+                if symbol.pins.iter().any(|pin| pin == number) {
+                    continue;
+                }
+                symbol.pins.push(number.to_string());
+                let type_name = item.children().first().and_then(node_text).unwrap_or("");
+                match read_pin_type(type_name) {
+                    Some(pin_type) => {
+                        symbol.pin_types.insert(number.to_string(), pin_type);
+                    }
+                    None => losses.push(loss(
+                        UNSUPPORTED_ELEMENT,
+                        format!("pin `{number}` has electrical type `{type_name}`, which the model does not carry"),
+                    )),
                 }
             }
-            Some("symbol") => collect_pins(item, pins),
+            Some("symbol") => collect_pins(item, symbol, losses),
             _ => {}
         }
     }
@@ -423,7 +495,7 @@ fn collect_pins(node: &Node, pins: &mut Vec<String>) {
 
 fn read_symbol(
     node: &Node,
-    library: &HashMap<String, Vec<String>>,
+    library: &HashMap<String, LibrarySymbol>,
     fallback: &str,
     losses: &mut Vec<Value>,
 ) -> Option<Component> {
@@ -457,8 +529,12 @@ fn read_symbol(
         .filter(|item| item.head() == Some("pin"))
         .filter_map(|pin| pin.children().first().and_then(node_text).map(str::to_string))
         .collect();
-    if pins.is_empty() {
-        pins = library.get(lib_id).cloned().unwrap_or_default();
+    let mut pin_types = BTreeMap::new();
+    if let Some(symbol) = library.get(lib_id) {
+        if pins.is_empty() {
+            pins = symbol.pins.clone();
+        }
+        pin_types = symbol.pin_types.clone();
     }
     if pins.is_empty() {
         losses.push(loss(
@@ -470,7 +546,7 @@ fn read_symbol(
         losses.push(loss(MISSING_REFERENCE, format!("a symbol without a reference property was named `{fallback}`")));
         reference = fallback.to_string();
     }
-    Some(Component { id: String::new(), reference, value, footprint, x, y, rotation, pins, pin_types: Default::default() })
+    Some(Component { id: String::new(), reference, value, footprint, x, y, rotation, pins, pin_types })
 }
 
 fn read_wire(node: &Node, losses: &mut Vec<Value>) -> Option<([f64; 2], [f64; 2])> {
@@ -665,9 +741,14 @@ mod tests {
             pin_types: Default::default(),
         };
         assert_eq!(lib_id_for(&numeric), "open-eda:2pin");
-        let named = Component { pins: vec!["A".to_string(), "K".to_string()], ..numeric };
+        let named = Component { pins: vec!["A".to_string(), "K".to_string()], ..numeric.clone() };
         assert!(lib_id_for(&named).starts_with("open-eda:2pin_"));
         assert_eq!(lib_id_for(&named), lib_id_for(&named.clone()));
+        let mut typed = numeric.clone();
+        typed.pin_types.insert("1".to_string(), PinType::Output);
+        assert_ne!(lib_id_for(&numeric), lib_id_for(&typed));
+        assert!(lib_id_for(&typed).starts_with("open-eda:2pin_"));
+        assert_eq!(lib_id_for(&typed), lib_id_for(&typed.clone()));
     }
 
     #[test]

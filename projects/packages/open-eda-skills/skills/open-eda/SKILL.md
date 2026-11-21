@@ -127,8 +127,9 @@ Pins may carry a role: `input`, `output`, `bidirectional`, `tri_state`,
 `unspecified`. `component pin-type` assigns one, and `--clear` removes it. The
 `electrical` check reads only typed pins and reports
 `erc/input-input-conflict`, `erc/output-output-conflict` and
-`erc/power-in-unpowered`; an untyped pin is never a finding. Roles are native to
-the document; the KiCad exchange does not carry them yet.
+`erc/power-in-unpowered`; an untyped pin is never a finding. Roles are written
+into the KiCad library symbols and read back; an unknown imported type is a loss
+entry, not a guess.
 
 ## Drawing properties
 `title`, `rev`, `company` and `date` are design-wide title-block properties.
@@ -197,8 +198,8 @@ a footprint and never claims a library part exists outside the document.
   counts, a `Net | Nodes | Pins` table per sheet and the inspection findings
   grouped by severity.
 - `kicad_sch` writes the modelled schematic subset plus the title-block title,
-  date, revision and company; `kicad_pcb` and `gbr` reject with
-  `capability/not-implemented`.
+  date, revision and company and the library pin electrical roles; `kicad_pcb`
+  and `gbr` reject with `capability/not-implemented`.
 - No exchange format can be imported or edited. `.oeda` is the only editable
   document; `import` materializes a `.kicad_sch` into `.oeda`.
 
