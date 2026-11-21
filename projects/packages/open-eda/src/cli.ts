@@ -91,6 +91,7 @@ const exportTargets: readonly ExportTarget[] = [
     'kicad_sch',
     'kicad_pcb',
     'net',
+    'net_csv',
     'spice',
     'gbr',
     'pdf',
@@ -1045,7 +1046,7 @@ cli
         const format = asExportTarget(text(options, 'format'));
         if (format === undefined) {
             ctx.fail('open-eda.cli.format-required', {
-                message: '`--format` must be one of kicad_sch, kicad_pcb, net, spice, gbr, pdf, svg, bom, bom_json, report, json',
+                message: '`--format` must be one of kicad_sch, kicad_pcb, net, net_csv, spice, gbr, pdf, svg, bom, bom_json, report, json',
             });
             return 2;
         }

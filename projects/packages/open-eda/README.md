@@ -15,10 +15,10 @@ crate. `new OpenEDA(options?)` creates a session synchronously, and the returned
 - `addJunction`, `addText`
 - `addSheet`, `renameSheet`, `deleteSheet`
 - `undo`, `redo`, with `canUndo`/`canRedo` and a bounded 32-step history
-- `listObjects`, `listComponents`, `listNets`, `listSymbols`
+- `listObjects`, `listComponents`, `listNets`, `listSymbols`, `connectivity`
 - `inspect` with `erc`, `nets`, `connectivity`, `footprints` and `power`
 - `save` to a native `.oeda` document and reopen it
-- `export` to `net`, `spice`, `svg`, `bom`, `bom_json`, `pdf`, `report`, `json` or `kicad_sch`
+- `export` to `net`, `net_csv`, `spice`, `svg`, `bom`, `bom_json`, `pdf`, `report`, `json` or `kicad_sch`
 - `OpenEDA.importKicadSch({ source, target? })` from KiCad schematic text or a
   file path, optionally materializing a native document
 
@@ -26,7 +26,7 @@ crate. `new OpenEDA(options?)` creates a session synchronously, and the returned
 | --- | --- | --- |
 | `.oeda` create/open/save/edit | supported | sheets, components, nets, buses, wires, undo/redo |
 | checks `erc`, `nets`, `connectivity`, `footprints`, `power` | supported | `drc` and `clearance` report `capability/not-implemented` |
-| export `net`, `spice`, `svg`, `bom`, `bom_json`, `pdf`, `report`, `json` | supported | read-only projections |
+| export `net`, `net_csv`, `spice`, `svg`, `bom`, `bom_json`, `pdf`, `report`, `json` | supported | read-only projections |
 | export `kicad_sch` | supported | KiCad 6/7 S-expression, deterministic identifiers |
 | import `kicad_sch` | supported | symbols, wires, junctions, no-connect flags, text and labels; other constructs return loss entries |
 | export `kicad_pcb`, `gbr` | unsupported | declared, not implemented |

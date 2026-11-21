@@ -154,6 +154,13 @@ test('document core: edit, inspect, save/open round trip and projections', { ski
         const netlistText = fs.readFileSync(netlistPath, 'utf8');
         assert.ok(netlistText.includes('NET VCC'));
         assert.ok(netlistText.includes('BUS DATA 4'));
+        const csvPath = path.join(directory, 'blinker-nodes.csv');
+        const netCsv = await reopened.export({ format: 'net_csv', target: csvPath });
+        assert.equal(netCsv.format, 'net_csv');
+        assert.equal(netCsv.artifact.rows, 4);
+        const csvText = fs.readFileSync(csvPath, 'utf8');
+        assert.ok(csvText.startsWith('Sheet,Net,Ref,Pin\n'));
+        assert.ok(csvText.includes('Sheet 1,VCC,R1,1'));
         const spice = await reopened.export({ format: 'spice', target: spicePath });
         assert.equal(spice.format, 'spice');
         assert.ok(fs.readFileSync(spicePath, 'utf8').includes('* OpenEDA SPICE netlist v1'));

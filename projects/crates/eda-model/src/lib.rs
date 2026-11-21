@@ -53,10 +53,10 @@ const RENDER_FORMATS: &[&str] = &["svg", "png", "pdf"];
 
 /// Export targets declared by the command line.
 const EXPORT_TARGETS: &[&str] =
-    &["kicad_sch", "kicad_pcb", "net", "spice", "gbr", "pdf", "svg", "bom", "bom_json", "report", "json"];
+    &["kicad_sch", "kicad_pcb", "net", "net_csv", "spice", "gbr", "pdf", "svg", "bom", "bom_json", "report", "json"];
 
 /// Export targets this build actually writes.
-const SUPPORTED_EXPORTS: &[&str] = &["kicad_sch", "net", "spice", "svg", "pdf", "bom", "bom_json", "report", "json"];
+const SUPPORTED_EXPORTS: &[&str] = &["kicad_sch", "net", "net_csv", "spice", "svg", "pdf", "bom", "bom_json", "report", "json"];
 
 /// Tag written into the deterministic JSON document projection.
 const JSON_PROJECTION_FORMAT: &str = "open-eda-projection";
@@ -1545,6 +1545,15 @@ pub fn export(handle: u64, format: &str, path: &Path) -> Result<Value, ServiceEr
             });
             (render_netlist(&design), artifact)
         }
+        "net_csv" => {
+            let (contents, rows) = render_net_csv(&design);
+            let artifact = json!({
+                "kind": "net_csv",
+                "nets": design.sheets.iter().map(|sheet| sheet.nets.len()).sum::<usize>(),
+                "rows": rows,
+            });
+            (contents, artifact)
+        }
         "spice" => {
             let (contents, spice_losses) = render_spice(&design);
             losses = spice_losses;
@@ -2540,6 +2549,38 @@ fn render_netlist(design: &Design) -> String {
     text
 }
 
+/// Projects one design to a CSV pin-level netlist plus its data-row count.
+///
+/// The header is `Sheet,Net,Ref,Pin` and every node becomes one row. A net whose
+/// name equals a bus name expands into the same member nets the text netlist
+/// writes, so both projections agree. Rows follow sheet, net and node order and
+/// are byte-stable for one revision.
+fn render_net_csv(design: &Design) -> (String, usize) {
+    let mut text = String::from("Sheet,Net,Ref,Pin\n");
+    let mut rows = 0usize;
+    for sheet in &design.sheets {
+        for net in &sheet.nets {
+            let members: Vec<String> = match design.buses.iter().find(|bus| bus.name == net.name) {
+                Some(bus) => (0..bus.width).map(|index| format!("{}{index}", bus.name)).collect(),
+                None => vec![net.name.clone()],
+            };
+            for member in members {
+                for node in &net.nodes {
+                    text.push_str(&format!(
+                        "{},{},{},{}\n",
+                        csv_field(&sheet.name),
+                        csv_field(&member),
+                        csv_field(&node.reference),
+                        csv_field(&node.pin)
+                    ));
+                    rows += 1;
+                }
+            }
+        }
+    }
+    (text, rows)
+}
+
 /// Projects one design to a deterministic SPICE netlist plus its losses.
 ///
 /// Element lines follow the reference prefix, pins keep their declared order,
@@ -3362,6 +3403,7 @@ mod tests {
         assert_eq!(matrix["renderers"]["png"], "unsupported");
         assert_eq!(matrix["renderers"]["pdf"], "unsupported");
         assert_eq!(matrix["exportTargets"]["net"], "supported");
+        assert_eq!(matrix["exportTargets"]["net_csv"], "supported");
         assert_eq!(matrix["exportTargets"]["spice"], "supported");
         assert_eq!(matrix["exportTargets"]["svg"], "supported");
         assert_eq!(matrix["exportTargets"]["pdf"], "supported");
@@ -4724,6 +4766,37 @@ mod tests {
         assert!(codes.contains(&"power-net-underconnected"));
         assert!(codes.contains(&"power-net-duplicate"));
         assert_eq!(codes.iter().filter(|code| **code == "power-net-duplicate").count(), 1);
+        close(handle).expect("close");
+    }
+
+    #[test]
+    fn net_csv_export_writes_one_row_per_node_and_expands_buses() {
+        let dir = TempDir::new("net-csv");
+        let path = dir.join("blinker.csv");
+        let created = create(CreateRequest { title: Some("Blinker".to_string()), template: None }).expect("create");
+        let handle = created["handle"].as_u64().expect("handle");
+        blinker(handle);
+        rename_sheet(handle, "sheet-1", "Main, A").expect("rename sheet");
+        add_bus(handle, AddBusRequest { name: "DATA".to_string(), width: 2 }).expect("add bus");
+        connect_net(handle, ConnectNetRequest { sheet: None, net: "DATA".to_string(), nodes: vec!["R1.1".to_string()] })
+            .expect("connect DATA");
+
+        let report = export(handle, "net_csv", &path).expect("export net_csv");
+        assert_eq!(report["format"], "net_csv");
+        assert_eq!(report["artifact"]["kind"], "net_csv");
+        assert_eq!(report["artifact"]["nets"], 3);
+        assert_eq!(report["artifact"]["rows"], 6);
+        assert_eq!(report["bytes"], fs::metadata(&path).expect("metadata").len() as usize);
+        assert_eq!(
+            fs::read_to_string(&path).expect("read net csv"),
+            "Sheet,Net,Ref,Pin\n\
+             \"Main, A\",VCC,R1,1\n\
+             \"Main, A\",VCC,C1,1\n\
+             \"Main, A\",GND,R1,2\n\
+             \"Main, A\",GND,C1,2\n\
+             \"Main, A\",DATA0,R1,1\n\
+             \"Main, A\",DATA1,R1,1\n"
+        );
         close(handle).expect("close");
     }
 

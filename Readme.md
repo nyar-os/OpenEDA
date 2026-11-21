@@ -37,7 +37,7 @@ prints exactly which entries are supported.
 | --- | --- | --- |
 | `.oeda` create/open/save/edit | supported | sheets, components, nets, buses, wires, junctions, text, undo/redo |
 | checks `erc`, `nets`, `connectivity`, `footprints`, `power` | supported | `drc` and `clearance` are unsupported |
-| export `net`, `spice`, `svg`, `bom`, `bom_json`, `pdf`, `report`, `json`, `kicad_sch` | supported | read-only projections; `kicad_pcb` and `gbr` are unsupported |
+| export `net`, `net_csv`, `spice`, `svg`, `bom`, `bom_json`, `pdf`, `report`, `json`, `kicad_sch` | supported | read-only projections; `kicad_pcb` and `gbr` are unsupported |
 | import `kicad_sch` | supported | symbols, wires, junctions, no-connect flags, text and labels; other constructs are reported as loss entries |
 | KiCad board, Gerber, drill, STEP | unsupported | declared in the capability matrix only |
 | interactive schematic/board renderer | unsupported | the preview is an SVG projection |
@@ -165,6 +165,7 @@ open-eda connectivity blinker.oeda
 
 # Export supported projections
 open-eda export blinker.oeda --format net --out blinker.net
+open-eda export blinker.oeda --format net_csv --out blinker-nodes.csv
 open-eda export blinker.oeda --format spice --out blinker.cir
 open-eda export blinker.oeda --format svg --out blinker.svg
 open-eda export blinker.oeda --format bom --out blinker.csv
@@ -184,7 +185,9 @@ open-eda gui
 A native document is UTF-8 JSON with the tag `open-eda-design` and version `1`.
 The netlist writer emits `# OpenEDA netlist v1`, then `BUS <name> <width>` for
 every declared bus, then `NET <name>` followed by `NODE <ref>.<pin>` lines. The
-SPICE writer emits `* OpenEDA SPICE netlist v1`,
+`net_csv` writer emits the same connectivity as `Sheet,Net,Ref,Pin` rows, with
+bus nets expanded into their member names and CSV quoting applied where needed.
+The SPICE writer emits `* OpenEDA SPICE netlist v1`,
 one element line per component, `NC_<ref>_<pin>` nodes for open pins, and
 `.END`. The SVG writer draws a frame, wires, junctions, text annotations and
 component boxes with reference and value labels. The BOM writer groups

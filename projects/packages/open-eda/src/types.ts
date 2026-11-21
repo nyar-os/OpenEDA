@@ -67,6 +67,7 @@ export type ExportTarget =
     | 'kicad_sch'
     | 'kicad_pcb'
     | 'net'
+    | 'net_csv'
     | 'spice'
     | 'gbr'
     | 'pdf'
@@ -569,7 +570,7 @@ export interface Design {
     inspect(options?: InspectOptions): Promise<InspectReport>;
     /** Writes the native `.oeda` document; defaults to the path it was opened from. */
     save(options?: SaveOptions): Promise<SaveReport>;
-    /** Projects the design to `net`, `spice`, `svg`, `bom`, `pdf`, `report`, `json` or `kicad_sch`; other targets report `capability/not-implemented`. */
+    /** Projects the design to `net`, `net_csv`, `spice`, `svg`, `bom`, `pdf`, `report`, `json` or `kicad_sch`; other targets report `capability/not-implemented`. */
     export(options: ExportOptions): Promise<ExportReport>;
     /** Restores the snapshot taken before the newest edit. */
     undo(): Promise<HistoryResult>;
