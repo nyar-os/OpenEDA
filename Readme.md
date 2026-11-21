@@ -21,7 +21,9 @@ BOM, PDF, Markdown report and JSON
 document projections. It also exports and imports the same schematic subset as a KiCad
 6/7 schematic (`kicad_sch`): symbols, wires, junctions, no-connect flags, text
 annotations, net labels, including global and hierarchical labels, and the
-title-block title, date, revision and company. Editing
+title-block title, date, revision and company. Hierarchical sheet symbols and
+their ports are read and written back as declarations; the child sheet file is
+not opened. Editing
 covers components, nets (derive, disconnect, delete), design-level buses
 (declare, list, remove), wires, junctions and text (move and delete by index),
 no-connect flags (add, delete, and mark one pin as deliberately open),
@@ -46,11 +48,11 @@ prints exactly which entries are supported.
 | BOM variants and DNP | supported | named DNP designator lists and value overrides applied to `bom`/`bom_json` |
 | checks `erc`, `electrical`, `nets`, `connectivity`, `footprints`, `power` | supported | `drc` and `clearance` are unsupported |
 | export `net`, `net_csv`, `spice`, `svg`, `bom`, `bom_json`, `bom_html`, `pdf`, `report`, `json`, `kicad_sch` | supported | read-only projections; `kicad_pcb` and `gbr` are unsupported |
-| import `kicad_sch` | supported | symbols, wires, junctions, no-connect flags, text and labels; other constructs are reported as loss entries |
+| import `kicad_sch` | supported | symbols, wires, junctions, no-connect flags, text, labels, hierarchical sheet symbols and ports; other constructs are reported as loss entries |
 | KiCad board, Gerber, drill, STEP | unsupported | declared in the capability matrix only |
 | interactive schematic/board renderer | unsupported | the preview is an SVG projection |
 
-The KiCad importer is deliberately narrow. Buses, hierarchical sheets, arcs,
+The KiCad importer is deliberately narrow. Buses, arcs,
 images and every other construct outside that subset are not dropped silently:
 each occurrence adds a `{"code": "kicad/unsupported-element", "detail": "..."}`
 entry to the import losses. The title-block `title`, `date`, `rev` and
@@ -61,6 +63,9 @@ imported as sheet-local net labels and each occurrence adds a
 `{"code": "kicad/label-scope", "detail": "..."}` entry, because the document
 does not model cross-sheet label scope. Junctions, no-connect flags and text
 annotations are part of the subset and round-trip without a loss entry. A
+hierarchical sheet symbol keeps its name, child file, placement, size and ports
+(`input`, `output`, `bidirectional`, `tri_state` or `passive`); the model stores
+the symbol as a declaration and never opens the referenced child file. A
 no-connect flag keeps its placement in KiCad; the optional pin attachment is a
 native model annotation and is not written into the KiCad `no_connect` node.
 
@@ -303,11 +308,13 @@ and missing footprint count per symbol.
 The JSON writer emits a deterministic, read-only document projection tagged
 `open-eda-projection` with the design header (id, title, revision, rev,
 company, date and units) and, per sheet, its components (including typed pins),
-nets, wires, junctions, no-connect flags and text annotations; internal allocation counters are
+nets, wires, junctions, no-connect flags and text annotations, plus the
+`hierarchy` list of sheet symbols and ports; internal allocation counters are
 not part of it.
 The KiCad writer emits a KiCad 6/7 S-expression with a `lib_symbols` section,
 one symbol per component, one `wire` per segment, one `junction` per connection
-dot, one `text` per annotation, one `label` per net and a `title_block` when a
+dot, one `text` per annotation, one `label` per net, one `sheet` symbol with its
+properties and `pin` ports per hierarchical sheet, and a `title_block` when a
 drawing property is set. Library pins carry their native electrical role
 (`passive` when untyped);
 identifiers are derived from the document ids, so the same design always writes
@@ -347,8 +354,9 @@ served by the desktop window and talks to the same operations over JSON-RPC.
 - It does not import or write KiCad boards, Gerber or STEP files, and it does
   not simulate a design: the SPICE projection is a netlist export only.
 - It imports and writes only the schematic subset it models: components, wires,
-  junctions, no-connect flags, text annotations and net labels. Buses, hierarchy
-  and arcs are reported as import losses instead of being reconstructed; global
+  junctions, no-connect flags, text annotations, net labels and hierarchical
+  sheet symbols with ports. Bus wires, arcs and the contents of a child sheet
+  file are reported as import losses instead of being reconstructed; global
   and hierarchical labels are flattened to sheet-local nets and reported as
   `kicad/label-scope`.
 - It models buses as design-level name and width declarations. It does not draw

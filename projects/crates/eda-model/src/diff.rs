@@ -152,6 +152,7 @@ fn compare_design(left: &Design, right: &Design) -> Option<Value> {
     field("company", json!(left.company), json!(right.company));
     field("date", json!(left.date), json!(right.date));
     field("units", json!(left.units), json!(right.units));
+    field("hierarchy", json!(&left.hierarchy), json!(&right.hierarchy));
     if changes.is_empty() { None } else { Some(Value::Object(changes)) }
 }
 
@@ -692,6 +693,7 @@ mod tests {
             sheets,
             buses,
             variants: Vec::new(),
+            hierarchy: Vec::new(),
             next_component: 1,
             next_net: 1,
             next_wire: 1,

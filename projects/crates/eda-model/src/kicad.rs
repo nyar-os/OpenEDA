@@ -15,7 +15,8 @@ use data_format_sexpr::{Node, parse_all};
 use serde_json::{Value, json};
 
 use crate::{
-    Component, Design, Junction, Net, NoConnect, Node as NetNode, PinType, ServiceError, Sheet, TextLabel, Wire, invalid,
+    Component, Design, HierarchicalSheet, Junction, Net, NoConnect, Node as NetNode, PinType, PortDirection, ServiceError,
+    Sheet, SheetPort, TextLabel, Wire, invalid,
 };
 
 /// The pins and pin roles one KiCad library symbol declares.
@@ -151,8 +152,77 @@ pub(crate) fn render(design: &Design) -> String {
             render_label(&mut out, design, sheet, net);
         }
     }
+    for (index, sheet) in design.hierarchy.iter().enumerate() {
+        render_hierarchical_sheet(&mut out, design, index, sheet);
+    }
     out.push_str(")\n");
     out
+}
+
+/// Writes one hierarchical sheet symbol with its name, child file and ports.
+fn render_hierarchical_sheet(out: &mut String, design: &Design, index: usize, sheet: &HierarchicalSheet) {
+    out.push_str(&format!(
+        "  (sheet (at {} {}) (size {} {}) (fields_autoplaced)\n",
+        num(sheet.x),
+        num(sheet.y),
+        num(sheet.width),
+        num(sheet.height)
+    ));
+    out.push_str("    (stroke (width 0.1524) (type solid))\n");
+    out.push_str("    (fill (color 0 0 0 0.0000))\n");
+    out.push_str(&format!("    (uuid \"{}\")\n", uuid_for(&format!("{}:hierarchy:{}:{}", design.id, sheet.id, index))));
+    out.push_str(&format!(
+        "    (property \"Sheetname\" {} (id 0) (at {} {} 0)\n",
+        quote(&sheet.name),
+        num(sheet.x),
+        num(sheet.y)
+    ));
+    out.push_str("      (effects (font (size 1.27 1.27)) (justify left bottom))\n    )\n");
+    out.push_str(&format!(
+        "    (property \"Sheetfile\" {} (id 1) (at {} {} 0)\n",
+        quote(&sheet.file),
+        num(sheet.x),
+        num(sheet.y + sheet.height)
+    ));
+    out.push_str("      (effects (font (size 1.27 1.27)) (justify left top))\n    )\n");
+    for (port_index, port) in sheet.ports.iter().enumerate() {
+        out.push_str(&format!(
+            "    (pin {} {} (at {} {} 0)\n",
+            quote(&port.name),
+            port_direction_name(port.direction),
+            num(port.x),
+            num(port.y)
+        ));
+        out.push_str("      (effects (font (size 1.27 1.27)))\n");
+        out.push_str(&format!(
+            "      (uuid \"{}\")\n    )\n",
+            uuid_for(&format!("{}:hierarchy:{}:port:{}:{}", design.id, sheet.id, port_index, port.name))
+        ));
+    }
+    out.push_str("  )\n");
+}
+
+/// KiCad sheet-pin direction for one modelled port.
+fn port_direction_name(direction: PortDirection) -> &'static str {
+    match direction {
+        PortDirection::Input => "input",
+        PortDirection::Output => "output",
+        PortDirection::Bidirectional => "bidirectional",
+        PortDirection::TriState => "tri_state",
+        PortDirection::Passive => "passive",
+    }
+}
+
+/// Reads the direction of a KiCad sheet pin; unknown names stay unmapped.
+fn read_port_direction(name: &str) -> Option<PortDirection> {
+    match name {
+        "input" => Some(PortDirection::Input),
+        "output" => Some(PortDirection::Output),
+        "bidirectional" => Some(PortDirection::Bidirectional),
+        "tri_state" => Some(PortDirection::TriState),
+        "passive" => Some(PortDirection::Passive),
+        _ => None,
+    }
 }
 
 /// Writes the drawing title block, omitting it when every property is empty.
@@ -375,6 +445,7 @@ pub(crate) fn import(text: &str) -> Result<(Design, Vec<Value>), ServiceError> {
     let mut junctions = Vec::new();
     let mut no_connects = Vec::new();
     let mut texts = Vec::new();
+    let mut hierarchy = Vec::new();
     for node in root.children() {
         match node.head() {
             Some("symbol") => {}
@@ -385,6 +456,7 @@ pub(crate) fn import(text: &str) -> Result<(Design, Vec<Value>), ServiceError> {
             Some("junction") => read_junction(node, &mut junctions, &mut losses),
             Some("no_connect") => read_no_connect(node, &mut no_connects, &mut losses),
             Some("text") => read_text(node, &mut texts, &mut losses),
+            Some("sheet") => read_hierarchical_sheet(node, &mut hierarchy, &mut losses),
             Some("label") => {
                 let _ = read_label(node, &components, &mut nets, &mut losses);
             }
@@ -413,6 +485,9 @@ pub(crate) fn import(text: &str) -> Result<(Design, Vec<Value>), ServiceError> {
     for (index, wire) in wires.iter_mut().enumerate() {
         wire.id = format!("wire-{}", index + 1);
     }
+    for (index, sheet) in hierarchy.iter_mut().enumerate() {
+        sheet.id = format!("hierarchy-{}", index + 1);
+    }
 
     let design = Design {
         id: "design-1".to_string(),
@@ -437,6 +512,7 @@ pub(crate) fn import(text: &str) -> Result<(Design, Vec<Value>), ServiceError> {
         }],
         buses: Vec::new(),
         variants: Vec::new(),
+        hierarchy,
     };
     Ok((design, losses))
 }
@@ -630,6 +706,79 @@ fn read_no_connect(node: &Node, no_connects: &mut Vec<NoConnect>, losses: &mut V
             losses.push(loss(UNSUPPORTED_ELEMENT, "a no-connect flag without an `(at x y)` placement was skipped".to_string()))
         }
     }
+}
+
+/// Reads one `(sheet ...)` symbol: name, child file, geometry and ports.
+///
+/// The child schematic is a separate file, so this reader keeps the symbol as a
+/// declaration instead of pretending to import that sheet's contents.
+fn read_hierarchical_sheet(node: &Node, hierarchy: &mut Vec<HierarchicalSheet>, losses: &mut Vec<Value>) {
+    let Some((x, y, _)) = read_at(node)
+    else {
+        losses.push(loss(UNSUPPORTED_ELEMENT, "a hierarchical sheet without an `(at x y)` placement was skipped".to_string()));
+        return;
+    };
+    let (width, height) = node
+        .find("size")
+        .and_then(|size| {
+            let mut values =
+                size.children().iter().filter_map(|value| node_text(value).and_then(|text| text.parse::<f64>().ok()));
+            Some((values.next()?, values.next()?))
+        })
+        .unwrap_or((0.0, 0.0));
+    if !x.is_finite() || !y.is_finite() || !width.is_finite() || !height.is_finite() || width <= 0.0 || height <= 0.0 {
+        losses
+            .push(loss(UNSUPPORTED_ELEMENT, "a hierarchical sheet without a finite position and size was skipped".to_string()));
+        return;
+    }
+    let mut name = String::new();
+    let mut file = String::new();
+    for property in node.children().iter().filter(|item| item.head() == Some("property")) {
+        let Some(key) = property.children().first().and_then(node_text)
+        else {
+            continue;
+        };
+        let value = property.children().get(1).and_then(node_text).unwrap_or("");
+        match key {
+            "Sheetname" => name = value.to_string(),
+            "Sheetfile" => file = value.to_string(),
+            _ => {}
+        }
+    }
+    if name.trim().is_empty() || file.trim().is_empty() {
+        losses.push(loss(
+            UNSUPPORTED_ELEMENT,
+            "a hierarchical sheet without a `Sheetname` and `Sheetfile` property was skipped".to_string(),
+        ));
+        return;
+    }
+    let mut ports = Vec::new();
+    for pin in node.children().iter().filter(|item| item.head() == Some("pin")) {
+        let Some(port_name) = pin.children().first().and_then(node_text)
+        else {
+            losses.push(loss(UNSUPPORTED_ELEMENT, "a hierarchical sheet port without a name was skipped".to_string()));
+            continue;
+        };
+        let direction_name = pin.children().get(1).and_then(node_text).unwrap_or("");
+        let Some(direction) = read_port_direction(direction_name)
+        else {
+            losses.push(loss(
+                UNSUPPORTED_ELEMENT,
+                format!("hierarchical sheet port `{port_name}` has unknown direction `{direction_name}` and was skipped"),
+            ));
+            continue;
+        };
+        match read_at(pin) {
+            Some((port_x, port_y, _)) if port_x.is_finite() && port_y.is_finite() => {
+                ports.push(SheetPort { name: port_name.to_string(), direction, x: port_x, y: port_y });
+            }
+            _ => losses.push(loss(
+                UNSUPPORTED_ELEMENT,
+                format!("hierarchical sheet port `{port_name}` has no `(at x y)` placement and was skipped"),
+            )),
+        }
+    }
+    hierarchy.push(HierarchicalSheet { id: String::new(), name, file, x, y, width, height, ports });
 }
 
 fn read_at(node: &Node) -> Option<(f64, f64, f64)> {

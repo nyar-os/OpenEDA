@@ -29,7 +29,7 @@ crate. `new OpenEDA(options?)` creates a session synchronously, and the returned
 | checks `erc`, `nets`, `connectivity`, `footprints`, `power` | supported | `drc` and `clearance` report `capability/not-implemented` |
 | export `net`, `net_csv`, `spice`, `svg`, `bom`, `bom_json`, `bom_html`, `pdf`, `report`, `json` | supported | read-only projections |
 | export `kicad_sch` | supported | KiCad 6/7 S-expression, deterministic identifiers |
-| import `kicad_sch` | supported | symbols, wires, junctions, no-connect flags, text and labels; other constructs return loss entries |
+| import `kicad_sch` | supported | symbols, wires, junctions, no-connect flags, text, labels and hierarchical sheet symbols with ports; other constructs return loss entries |
 | export `kicad_pcb`, `gbr` | unsupported | declared, not implemented |
 | import `kicad_pcb`, `sch`, `brd`, `gbr`, `step`, ... | unsupported | declared, not implemented |
 | interactive renderer | unsupported | the preview is an SVG projection |

@@ -13,7 +13,8 @@ and power checks, compare two documents with `diff`, and write a netlist, SPICE 
 SVG sheet, BOM CSV/JSON/HTML, one-page PDF or
 Markdown report projection. The design carries title-block properties (title,
 drawing revision, company and date) that `design set` edits and the KiCad writer
-reads and writes. The SDK keeps a bounded 32-step undo/redo history
+reads and writes. Hierarchical sheet symbols and their ports round-trip as
+declarations. The SDK keeps a bounded 32-step undo/redo history
 per open handle, and the CLI mirrors it in a `<file>.history.json` sidecar so
 `undo` and `redo` work across separate command invocations. Sheet
 add/rename/delete, component move, update and delete, deterministic reference
@@ -242,10 +243,13 @@ a footprint and never claims a library part exists outside the document.
   counts, a `Net | Nodes | Pins` table per sheet and the inspection findings
   grouped by severity.
 - `kicad_sch` writes the modelled schematic subset plus the title-block title,
-  date, revision and company and the library pin electrical roles; `kicad_pcb`
+  date, revision and company, the library pin electrical roles and hierarchical
+  sheet symbols with their ports; `kicad_pcb`
   and `gbr` reject with `capability/not-implemented`.
 - No exchange format can be imported or edited. `.oeda` is the only editable
-  document; `import` materializes a `.kicad_sch` into `.oeda`.
+  document; `import` materializes a `.kicad_sch` into `.oeda`. Hierarchical
+  `sheet` symbols and their `pin` ports import as declarations; the referenced
+  child sheet file is never opened.
 
 ## Hard rules
 

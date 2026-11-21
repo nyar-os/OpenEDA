@@ -676,6 +676,8 @@ export interface ImportedDesign {
     readonly revision: number;
     readonly units: string;
     readonly sheets: readonly Sheet[];
+    /** Hierarchical sheet symbols; absent when the document declares none. */
+    readonly hierarchy?: readonly HierarchicalSheet[];
     readonly next_component: number;
     readonly next_net: number;
     readonly next_wire: number;
@@ -703,6 +705,29 @@ export interface KicadImportResult {
     readonly design: ImportedDesign;
     /** Constructs outside the imported subset; empty when nothing was lost. */
     readonly losses: readonly KicadImportLoss[];
+}
+
+/** Electrical direction of one hierarchical sheet port. */
+export type PortDirection = 'input' | 'output' | 'bidirectional' | 'tri_state' | 'passive';
+
+/** One port on a hierarchical sheet symbol. */
+export interface SheetPort {
+    readonly name: string;
+    readonly direction: PortDirection;
+    readonly x: number;
+    readonly y: number;
+}
+
+/** One hierarchical sheet symbol stored by the document. */
+export interface HierarchicalSheet {
+    readonly id: ObjectId;
+    readonly name: string;
+    readonly file: string;
+    readonly x: number;
+    readonly y: number;
+    readonly width: number;
+    readonly height: number;
+    readonly ports: readonly SheetPort[];
 }
 
 /** A sheet as returned by the sheet operations. */

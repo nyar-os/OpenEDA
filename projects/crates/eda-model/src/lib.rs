@@ -342,6 +342,65 @@ pub struct TextLabel {
     pub y: f64,
 }
 
+/// Electrical direction of one hierarchical sheet port.
+///
+/// The names match the KiCad sheet-pin vocabulary, so the same text is written
+/// and read back.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PortDirection {
+    /// Signal enters the child sheet.
+    Input,
+    /// Signal leaves the child sheet.
+    Output,
+    /// Signal flows both ways.
+    Bidirectional,
+    /// Tri-state connection.
+    TriState,
+    /// Port with no electrical direction.
+    Passive,
+}
+
+/// One port declared on a hierarchical sheet symbol.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SheetPort {
+    /// Port name, unique inside the sheet symbol.
+    pub name: String,
+    /// Electrical direction of the port.
+    pub direction: PortDirection,
+    /// Port placement X coordinate in design units.
+    pub x: f64,
+    /// Port placement Y coordinate in design units.
+    pub y: f64,
+}
+
+/// One hierarchical sheet symbol placed in a parent schematic.
+///
+/// A symbol names the child sheet file and its ports. The model does not read
+/// that child file, so the symbol is a declaration: it survives import and
+/// export, participates in validation and is reported by the JSON projection,
+/// but its contents are not merged into the flat `sheets` list.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct HierarchicalSheet {
+    /// Stable object identity, for example `hierarchy-1`.
+    pub id: String,
+    /// Sheet name shown on the parent symbol.
+    pub name: String,
+    /// Child schematic file name, for example `power.kicad_sch`.
+    pub file: String,
+    /// Symbol top-left X coordinate in design units.
+    pub x: f64,
+    /// Symbol top-left Y coordinate in design units.
+    pub y: f64,
+    /// Symbol width in design units.
+    pub width: f64,
+    /// Symbol height in design units.
+    pub height: f64,
+    /// Ports declared on this symbol; absent in older documents.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ports: Vec<SheetPort>,
+}
+
 /// One schematic sheet.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Sheet {
@@ -394,6 +453,9 @@ pub struct Design {
     /// BOM variants; absent in older documents.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub variants: Vec<Variant>,
+    /// Hierarchical sheet symbols; absent in older documents.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hierarchy: Vec<HierarchicalSheet>,
     /// Next component number used to build deterministic object identities.
     pub next_component: u64,
     /// Next net number used to build deterministic object identities.
@@ -861,6 +923,7 @@ pub fn create(request: CreateRequest) -> Result<Value, ServiceError> {
         }],
         buses: Vec::new(),
         variants: Vec::new(),
+        hierarchy: Vec::new(),
         next_component: 1,
         next_net: 1,
         next_wire: 1,
@@ -2239,6 +2302,8 @@ pub fn export_with_variant(handle: u64, format: &str, path: &Path, variant: Opti
                 "symbols": design.sheets.iter().map(|sheet| sheet.components.len()).sum::<usize>(),
                 "wires": design.sheets.iter().map(|sheet| sheet.wires.len()).sum::<usize>(),
                 "labels": design.sheets.iter().map(|sheet| sheet.nets.len()).sum::<usize>(),
+                "hierarchy": design.hierarchy.len(),
+                "ports": design.hierarchy.iter().map(|sheet| sheet.ports.len()).sum::<usize>(),
             });
             (kicad::render(&design), artifact)
         }
@@ -2436,6 +2501,47 @@ fn validate_design(design: &Design) -> Result<(), ServiceError> {
         }
         if !variant_names.insert(variant.name.clone()) {
             return Err(invalid(format!("variant name `{}` appears more than once", variant.name)));
+        }
+    }
+    let mut hierarchy_ids = HashSet::new();
+    let mut hierarchy_names = HashSet::new();
+    for hierarchy in &design.hierarchy {
+        if !hierarchy_ids.insert(hierarchy.id.clone()) {
+            return Err(invalid(format!("hierarchical sheet id `{}` appears more than once", hierarchy.id)));
+        }
+        if hierarchy.name.trim().is_empty() {
+            return Err(invalid(format!("hierarchical sheet `{}` has an empty name", hierarchy.id)));
+        }
+        if !hierarchy_names.insert(hierarchy.name.clone()) {
+            return Err(invalid(format!("hierarchical sheet name `{}` appears more than once", hierarchy.name)));
+        }
+        if hierarchy.file.trim().is_empty() {
+            return Err(invalid(format!("hierarchical sheet `{}` has an empty file name", hierarchy.name)));
+        }
+        if !hierarchy.x.is_finite() || !hierarchy.y.is_finite() || !hierarchy.width.is_finite() || !hierarchy.height.is_finite()
+        {
+            return Err(invalid(format!("hierarchical sheet `{}` has a non-finite coordinate", hierarchy.name)));
+        }
+        if hierarchy.width <= 0.0 || hierarchy.height <= 0.0 {
+            return Err(invalid(format!("hierarchical sheet `{}` has a non-positive size", hierarchy.name)));
+        }
+        let mut port_names = HashSet::new();
+        for port in &hierarchy.ports {
+            if port.name.trim().is_empty() {
+                return Err(invalid(format!("hierarchical sheet `{}` has a port with an empty name", hierarchy.name)));
+            }
+            if !port_names.insert(port.name.clone()) {
+                return Err(invalid(format!(
+                    "hierarchical sheet `{}` declares port `{}` more than once",
+                    hierarchy.name, port.name
+                )));
+            }
+            if !port.x.is_finite() || !port.y.is_finite() {
+                return Err(invalid(format!(
+                    "port `{}` of hierarchical sheet `{}` has a non-finite coordinate",
+                    port.name, hierarchy.name
+                )));
+            }
         }
     }
     for sheet in &design.sheets {
@@ -4019,6 +4125,31 @@ fn render_json_projection(design: &Design) -> Result<String, ServiceError> {
             })
         })
         .collect::<Vec<_>>();
+    let hierarchy = design
+        .hierarchy
+        .iter()
+        .map(|sheet| {
+            json!({
+                "id": sheet.id,
+                "name": sheet.name,
+                "file": sheet.file,
+                "x": sheet.x,
+                "y": sheet.y,
+                "width": sheet.width,
+                "height": sheet.height,
+                "ports": sheet
+                    .ports
+                    .iter()
+                    .map(|port| json!({
+                        "name": port.name,
+                        "direction": port.direction,
+                        "x": port.x,
+                        "y": port.y,
+                    }))
+                    .collect::<Vec<_>>(),
+            })
+        })
+        .collect::<Vec<_>>();
     let projection = json!({
         "format": JSON_PROJECTION_FORMAT,
         "version": JSON_PROJECTION_VERSION,
@@ -4030,6 +4161,7 @@ fn render_json_projection(design: &Design) -> Result<String, ServiceError> {
         "date": design.date,
         "units": design.units,
         "sheets": sheets,
+        "hierarchy": hierarchy,
     });
     let mut encoded = serde_json::to_string_pretty(&projection)
         .map_err(|error| invalid(format!("the JSON projection could not be encoded: {error}")))?;
@@ -4610,6 +4742,7 @@ mod tests {
             }],
             buses: Vec::new(),
             variants: Vec::new(),
+            hierarchy: Vec::new(),
             next_component: 3,
             next_net: 1,
             next_wire: 1,
@@ -4643,6 +4776,7 @@ mod tests {
             }],
             buses: Vec::new(),
             variants: Vec::new(),
+            hierarchy: Vec::new(),
             next_component: 1,
             next_net: 3,
             next_wire: 1,
@@ -4700,6 +4834,7 @@ mod tests {
             }],
             buses: Vec::new(),
             variants: Vec::new(),
+            hierarchy: Vec::new(),
             next_component: 2,
             next_net: 3,
             next_wire: 1,
@@ -5234,6 +5369,7 @@ mod tests {
             }],
             buses: Vec::new(),
             variants: Vec::new(),
+            hierarchy: Vec::new(),
             next_component: 2,
             next_net: 1,
             next_wire: 1,
@@ -5418,6 +5554,7 @@ mod tests {
             }],
             buses: Vec::new(),
             variants: Vec::new(),
+            hierarchy: Vec::new(),
             next_component: 1,
             next_net: 1,
             next_wire: 1,
@@ -5534,6 +5671,48 @@ mod tests {
         assert_eq!(unconnected(&restored), 1);
         assert_eq!(delete_no_connect(handle, 0, None).expect_err("out of range").code, "object/not-found");
         close(handle).expect("close");
+    }
+
+    #[test]
+    fn kicad_hierarchical_sheets_and_ports_round_trip() {
+        let text = "(kicad_sch (version 20211123) (generator \"open-eda\")\n\
+                    \x20 (sheet (at 30 40) (size 20 15)\n\
+                    \x20   (property \"Sheetname\" \"Power\") (property \"Sheetfile\" \"power.kicad_sch\")\n\
+                    \x20   (pin \"VIN\" input (at 30 45 180)) (pin \"VOUT\" output (at 50 45 0))\n\
+                    \x20 )\n)\n";
+        let imported = import_kicad_sch(text).expect("import hierarchy");
+        assert_eq!(imported["losses"], json!([]));
+        let hierarchy = &imported["design"]["hierarchy"][0];
+        assert_eq!(hierarchy["id"], "hierarchy-1");
+        assert_eq!(hierarchy["name"], "Power");
+        assert_eq!(hierarchy["file"], "power.kicad_sch");
+        assert_eq!(hierarchy["x"], 30.0);
+        assert_eq!(hierarchy["y"], 40.0);
+        assert_eq!(hierarchy["width"], 20.0);
+        assert_eq!(hierarchy["height"], 15.0);
+        assert_eq!(
+            hierarchy["ports"],
+            json!([
+                { "name": "VIN", "direction": "input", "x": 30.0, "y": 45.0 },
+                { "name": "VOUT", "direction": "output", "x": 50.0, "y": 45.0 },
+            ])
+        );
+
+        let design: Design = serde_json::from_value(imported["design"].clone()).expect("decode design");
+        validate_design(&design).expect("validate");
+        let rendered = crate::kicad::render(&design);
+        assert!(rendered.contains("(sheet (at 30 40) (size 20 15)"));
+        assert!(rendered.contains("(property \"Sheetname\" \"Power\""));
+        assert!(rendered.contains("(property \"Sheetfile\" \"power.kicad_sch\""));
+        assert!(rendered.contains("(pin \"VIN\" input (at 30 45 0)"));
+
+        let again = import_kicad_sch(&rendered).expect("re-import hierarchy");
+        assert_eq!(again["losses"], json!([]));
+        assert_eq!(again["design"]["hierarchy"], imported["design"]["hierarchy"]);
+
+        let mut broken = design.clone();
+        broken.hierarchy[0].width = 0.0;
+        assert_eq!(validate_design(&broken).expect_err("non-positive size").code, "format/invalid");
     }
 
     #[test]
@@ -6107,6 +6286,7 @@ mod tests {
             }],
             buses: Vec::new(),
             variants: Vec::new(),
+            hierarchy: Vec::new(),
             next_component: 2,
             next_net: 3,
             next_wire: 1,
@@ -6436,6 +6616,7 @@ mod tests {
             }],
             buses: Vec::new(),
             variants: Vec::new(),
+            hierarchy: Vec::new(),
             next_component: 2,
             next_net: 2,
             next_wire: 1,
@@ -6501,6 +6682,7 @@ mod tests {
             }],
             buses: Vec::new(),
             variants: Vec::new(),
+            hierarchy: Vec::new(),
             next_component: 3,
             next_net: 2,
             next_wire: 1,
@@ -6553,6 +6735,7 @@ mod tests {
             }],
             buses: vec![Bus { id: "bus-1".to_string(), name: "DATA".to_string(), width: 4 }],
             variants: Vec::new(),
+            hierarchy: Vec::new(),
             next_component: 2,
             next_net: 2,
             next_wire: 1,
