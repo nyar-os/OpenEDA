@@ -206,6 +206,32 @@ export interface Bus {
     readonly width: number;
 }
 
+/** One symbol the design uses, grouped by the library id derived from its pins. */
+export interface SymbolUsage {
+    readonly libId: string;
+    /** Number of pins the symbol declares. */
+    readonly pins: number;
+    /** Number of placed components that use the symbol. */
+    readonly components: number;
+    /** Sorted reference designators that place the symbol. */
+    readonly references: readonly string[];
+    /** Distinct assigned footprints, sorted; empty when none is assigned. */
+    readonly footprints: readonly string[];
+    /** Components that still have no footprint assigned. */
+    readonly missingFootprint: number;
+}
+
+/** Result of `design.listSymbols()`. */
+export interface SymbolLibraryResult {
+    readonly revision: number;
+    readonly symbols: readonly SymbolUsage[];
+    readonly totals: {
+        readonly symbols: number;
+        readonly components: number;
+        readonly missingFootprint: number;
+    };
+}
+
 /** One schematic junction (connection dot). */
 export interface Junction {
     readonly x: number;
@@ -540,6 +566,8 @@ export interface Design {
     deleteSheet(sheet: SheetId): Promise<void>;
     /** Lists components, nets and wires of the open design. */
     listObjects(): Promise<DesignObjects>;
+    /** Lists the symbol library the design uses, with pin counts and missing footprints. */
+    listSymbols(): Promise<SymbolLibraryResult>;
     listComponents(): Promise<readonly Component[]>;
     listNets(): Promise<readonly Net[]>;
     close(): Promise<void>;

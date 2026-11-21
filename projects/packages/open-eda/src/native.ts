@@ -23,6 +23,7 @@ export interface NativeBinding {
     design_close(handle: number): boolean;
     design_summary(handle: number): string;
     design_list(handle: number): string;
+    design_symbols(handle: number): string;
     design_add_component(handle: number, requestJson: string): string;
     design_delete_component(handle: number, reference: string, sheet?: string): string;
     design_connect_net(handle: number, requestJson: string): string;

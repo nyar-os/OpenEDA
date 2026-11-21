@@ -6,6 +6,7 @@
             "create": "Create a native design document and save it to a project file",
             "open": "Open a design document and print its committed revision and sheets",
             "list": "List components, nets and wires of a design document",
+            "symbols": "List the symbol library a design document uses, with pin counts and missing footprints",
             "inspect": "Run electrical rule checks on a design document",
             "export": "Project a design document to a supported exchange format",
             "import": "Import a KiCad schematic into a native design document",

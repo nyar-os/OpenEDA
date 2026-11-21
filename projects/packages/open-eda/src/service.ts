@@ -35,6 +35,7 @@ import type {
     SaveReport,
     SetFootprintInput,
     Sheet,
+    SymbolLibraryResult,
     TextInput,
     TextLabel,
     UpdateComponentInput,
@@ -247,6 +248,11 @@ export function summary(handle: number): DesignSummary {
 /** Lists components, nets and wires of one open design. */
 export function listObjects(handle: number): DesignObjects {
     return decode<DesignObjects>(() => binding('design.list').design_list(handle));
+}
+
+/** Lists the symbol library one open design uses. */
+export function symbols(handle: number): SymbolLibraryResult {
+    return decode<SymbolLibraryResult>(() => binding('design.symbols').design_symbols(handle));
 }
 
 /** Adds one component to an open design. */

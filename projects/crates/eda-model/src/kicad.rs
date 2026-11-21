@@ -94,7 +94,7 @@ fn library_symbols(design: &Design) -> Vec<(String, Vec<String>)> {
 /// Components whose pins are the numeric sequence `1..n` share one symbol per
 /// pin count; any other pin set gets a short hash suffix so the library symbol
 /// declares exactly the pins the placed symbols reference.
-fn lib_id_for(component: &Component) -> String {
+pub(crate) fn lib_id_for(component: &Component) -> String {
     let numeric = component.pins.iter().enumerate().all(|(index, pin)| *pin == (index + 1).to_string());
     if numeric {
         format!("open-eda:{}pin", component.pins.len())

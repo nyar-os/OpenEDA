@@ -271,6 +271,14 @@ fn design_remove_bus(ctx: CallContext) -> Result<JsValue> {
     respond(&ctx, &report)
 }
 
+/// Lists the symbol library one open design uses.
+#[function]
+fn design_symbols(ctx: CallContext) -> Result<JsValue> {
+    let handle = handle(&ctx, 0)?;
+    let report = open_eda_model::symbols(handle).map_err(fail)?;
+    respond(&ctx, &report)
+}
+
 /// Lists the declared buses of one open design.
 #[function]
 fn design_list_buses(ctx: CallContext) -> Result<JsValue> {
@@ -1204,6 +1212,7 @@ register_module![
     design_add_bus,
     design_remove_bus,
     design_list_buses,
+    design_symbols,
     design_undo,
     design_redo,
     design_add_sheet,

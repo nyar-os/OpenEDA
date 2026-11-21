@@ -25,6 +25,7 @@ open-eda capabilities
 open-eda create --out <file.oeda> [--title <title>] [--overwrite]
 open-eda open <file.oeda>
 open-eda list <file.oeda>
+open-eda symbols <file.oeda>
 open-eda inspect <file.oeda> [--checks erc,nets,connectivity,footprints,power]
 open-eda export <file.oeda> --format net|spice|svg|bom|bom_json|pdf|report|kicad_sch --out <file>
 open-eda import <file.kicad_sch> --out <file.oeda> [--overwrite]
@@ -100,6 +101,15 @@ than one sheet. Errors fail the report; warnings are reported but do not.
 `drc` and `clearance` are declared but not implemented; requesting them rejects
 with `capability/not-implemented`. Never describe a design as DRC clean or
 clearance checked.
+
+## Symbol library
+
+`open-eda symbols` groups placed components by the library id the KiCad writer
+derives from their pins (`open-eda:<n>pin` for the numeric sequence `1..n`, a
+hashed suffix otherwise). Each entry reports the pin count, the sorted
+references that place the symbol, the distinct assigned footprints and how many
+components still have no footprint. It is a read-only report: it never assigns
+a footprint and never claims a library part exists outside the document.
 
 ## Referential integrity
 

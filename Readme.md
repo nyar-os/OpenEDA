@@ -152,6 +152,7 @@ open-eda redo blinker.oeda
 # Run the supported checks and list objects
 open-eda inspect blinker.oeda --checks erc,nets,connectivity,footprints,power
 open-eda list blinker.oeda
+open-eda symbols blinker.oeda
 
 # Export supported projections
 open-eda export blinker.oeda --format net --out blinker.net
@@ -187,6 +188,9 @@ cross-reference table, `%%EOF`) with sheet names, component boxes and wires.
 The report writer emits deterministic Markdown with a design header, a
 per-sheet object-count table, one `Net | Nodes | Pins` table per sheet and an
 inspection section grouped by severity.
+The `symbols` report groups placed components by the library id the KiCad writer
+derives from their pins and lists the pin count, references, assigned footprints
+and missing footprint count per symbol.
 The JSON writer emits a deterministic, read-only document projection tagged
 `open-eda-projection` with the design header and, per sheet, its components,
 nets, wires, junctions and text annotations; internal allocation counters are

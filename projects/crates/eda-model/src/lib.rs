@@ -2243,6 +2243,75 @@ fn issue_json(issue: &Issue) -> Value {
     })
 }
 
+/// Lists the symbol library a design actually uses.
+///
+/// Components are grouped by the library id the KiCad writer derives from their
+/// pins. Each entry reports the pin count, the references that place the symbol,
+/// the distinct assigned footprints and how many placed components still have no
+/// footprint. The report is read-only and deterministic for one document state.
+pub fn symbols(handle: u64) -> Result<Value, ServiceError> {
+    let design = with_session(handle, |session| Ok(session.design.clone()))?;
+    Ok(symbol_library(&design))
+}
+
+fn symbol_library(design: &Design) -> Value {
+    struct Usage {
+        pins: usize,
+        references: Vec<String>,
+        footprints: BTreeSet<String>,
+        missing_footprint: usize,
+    }
+
+    let mut groups: BTreeMap<String, Usage> = BTreeMap::new();
+    for sheet in &design.sheets {
+        for component in &sheet.components {
+            let usage = groups.entry(kicad::lib_id_for(component)).or_insert_with(|| Usage {
+                pins: component.pins.len(),
+                references: Vec::new(),
+                footprints: BTreeSet::new(),
+                missing_footprint: 0,
+            });
+            usage.references.push(component.reference.clone());
+            if component.footprint.is_empty() {
+                usage.missing_footprint += 1;
+            }
+            else {
+                usage.footprints.insert(component.footprint.clone());
+            }
+        }
+    }
+
+    let mut components = 0usize;
+    let mut missing_footprint = 0usize;
+    let symbol_count = groups.len();
+    let entries = groups
+        .into_iter()
+        .map(|(lib_id, mut usage)| {
+            usage.references.sort();
+            components += usage.references.len();
+            missing_footprint += usage.missing_footprint;
+            json!({
+                "libId": lib_id,
+                "pins": usage.pins,
+                "components": usage.references.len(),
+                "references": usage.references,
+                "footprints": usage.footprints.into_iter().collect::<Vec<_>>(),
+                "missingFootprint": usage.missing_footprint,
+            })
+        })
+        .collect::<Vec<_>>();
+
+    json!({
+        "revision": design.revision,
+        "symbols": entries,
+        "totals": {
+            "symbols": symbol_count,
+            "components": components,
+            "missingFootprint": missing_footprint,
+        },
+    })
+}
+
 /// Projects one design to the deterministic text netlist.
 ///
 /// Every declared bus is announced as `BUS <name> <width>`. A net whose name
@@ -3731,6 +3800,60 @@ mod tests {
             .code,
             "object/not-found"
         );
+        close(handle).expect("close");
+    }
+
+    #[test]
+    fn symbols_report_groups_pins_references_and_missing_footprints() {
+        let created = create(CreateRequest::default()).expect("create");
+        let handle = created["handle"].as_u64().expect("handle");
+        for (reference, pins) in [
+            ("R2", vec!["1".to_string(), "2".to_string()]),
+            ("R1", vec!["1".to_string(), "2".to_string()]),
+            ("U1", vec!["1".to_string(), "2".to_string(), "3".to_string()]),
+        ] {
+            add_component(
+                handle,
+                AddComponentRequest {
+                    sheet: None,
+                    reference: reference.to_string(),
+                    value: String::new(),
+                    x: 0.0,
+                    y: 0.0,
+                    rotation: 0.0,
+                    pins,
+                },
+            )
+            .expect("add");
+        }
+        set_component_footprint(
+            handle,
+            SetFootprintRequest {
+                sheet: None,
+                reference: "R1".to_string(),
+                footprint: "Resistor_SMD:R_0805_2012Metric".to_string(),
+            },
+        )
+        .expect("assign footprint");
+
+        let library = symbols(handle).expect("symbols");
+        assert_eq!(library["revision"], summary(handle).expect("summary")["revision"]);
+        assert_eq!(library["totals"]["symbols"], 2);
+        assert_eq!(library["totals"]["components"], 3);
+        assert_eq!(library["totals"]["missingFootprint"], 2);
+
+        let entries = library["symbols"].as_array().expect("symbols");
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0]["libId"], "open-eda:2pin");
+        assert_eq!(entries[0]["pins"], 2);
+        assert_eq!(entries[0]["components"], 2);
+        assert_eq!(entries[0]["references"], json!(["R1", "R2"]));
+        assert_eq!(entries[0]["footprints"], json!(["Resistor_SMD:R_0805_2012Metric"]));
+        assert_eq!(entries[0]["missingFootprint"], 1);
+        assert_eq!(entries[1]["libId"], "open-eda:3pin");
+        assert_eq!(entries[1]["references"], json!(["U1"]));
+        assert_eq!(entries[1]["footprints"], json!([]));
+        assert_eq!(entries[1]["missingFootprint"], 1);
         close(handle).expect("close");
     }
 

@@ -26,6 +26,7 @@ import type {
     InspectCheck,
     InspectReport,
     SaveReport,
+    SymbolLibraryResult,
 } from './types.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -158,6 +159,20 @@ function describeObjects(objects: DesignObjects): string {
     return lines.join('\n');
 }
 
+function describeSymbols(library: SymbolLibraryResult): string {
+    const totals = library.totals;
+    const lines = [
+        `revision=${library.revision} symbols=${totals.symbols} components=${totals.components} missingFootprint=${totals.missingFootprint}`,
+    ];
+    for (const symbol of library.symbols) {
+        const footprints = symbol.footprints.length > 0 ? symbol.footprints.join(', ') : '(none)';
+        lines.push(
+            `  ${symbol.libId} pins=${symbol.pins} components=${symbol.components} refs=${symbol.references.join(',')} footprints=${footprints} missingFootprint=${symbol.missingFootprint}`,
+        );
+    }
+    return lines.join('\n');
+}
+
 /** Saves the already-mutated design and reports what the file now holds. */
 async function savedReport(design: Design): Promise<SaveReport> {
     return design.save();
@@ -213,6 +228,17 @@ cli.command('list', 'cli.cmd.list').actionCtx(async (options, _args, ctx) => {
     }
     const objects = await withDesign(file, (design) => design.listObjects());
     ctx.emitResult(objects, describeObjects(objects));
+    return 0;
+});
+
+cli.command('symbols', 'cli.cmd.symbols').actionCtx(async (options, _args, ctx) => {
+    const file = input(options);
+    if (file === undefined) {
+        ctx.fail('open-eda.cli.file-required', { message: 'a design document is required' });
+        return 2;
+    }
+    const library = await withDesign(file, (design) => design.listSymbols());
+    ctx.emitResult(library, describeSymbols(library));
     return 0;
 });
 

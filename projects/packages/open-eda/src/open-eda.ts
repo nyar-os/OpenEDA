@@ -46,6 +46,7 @@ import type {
     SaveReport,
     SetFootprintInput,
     Sheet,
+    SymbolLibraryResult,
     TextInput,
     TextLabel,
     UpdateComponentInput,
@@ -476,6 +477,9 @@ function attach(opened: service.DesignHandle, options: AttachOptions): Design {
         },
         async listObjects(): Promise<DesignObjects> {
             return service.listObjects(handle);
+        },
+        async listSymbols(): Promise<SymbolLibraryResult> {
+            return service.symbols(handle);
         },
         async listComponents(): Promise<readonly Component[]> {
             return service.listComponents(handle).components;
