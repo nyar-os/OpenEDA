@@ -24,7 +24,8 @@ annotations, net labels, including global and hierarchical labels, and the
 title-block title, date, revision and company. Editing
 covers components, nets (derive, disconnect, delete), design-level buses
 (declare, list, remove), wires, junctions and text (move and delete by index),
-sheet add/rename/delete, deterministic reference annotation, and undo/redo. The SDK and studio keep a bounded
+sheet add/rename/delete, deterministic reference annotation, BOM variants with
+do-not-populate lists, and undo/redo. The SDK and studio keep a bounded
 32-step history per open handle. A session created with `history: 'sidecar'`
 additionally records each replaced document in `<file>.history.json`, which is
 how the CLI makes undo/redo work across separate invocations. All entry points
@@ -41,6 +42,7 @@ prints exactly which entries are supported.
 | design compare `diff` | supported | read-only report of added, removed and modified sheets, components, nets, wires and buses |
 | pin electrical types | supported | per-pin roles, the `electrical` check and the KiCad library pin types |
 | reference annotation `annotate` | supported | renumbers per prefix by sheet and placement order; net nodes follow |
+| BOM variants and DNP | supported | named DNP designator lists and value overrides applied to `bom`/`bom_json` |
 | checks `erc`, `electrical`, `nets`, `connectivity`, `footprints`, `power` | supported | `drc` and `clearance` are unsupported |
 | export `net`, `net_csv`, `spice`, `svg`, `bom`, `bom_json`, `pdf`, `report`, `json`, `kicad_sch` | supported | read-only projections; `kicad_pcb` and `gbr` are unsupported |
 | import `kicad_sch` | supported | symbols, wires, junctions, no-connect flags, text and labels; other constructs are reported as loss entries |
@@ -153,6 +155,8 @@ await design.addWire({ net: 'VCC', from: [40, 30], to: [70, 30] });
 await design.addBus({ name: 'DATA', width: 4 });
 const buses = await design.listBuses();
 await design.annotate();
+await design.addVariant({ name: 'lite', dnp: ['R1'], values: { R1: '22k' } });
+await design.export({ format: 'bom', target: 'blinker-lite.csv', variant: 'lite' });
 
 await design.save({ target: 'blinker.oeda', overwrite: true });
 await design.setProperties({ rev: 'B' });
@@ -185,6 +189,11 @@ open-eda component footprint blinker.oeda --ref R1 --footprint Resistor_SMD:R_08
 
 # Renumber reference designators by sheet and placement order
 open-eda annotate blinker.oeda
+
+# Declare a BOM variant with a do-not-populate list and value overrides
+open-eda variant add blinker.oeda --name lite --dnp R1 --values R1=22k
+open-eda variant list blinker.oeda
+open-eda variant remove blinker.oeda --name lite
 
 # Connect pins to a net, then edit the objects
 open-eda net connect blinker.oeda --net VCC --nodes R1.1,C1.1
@@ -235,6 +244,7 @@ open-eda export blinker.oeda --format net_csv --out blinker-nodes.csv
 open-eda export blinker.oeda --format spice --out blinker.cir
 open-eda export blinker.oeda --format svg --out blinker.svg
 open-eda export blinker.oeda --format bom --out blinker.csv
+open-eda export blinker.oeda --format bom --variant lite --out blinker-lite.csv
 open-eda export blinker.oeda --format bom_json --out blinker-bom.json
 open-eda export blinker.oeda --format pdf --out blinker.pdf
 open-eda export blinker.oeda --format report --out blinker.md
@@ -256,10 +266,15 @@ bus nets expanded into their member names and CSV quoting applied where needed.
 The SPICE writer emits `* OpenEDA SPICE netlist v1`,
 one element line per component, `NC_<ref>_<pin>` nodes for open pins, and
 `.END`. The SVG writer draws a frame, wires, junctions, text annotations and
-component boxes with reference and value labels. The BOM writer groups
-components by value and footprint and emits
+component boxes with reference and value labels. The BOM writer groups components by value and footprint and emits
 `Comment,Footprint,Designator,Quantity` with sorted designators compressed into
-inclusive ranges (`R5-R7` for three or more consecutive numbers); `bom_json`
+inclusive ranges (`R5-R7` for three or more consecutive numbers). A BOM variant
+is a design-level name with a DNP designator list and value overrides: exporting
+`bom`/`bom_json` with a variant leaves DNP designators out and writes the
+overridden values, while the default export still describes the fully populated
+board. Every DNP or override designator must already be placed; a variant never
+invents a part, and any other export target rejects the variant instead of
+silently ignoring it. `bom_json`
 writes the same rows as a deterministic `open-eda-bom` projection. The PDF writer
 emits a complete one-page A4 landscape vector document (`%PDF-1.4` header,
 cross-reference table, `%%EOF`) with sheet names, component boxes and wires.
@@ -327,6 +342,8 @@ served by the desktop window and talks to the same operations over JSON-RPC.
 - It does not assign footprints: it stores the footprint text you set, and the
   BOM and KiCad writer emit it verbatim, but it never picks, validates or
   places a footprint. It does not run DRC or clearance checks.
+- BOM variants are model-level: they filter and rewrite BOM rows only. They do
+  not change the schematic, the KiCad symbol DNP flag or any board output.
 - Connectivity, electrical and power checks analyse the schematic's wires, nets
   and typed pins only; they do not model a board, copper or current flow.
 - It does not store undo history in the `.oeda` document itself; the optional

@@ -59,6 +59,9 @@ import type {
     TextInput,
     TextLabel,
     UpdateComponentInput,
+    Variant,
+    VariantInput,
+    VariantResult,
     Wire,
     WireInput,
 } from './types.js';
@@ -370,7 +373,7 @@ function attach(opened: service.DesignHandle, options: AttachOptions): Design {
             return report;
         },
         async export(exportOptions: ExportOptions): Promise<ExportReport> {
-            return service.exportDesign(handle, exportOptions.format, exportOptions.target);
+            return service.exportDesign(handle, exportOptions.format, exportOptions.target, exportOptions.variant);
         },
         async setProperties(properties: DesignPropertiesInput): Promise<DesignPropertiesResult> {
             assertPropertiesInput(properties);
@@ -484,6 +487,19 @@ function attach(opened: service.DesignHandle, options: AttachOptions): Design {
         async listBuses(): Promise<readonly Bus[]> {
             return service.listBuses(handle).buses;
         },
+        async addVariant(input: VariantInput): Promise<Variant> {
+            assertVariantInput(input);
+            const result = await mutate(() => service.addVariant(handle, input));
+            current = result.design;
+            return result.variant;
+        },
+        async removeVariant(name: string): Promise<void> {
+            const result = await mutate(() => service.removeVariant(handle, name));
+            current = result.design;
+        },
+        async listVariants(): Promise<readonly Variant[]> {
+            return service.listVariants(handle).variants;
+        },
         async deleteJunction(index: number, deleteOptions?: { readonly sheet?: string }): Promise<void> {
             const result = await mutate(() => service.deleteJunction(handle, index, deleteOptions?.sheet));
             current = result.design;
@@ -563,8 +579,7 @@ function assertCreateOptions(options: DesignCreateOptions): void {
     }
 }
 
-function assertPinTypeInput(input: SetPinTypeInput): void {
-    for (const key of ['reference', 'pin'] as const) {
+function assertPinTypeInput(input: SetPinTypeInput): void {    for (const key of ['reference', 'pin'] as const) {
         const value = input?.[key];
         if (typeof value !== 'string' || value.trim().length === 0) {
             throw new OpenEDAError('session/argument-invalid', `\`${key}\` must be a non-empty string`);
@@ -572,6 +587,22 @@ function assertPinTypeInput(input: SetPinTypeInput): void {
     }
     if (input.pinType !== undefined && input.pinType !== null && !PIN_TYPES.includes(input.pinType)) {
         throw new OpenEDAError('session/argument-invalid', `\`${input.pinType}\` is not a supported pin electrical type`);
+    }
+}
+
+function assertVariantInput(input: VariantInput): void {
+    if (typeof input?.name !== 'string' || input.name.trim().length === 0) {
+        throw new OpenEDAError('session/argument-invalid', '`name` must be a non-empty string');
+    }
+    for (const reference of input.dnp ?? []) {
+        if (typeof reference !== 'string' || reference.trim().length === 0) {
+            throw new OpenEDAError('session/argument-invalid', '`dnp` must contain non-empty reference designators');
+        }
+    }
+    for (const [reference, value] of Object.entries(input.values ?? {})) {
+        if (reference.trim().length === 0 || typeof value !== 'string') {
+            throw new OpenEDAError('session/argument-invalid', '`values` must map reference designators to value strings');
+        }
     }
 }
 

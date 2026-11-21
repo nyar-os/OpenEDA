@@ -155,7 +155,8 @@ fn design_export(ctx: CallContext) -> Result<JsValue> {
     let handle = handle(&ctx, 0)?;
     let format = text(&ctx, 1)?;
     let path = text(&ctx, 2)?;
-    let report = open_eda_model::export(handle, &format, Path::new(&path)).map_err(fail)?;
+    let variant = optional_text(&ctx, 3)?;
+    let report = open_eda_model::export_with_variant(handle, &format, Path::new(&path), variant.as_deref()).map_err(fail)?;
     respond(&ctx, &report)
 }
 
@@ -331,6 +332,32 @@ fn design_symbols(ctx: CallContext) -> Result<JsValue> {
 fn design_connectivity(ctx: CallContext) -> Result<JsValue> {
     let handle = handle(&ctx, 0)?;
     let report = open_eda_model::connectivity_report(handle).map_err(fail)?;
+    respond(&ctx, &report)
+}
+
+/// Declares or replaces one BOM variant on an open design.
+#[function]
+fn design_add_variant(ctx: CallContext) -> Result<JsValue> {
+    let handle = handle(&ctx, 0)?;
+    let request: open_eda_model::VariantRequest = decode(serde_json::from_str(&text(&ctx, 1)?))?;
+    let report = open_eda_model::add_variant(handle, request).map_err(fail)?;
+    respond(&ctx, &report)
+}
+
+/// Removes one BOM variant by name.
+#[function]
+fn design_remove_variant(ctx: CallContext) -> Result<JsValue> {
+    let handle = handle(&ctx, 0)?;
+    let name = text(&ctx, 1)?;
+    let report = open_eda_model::remove_variant(handle, &name).map_err(fail)?;
+    respond(&ctx, &report)
+}
+
+/// Lists the BOM variants declared by one open design.
+#[function]
+fn design_list_variants(ctx: CallContext) -> Result<JsValue> {
+    let handle = handle(&ctx, 0)?;
+    let report = open_eda_model::list_variants(handle).map_err(fail)?;
     respond(&ctx, &report)
 }
 
@@ -645,7 +672,8 @@ impl IpcHandler for DesignIpcHandler {
                             failure(id, "error", "session/argument-invalid: an export target path is required".to_string())
                         }
                         else {
-                            match open_eda_model::export(handle, &format, Path::new(&target)) {
+                            let variant = value.get("variant").and_then(Value::as_str);
+                            match open_eda_model::export_with_variant(handle, &format, Path::new(&target), variant) {
                                 Ok(payload) => reply(id, "exportResult", json!({ "report": payload })),
                                 Err(error) => failed(id, &error),
                             }
@@ -1301,6 +1329,9 @@ register_module![
     design_add_bus,
     design_remove_bus,
     design_list_buses,
+    design_add_variant,
+    design_remove_variant,
+    design_list_variants,
     design_symbols,
     design_connectivity,
     design_undo,

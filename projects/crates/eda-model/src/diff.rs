@@ -629,6 +629,7 @@ mod tests {
             units: "mm".to_string(),
             sheets,
             buses,
+            variants: Vec::new(),
             next_component: 1,
             next_net: 1,
             next_wire: 1,

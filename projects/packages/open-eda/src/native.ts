@@ -22,7 +22,7 @@ export interface NativeBinding {
     design_annotate(handle: number): string;
     design_inspect(handle: number, checksJson?: string): string;
     design_inspect_with(handle: number, optionsJson: string): string;
-    design_export(handle: number, format: string, path: string): string;
+    design_export(handle: number, format: string, path: string, variant?: string): string;
     import_kicad_sch(source: string): string;
     diff_documents(left: string, right: string): string;
     design_close(handle: number): boolean;
@@ -41,6 +41,9 @@ export interface NativeBinding {
     design_add_bus(handle: number, requestJson: string): string;
     design_remove_bus(handle: number, bus: string): string;
     design_list_buses(handle: number): string;
+    design_add_variant(handle: number, requestJson: string): string;
+    design_remove_variant(handle: number, name: string): string;
+    design_list_variants(handle: number): string;
     design_undo(handle: number): string;
     design_redo(handle: number): string;
     design_add_sheet(handle: number, name?: string): string;

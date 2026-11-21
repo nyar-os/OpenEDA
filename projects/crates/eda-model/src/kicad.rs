@@ -436,6 +436,7 @@ pub(crate) fn import(text: &str) -> Result<(Design, Vec<Value>), ServiceError> {
             texts,
         }],
         buses: Vec::new(),
+        variants: Vec::new(),
     };
     Ok((design, losses))
 }

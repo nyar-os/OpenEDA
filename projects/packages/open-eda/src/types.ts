@@ -401,6 +401,37 @@ export interface AnnotateResult {
     readonly changes: readonly AnnotateChange[];
 }
 
+/** One BOM variant: designators that are not populated plus value overrides. */
+export interface Variant {
+    readonly name: string;
+    /** Reference designators that are not populated. */
+    readonly dnp: readonly string[];
+    /** Alternate value text keyed by reference designator. */
+    readonly values: Readonly<Record<string, string>>;
+}
+
+/** Input of `design.addVariant()`; replaces a variant with the same name. */
+export interface VariantInput {
+    readonly name: string;
+    readonly dnp?: readonly string[];
+    readonly values?: Readonly<Record<string, string>>;
+}
+
+/** Result of `design.addVariant()`. */
+export interface VariantResult {
+    readonly revision: number;
+    readonly design: DesignSummary;
+    readonly canUndo: boolean;
+    readonly canRedo: boolean;
+    readonly variant: Variant;
+}
+
+/** Result of `design.listVariants()`. */
+export interface VariantListResult {
+    readonly revision: number;
+    readonly variants: readonly Variant[];
+}
+
 /** Input of `design.setPinType()`. */
 export interface SetPinTypeInput {
     readonly sheet?: SheetId;
@@ -587,6 +618,8 @@ export interface ExportOptions {
     readonly format: ExportTarget;
     readonly target: string;
     readonly overwrite?: boolean;
+    /** BOM variant to apply; only `bom` and `bom_json` accept one. */
+    readonly variant?: string;
 }
 
 /** One construct an export could not represent verbatim. */
@@ -818,6 +851,12 @@ export interface Design {
     removeBus(bus: ObjectId | string): Promise<void>;
     /** Lists the buses declared by the design. */
     listBuses(): Promise<readonly Bus[]>;
+    /** Declares or replaces a BOM variant; every designator must be placed. */
+    addVariant(input: VariantInput): Promise<Variant>;
+    /** Removes one BOM variant by name. */
+    removeVariant(name: string): Promise<void>;
+    /** Lists the BOM variants declared by the design. */
+    listVariants(): Promise<readonly Variant[]>;
     /** Deletes the junction at a 0-based index on a sheet. */
     deleteJunction(index: number, options?: { readonly sheet?: SheetId }): Promise<void>;
     /** Moves the junction at a 0-based index to a new placement. */

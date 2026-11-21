@@ -17,8 +17,8 @@ reads and writes. The SDK keeps a bounded 32-step undo/redo history
 per open handle, and the CLI mirrors it in a `<file>.history.json` sidecar so
 `undo` and `redo` work across separate command invocations. Sheet
 add/rename/delete, component move, update and delete, deterministic reference
-annotation, net derive, disconnect and delete, and junction/text move and
-delete work in place. Board layout, the
+annotation, BOM variants with do-not-populate lists, net derive, disconnect and
+delete, and junction/text move and delete work in place. Board layout, the
 interactive renderer, DRC and clearance checks, and KiCad board, Gerber and drill
 exchange are not implemented and report `capability/not-implemented`.
 
@@ -35,7 +35,10 @@ open-eda connectivity <file.oeda>
 open-eda inspect <file.oeda> [--checks erc,electrical,nets,connectivity,footprints,power] [--severity code=level,...] [--waive code[@objectId|@sheetId/objectId],...]
 open-eda diff <left.oeda> <right.oeda>
 open-eda annotate <file.oeda>
-open-eda export <file.oeda> --format net|net_csv|spice|svg|bom|bom_json|pdf|report|kicad_sch --out <file>
+open-eda export <file.oeda> --format net|net_csv|spice|svg|bom|bom_json|pdf|report|kicad_sch --out <file> [--variant <name>]
+open-eda variant add <file.oeda> --name <name> [--dnp R1,R2] [--values R1=22k]
+open-eda variant list <file.oeda>
+open-eda variant remove <file.oeda> --name <name>
 open-eda import <file.kicad_sch> --out <file.oeda> [--overwrite]
 open-eda undo <file.oeda>
 open-eda redo <file.oeda>
@@ -141,6 +144,17 @@ Net nodes are rewritten to the new references, and the command reports every
 `from`/`to` change. An already annotated design adds no revision. References
 without leading letters join the `U` group; the numerals in `TP_A` are replaced.
 
+## BOM variants and DNP
+
+`open-eda variant add` declares a design-level variant with `--dnp` (reference
+designators that are not populated) and `--values` (`ref=value` overrides). It
+replaces a variant with the same name. Every designator must already be placed;
+a variant never invents a part. `export --variant <name>` applies the variant to
+`bom` and `bom_json` only: DNP rows disappear and overridden values replace the
+component value. Other export targets reject a variant with
+`session/argument-invalid`. Variants do not change the schematic, the KiCad
+`dnp` flag or any board output.
+
 ## Drawing properties
 `title`, `rev`, `company` and `date` are design-wide title-block properties.
 `rev` is a text label such as `A`; it is not the edit revision counter. `design
@@ -202,6 +216,8 @@ a footprint and never claims a library part exists outside the document.
   footprint with sorted designators compressed into inclusive ranges (`R5-R7`
   for three or more consecutive numbers). Footprint text is whatever was
   assigned with `component footprint`; the model never picks one.
+  `--variant <name>` drops that variant's DNP designators and applies its value
+  overrides.
 - `bom_json` writes the same rows as a deterministic `open-eda-bom` JSON
   projection with `designators` and `designatorRanges` arrays.
 - `pdf` writes one A4 landscape vector page with sheet names, component boxes,

@@ -47,6 +47,10 @@ import type {
     TextInput,
     TextLabel,
     UpdateComponentInput,
+    Variant,
+    VariantInput,
+    VariantListResult,
+    VariantResult,
     Wire,
     WireInput,
 } from './types.js';
@@ -285,8 +289,11 @@ export function inspect(handle: number, options?: InspectOptions): InspectReport
 }
 
 /** Projects one open design to an exchange target. */
-export function exportDesign(handle: number, format: ExportTarget, target: string): ExportReport {
-    return decode<ExportReport>(() => binding('export').design_export(handle, format, target));
+export function exportDesign(handle: number, format: ExportTarget, target: string, variant?: string): ExportReport {
+    const native = binding('export');
+    return decode<ExportReport>(() =>
+        variant === undefined ? native.design_export(handle, format, target) : native.design_export(handle, format, target, variant),
+    );
 }
 
 /**
@@ -545,6 +552,26 @@ export function removeBus(handle: number, bus: string): DeleteBusResult {
 /** Lists the buses declared by one open design. */
 export function listBuses(handle: number): BusListResult {
     return decode<BusListResult>(() => binding('design.listBuses').design_list_buses(handle));
+}
+
+/** Declares or replaces one BOM variant. */
+export function addVariant(handle: number, input: VariantInput): VariantResult {
+    return decode<VariantResult>(() =>
+        binding('design.addVariant').design_add_variant(
+            handle,
+            JSON.stringify({ name: input.name, dnp: [...(input.dnp ?? [])], values: input.values ?? {} }),
+        ),
+    );
+}
+
+/** Removes one BOM variant by name. */
+export function removeVariant(handle: number, name: string): DeleteBusResult {
+    return decode<DeleteBusResult>(() => binding('design.removeVariant').design_remove_variant(handle, name));
+}
+
+/** Lists the BOM variants declared by one open design. */
+export function listVariants(handle: number): VariantListResult {
+    return decode<VariantListResult>(() => binding('design.listVariants').design_list_variants(handle));
 }
 
 /** Deletes the junction at a 0-based index on a sheet. */

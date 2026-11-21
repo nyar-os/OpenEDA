@@ -197,6 +197,23 @@ pub struct Bus {
     pub width: u64,
 }
 
+/// One BOM variant: the parts that are not populated and the value overrides.
+///
+/// Variants belong to the design, not to a sheet, because a reference designator
+/// is unique across the whole document. The base document is the default
+/// population; a variant only subtracts designators and replaces value text.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Variant {
+    /// Variant name, unique inside the design.
+    pub name: String,
+    /// Reference designators that are not populated in this variant.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dnp: Vec<String>,
+    /// Alternate value text keyed by reference designator.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub values: BTreeMap<String, String>,
+}
+
 /// Electrical role of one pin.
 ///
 /// The `electrical` inspection check reads these roles; an untyped pin is
@@ -355,6 +372,9 @@ pub struct Design {
     /// Declared buses; absent in older documents.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub buses: Vec<Bus>,
+    /// BOM variants; absent in older documents.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub variants: Vec<Variant>,
     /// Next component number used to build deterministic object identities.
     pub next_component: u64,
     /// Next net number used to build deterministic object identities.
@@ -560,6 +580,23 @@ pub struct AddBusRequest {
     pub name: String,
     /// Number of member nets; must be at least 1.
     pub width: u64,
+}
+
+/// Request of [`add_variant`].
+///
+/// A variant with an existing name is replaced, so one request always describes
+/// the whole variant: its DNP list and its value overrides.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VariantRequest {
+    /// Variant name.
+    pub name: String,
+    /// Reference designators that are not populated.
+    #[serde(default)]
+    pub dnp: Vec<String>,
+    /// Alternate value text keyed by reference designator.
+    #[serde(default)]
+    pub values: BTreeMap<String, String>,
 }
 
 /// Request of [`delete_net`].
@@ -786,6 +823,7 @@ pub fn create(request: CreateRequest) -> Result<Value, ServiceError> {
             texts: Vec::new(),
         }],
         buses: Vec::new(),
+        variants: Vec::new(),
         next_component: 1,
         next_net: 1,
         next_wire: 1,
@@ -1094,6 +1132,81 @@ pub fn remove_bus(handle: u64, bus: &str) -> Result<Value, ServiceError> {
     })
 }
 
+/// Declares or replaces one BOM variant.
+///
+/// Every designator in `dnp` and in `values` must be placed in the design; a
+/// variant never invents a part. A variant whose content is unchanged adds no
+/// revision.
+pub fn add_variant(handle: u64, request: VariantRequest) -> Result<Value, ServiceError> {
+    if request.name.trim().is_empty() {
+        return Err(ServiceError::new("session/argument-invalid", "a variant name must not be empty"));
+    }
+    mutate(handle, |design| {
+        let placed: HashSet<&str> = design
+            .sheets
+            .iter()
+            .flat_map(|sheet| sheet.components.iter())
+            .map(|component| component.reference.as_str())
+            .collect();
+        let mut dnp = Vec::new();
+        let mut seen = HashSet::new();
+        for reference in &request.dnp {
+            if !placed.contains(reference.as_str()) {
+                return Err(not_found(format!("variant `{}` marks missing component `{reference}` as DNP", request.name)));
+            }
+            if seen.insert(reference.clone()) {
+                dnp.push(reference.clone());
+            }
+        }
+        for reference in request.values.keys() {
+            if !placed.contains(reference.as_str()) {
+                return Err(not_found(format!("variant `{}` overrides missing component `{reference}`", request.name)));
+            }
+        }
+        let variant = Variant { name: request.name.clone(), dnp, values: request.values };
+        let existing = design.variants.iter().position(|entry| entry.name == variant.name);
+        let changed = match existing {
+            Some(position) if design.variants[position] == variant => false,
+            Some(position) => {
+                design.variants[position] = variant.clone();
+                true
+            }
+            None => {
+                design.variants.push(variant.clone());
+                true
+            }
+        };
+        if changed {
+            design.revision += 1;
+        }
+        let mut payload = Map::new();
+        payload.insert("variant".to_string(), json!(variant));
+        Ok(payload)
+    })
+}
+
+/// Removes one BOM variant by name.
+pub fn remove_variant(handle: u64, name: &str) -> Result<Value, ServiceError> {
+    mutate(handle, |design| {
+        let position = design
+            .variants
+            .iter()
+            .position(|entry| entry.name == name)
+            .ok_or_else(|| not_found(format!("no variant `{name}` is declared")))?;
+        let removed = design.variants.remove(position);
+        design.revision += 1;
+        let mut payload = Map::new();
+        payload.insert("deleted".to_string(), json!(removed.name));
+        payload.insert("remaining".to_string(), json!(design.variants.len()));
+        Ok(payload)
+    })
+}
+
+/// Lists the BOM variants declared by one design.
+pub fn list_variants(handle: u64) -> Result<Value, ServiceError> {
+    with_session(handle, |session| Ok(json!({ "revision": session.design.revision, "variants": session.design.variants })))
+}
+
 /// Adds one component to a sheet and returns the created object.
 pub fn add_component(handle: u64, request: AddComponentRequest) -> Result<Value, ServiceError> {
     if request.reference.trim().is_empty() {
@@ -1332,6 +1445,19 @@ pub fn annotate(handle: u64) -> Result<Value, ServiceError> {
                     }
                 }
             }
+        }
+        for variant in &mut design.variants {
+            for reference in &mut variant.dnp {
+                if let Some(next) = renames.get(reference) {
+                    *reference = next.clone();
+                }
+            }
+            let values = variant
+                .values
+                .iter()
+                .map(|(reference, value)| (renames.get(reference).cloned().unwrap_or_else(|| reference.clone()), value.clone()))
+                .collect();
+            variant.values = values;
         }
         if !changes.is_empty() {
             design.revision += 1;
@@ -1874,10 +2000,36 @@ pub fn close(handle: u64) -> Result<(), ServiceError> {
 
 /// Projects one open design to an exchange target.
 pub fn export(handle: u64, format: &str, path: &Path) -> Result<Value, ServiceError> {
+    export_with_variant(handle, format, path, None)
+}
+
+/// Projects one open design to an exchange target, optionally through a BOM
+/// variant.
+///
+/// A variant only changes `bom` and `bom_json`: its DNP designators are left out
+/// and its value overrides replace the component value. Any other format rejects
+/// the variant instead of silently ignoring it.
+pub fn export_with_variant(handle: u64, format: &str, path: &Path, variant: Option<&str>) -> Result<Value, ServiceError> {
     if !SUPPORTED_EXPORTS.contains(&format) {
         return Err(not_implemented(&format!("export `{format}`")));
     }
+    if variant.is_some() && format != "bom" && format != "bom_json" {
+        return Err(ServiceError::new(
+            "session/argument-invalid",
+            format!("a BOM variant applies to `bom` and `bom_json`, not `{format}`"),
+        ));
+    }
     let design = with_session(handle, |session| Ok(session.design.clone()))?;
+    let selected = match variant {
+        Some(name) => Some(
+            design
+                .variants
+                .iter()
+                .find(|entry| entry.name == name)
+                .ok_or_else(|| not_found(format!("no variant `{name}` is declared")))?,
+        ),
+        None => None,
+    };
     let mut losses: Vec<Value> = Vec::new();
     let (contents, artifact) = match format {
         "net" => {
@@ -1921,21 +2073,29 @@ pub fn export(handle: u64, format: &str, path: &Path) -> Result<Value, ServiceEr
             (render_svg(&design), artifact)
         }
         "bom" => {
-            let rows = bom_rows(&design);
-            let artifact = json!({
+            let rows = bom_rows(&design, selected);
+            let mut artifact = json!({
                 "kind": "bom",
                 "rows": rows.len(),
                 "components": rows.iter().map(|row| row.designators.len()).sum::<usize>(),
             });
+            if let Some(variant) = selected {
+                artifact["variant"] = json!(variant.name);
+                artifact["dnp"] = json!(variant.dnp.len());
+            }
             (render_bom(&rows), artifact)
         }
         "bom_json" => {
-            let rows = bom_rows(&design);
-            let artifact = json!({
+            let rows = bom_rows(&design, selected);
+            let mut artifact = json!({
                 "kind": "bom_json",
                 "rows": rows.len(),
                 "components": rows.iter().map(|row| row.designators.len()).sum::<usize>(),
             });
+            if let Some(variant) = selected {
+                artifact["variant"] = json!(variant.name);
+                artifact["dnp"] = json!(variant.dnp.len());
+            }
             (render_bom_json(&design, &rows)?, artifact)
         }
         "pdf" => {
@@ -2166,6 +2326,15 @@ fn validate_design(design: &Design) -> Result<(), ServiceError> {
             return Err(invalid(format!("bus `{}` has width 0; the minimum is 1", bus.name)));
         }
     }
+    let mut variant_names = HashSet::new();
+    for variant in &design.variants {
+        if variant.name.trim().is_empty() {
+            return Err(invalid("a variant has an empty name"));
+        }
+        if !variant_names.insert(variant.name.clone()) {
+            return Err(invalid(format!("variant name `{}` appears more than once", variant.name)));
+        }
+    }
     for sheet in &design.sheets {
         if !sheet_ids.insert(sheet.id.clone()) {
             return Err(invalid(format!("sheet id `{}` appears more than once", sheet.id)));
@@ -2245,6 +2414,13 @@ fn validate_design(design: &Design) -> Result<(), ServiceError> {
         for text in &sheet.texts {
             if !text.x.is_finite() || !text.y.is_finite() {
                 return Err(invalid(format!("sheet `{}` has a text with a non-finite coordinate", sheet.id)));
+            }
+        }
+    }
+    for variant in &design.variants {
+        for reference in variant.dnp.iter().chain(variant.values.keys()) {
+            if !references.contains(reference) {
+                return Err(invalid(format!("variant `{}` references missing component `{reference}`", variant.name)));
             }
         }
     }
@@ -3338,12 +3514,19 @@ struct BomRow {
 
 /// Groups designators by value and footprint; both are the model's own text, so
 /// a row never invents a part number. Rows and designators are sorted, making
-/// the projection deterministic.
-fn bom_rows(design: &Design) -> Vec<BomRow> {
+/// the projection deterministic. A selected variant removes its DNP designators
+/// and replaces the value text of the designators it overrides.
+fn bom_rows(design: &Design, variant: Option<&Variant>) -> Vec<BomRow> {
     let mut groups: BTreeMap<(String, String), Vec<String>> = BTreeMap::new();
     for sheet in &design.sheets {
         for component in &sheet.components {
-            groups.entry((component.value.clone(), component.footprint.clone())).or_default().push(component.reference.clone());
+            if variant.is_some_and(|variant| variant.dnp.iter().any(|reference| reference == &component.reference)) {
+                continue;
+            }
+            let comment = variant
+                .and_then(|variant| variant.values.get(&component.reference).cloned())
+                .unwrap_or_else(|| component.value.clone());
+            groups.entry((comment, component.footprint.clone())).or_default().push(component.reference.clone());
         }
     }
     groups
@@ -4190,6 +4373,7 @@ mod tests {
                 texts: Vec::new(),
             }],
             buses: Vec::new(),
+            variants: Vec::new(),
             next_component: 3,
             next_net: 1,
             next_wire: 1,
@@ -4222,6 +4406,7 @@ mod tests {
                 texts: Vec::new(),
             }],
             buses: Vec::new(),
+            variants: Vec::new(),
             next_component: 1,
             next_net: 3,
             next_wire: 1,
@@ -4278,6 +4463,7 @@ mod tests {
                 texts: Vec::new(),
             }],
             buses: Vec::new(),
+            variants: Vec::new(),
             next_component: 2,
             next_net: 3,
             next_wire: 1,
@@ -4799,6 +4985,7 @@ mod tests {
                 texts: Vec::new(),
             }],
             buses: Vec::new(),
+            variants: Vec::new(),
             next_component: 2,
             next_net: 1,
             next_wire: 1,
@@ -4982,6 +5169,7 @@ mod tests {
                 texts: Vec::new(),
             }],
             buses: Vec::new(),
+            variants: Vec::new(),
             next_component: 1,
             next_net: 1,
             next_wire: 1,
@@ -5587,6 +5775,7 @@ mod tests {
                 texts: Vec::new(),
             }],
             buses: Vec::new(),
+            variants: Vec::new(),
             next_component: 2,
             next_net: 3,
             next_wire: 1,
@@ -5915,6 +6104,7 @@ mod tests {
                 texts: Vec::new(),
             }],
             buses: Vec::new(),
+            variants: Vec::new(),
             next_component: 2,
             next_net: 2,
             next_wire: 1,
@@ -5979,6 +6169,7 @@ mod tests {
                 texts: Vec::new(),
             }],
             buses: Vec::new(),
+            variants: Vec::new(),
             next_component: 3,
             next_net: 2,
             next_wire: 1,
@@ -6030,6 +6221,7 @@ mod tests {
                 texts: Vec::new(),
             }],
             buses: vec![Bus { id: "bus-1".to_string(), name: "DATA".to_string(), width: 4 }],
+            variants: Vec::new(),
             next_component: 2,
             next_net: 2,
             next_wire: 1,
@@ -6165,6 +6357,128 @@ mod tests {
         let again = annotate(handle).expect("annotate again");
         assert_eq!(again["annotated"], 0);
         assert_eq!(again["revision"], report["revision"]);
+        close(handle).expect("close");
+    }
+
+    #[test]
+    fn variants_filter_and_override_bom_rows_and_persist() {
+        let dir = TempDir::new("variants");
+        let document = dir.join("variants.oeda");
+        let default_bom = dir.join("default.csv");
+        let variant_bom = dir.join("lite.csv");
+        let variant_json = dir.join("lite.json");
+        let created = create(CreateRequest::default()).expect("create");
+        let handle = created["handle"].as_u64().expect("handle");
+        for (reference, value) in [("R1", "10k"), ("R2", "10k"), ("C1", "100n")] {
+            add_component(
+                handle,
+                AddComponentRequest {
+                    sheet: None,
+                    reference: reference.to_string(),
+                    value: value.to_string(),
+                    x: 0.0,
+                    y: 0.0,
+                    rotation: 0.0,
+                    pins: vec!["1".to_string(), "2".to_string()],
+                },
+            )
+            .expect("add");
+        }
+        let added = add_variant(
+            handle,
+            VariantRequest {
+                name: "lite".to_string(),
+                dnp: vec!["R2".to_string(), "R2".to_string()],
+                values: BTreeMap::from([("R1".to_string(), "22k".to_string())]),
+            },
+        )
+        .expect("add variant");
+        assert_eq!(added["variant"]["dnp"], json!(["R2"]));
+        assert_eq!(added["variant"]["values"]["R1"], "22k");
+        assert_eq!(list_variants(handle).expect("list")["variants"].as_array().expect("variants").len(), 1);
+
+        export(handle, "bom", &default_bom).expect("export default bom");
+        let default_text = fs::read_to_string(&default_bom).expect("read default bom");
+        assert!(default_text.contains("10k,,\"R1,R2\",2"));
+
+        let report = export_with_variant(handle, "bom", &variant_bom, Some("lite")).expect("export variant");
+        assert_eq!(report["artifact"]["variant"], "lite");
+        assert_eq!(report["artifact"]["dnp"], 1);
+        assert_eq!(report["artifact"]["rows"], 2);
+        assert_eq!(
+            fs::read_to_string(&variant_bom).expect("read variant bom"),
+            "Comment,Footprint,Designator,Quantity\n100n,,C1,1\n22k,,R1,1\n"
+        );
+        let json_report = export_with_variant(handle, "bom_json", &variant_json, Some("lite")).expect("export variant json");
+        assert_eq!(json_report["artifact"]["variant"], "lite");
+        assert!(!fs::read_to_string(&variant_json).expect("read json").contains("R2"));
+
+        assert_eq!(export_with_variant(handle, "bom", &default_bom, Some("missing")).unwrap_err().code, "object/not-found");
+        assert_eq!(
+            export_with_variant(handle, "net", &default_bom, Some("lite")).unwrap_err().code,
+            "session/argument-invalid"
+        );
+        assert_eq!(
+            add_variant(
+                handle,
+                VariantRequest { name: "lite".to_string(), dnp: vec!["R9".to_string()], values: BTreeMap::new() }
+            )
+            .unwrap_err()
+            .code,
+            "object/not-found"
+        );
+        assert_eq!(
+            add_variant(handle, VariantRequest { name: "  ".to_string(), dnp: Vec::new(), values: BTreeMap::new() })
+                .unwrap_err()
+                .code,
+            "session/argument-invalid"
+        );
+
+        save(handle, &document, false).expect("save");
+        close(handle).expect("close");
+        let opened = open(&document).expect("open");
+        let reopened = opened["handle"].as_u64().expect("handle");
+        let listed = list_variants(reopened).expect("list after reopen");
+        assert_eq!(listed["variants"][0]["name"], "lite");
+        assert_eq!(listed["variants"][0]["dnp"], json!(["R2"]));
+        let removed = remove_variant(reopened, "lite").expect("remove");
+        assert_eq!(removed["deleted"], "lite");
+        assert_eq!(remove_variant(reopened, "lite").unwrap_err().code, "object/not-found");
+        close(reopened).expect("close");
+    }
+
+    #[test]
+    fn annotation_rewrites_variant_references() {
+        let created = create(CreateRequest::default()).expect("create");
+        let handle = created["handle"].as_u64().expect("handle");
+        for (reference, x) in [("R2", 10.0), ("R1", 20.0)] {
+            add_component(
+                handle,
+                AddComponentRequest {
+                    sheet: None,
+                    reference: reference.to_string(),
+                    value: "10k".to_string(),
+                    x,
+                    y: 0.0,
+                    rotation: 0.0,
+                    pins: vec!["1".to_string()],
+                },
+            )
+            .expect("add");
+        }
+        add_variant(
+            handle,
+            VariantRequest {
+                name: "lite".to_string(),
+                dnp: vec!["R2".to_string()],
+                values: BTreeMap::from([("R1".to_string(), "22k".to_string())]),
+            },
+        )
+        .expect("add variant");
+        annotate(handle).expect("annotate");
+        let variant = &list_variants(handle).expect("list")["variants"][0];
+        assert_eq!(variant["dnp"], json!(["R1"]));
+        assert_eq!(variant["values"]["R2"], "22k");
         close(handle).expect("close");
     }
 }

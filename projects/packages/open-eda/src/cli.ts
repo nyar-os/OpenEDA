@@ -204,6 +204,20 @@ function parseWaivers(raw: string): Parsed<InspectWaiver[]> {
     return { ok: true, value: waivers };
 }
 
+function parseVariantValues(raw: string): Parsed<Record<string, string>> {
+    const values: Record<string, string> = {};
+    for (const entry of raw.split(',').map((item) => item.trim()).filter((item) => item.length > 0)) {
+        const separator = entry.indexOf('=');
+        const reference = separator > 0 ? entry.slice(0, separator).trim() : '';
+        const value = separator > 0 ? entry.slice(separator + 1).trim() : '';
+        if (reference.length === 0 || value.length === 0) {
+            return { ok: false, message: '`--values` entries must be `ref=value` pairs' };
+        }
+        values[reference] = value;
+    }
+    return { ok: true, value: values };
+}
+
 function describeObjects(objects: DesignObjects): string {
     const lines = [describeDesign(objects.design), `components: ${objects.components.length}`];
     for (const component of objects.components) {
@@ -915,6 +929,85 @@ busCommand
         return 0;
     });
 
+const variantCommand = cli.command('variant', 'cli.cmd.variant');
+variantCommand
+    .command('add', 'cli.cmd.variant-add')
+    .option('--name <name>', 'cli.opt.name')
+    .option('--dnp <list>', 'cli.opt.dnp')
+    .option('--values <pairs>', 'cli.opt.variant-values')
+    .actionCtx(async (options, _args, ctx) => {
+        const file = input(options);
+        if (file === undefined) {
+            ctx.fail('open-eda.cli.file-required', { message: 'a design document is required' });
+            return 2;
+        }
+        const name = text(options, 'name');
+        if (name === undefined || name.trim().length === 0) {
+            ctx.fail('open-eda.cli.arguments-invalid', { message: '`--name` is required' });
+            return 2;
+        }
+        let values: Record<string, string> = {};
+        const rawValues = text(options, 'values');
+        if (rawValues !== undefined) {
+            const parsed = parseVariantValues(rawValues);
+            if (!parsed.ok) {
+                ctx.fail('open-eda.cli.arguments-invalid', { message: parsed.message });
+                return 2;
+            }
+            values = parsed.value;
+        }
+        const { variant, saved } = await withDesign(file, async (design) => {
+            const variant = await design.addVariant({ name, dnp: list(options, 'dnp'), values });
+            return { variant, saved: await savedReport(design) };
+        });
+        ctx.emitResult(
+            { ...saved, revision: saved.revision, variant },
+            `declared variant ${variant.name} dnp=${variant.dnp.length} overrides=${Object.keys(variant.values).length} in ${file} revision=${saved.revision}`,
+        );
+        return 0;
+    });
+
+variantCommand
+    .command('list', 'cli.cmd.variant-list')
+    .actionCtx(async (options, _args, ctx) => {
+        const file = input(options);
+        if (file === undefined) {
+            ctx.fail('open-eda.cli.file-required', { message: 'a design document is required' });
+            return 2;
+        }
+        const variants = await withDesign(file, (design) => design.listVariants());
+        const lines = variants.map(
+            (variant) => `${variant.name} dnp=${variant.dnp.join(',') || '-'} overrides=${Object.keys(variant.values).join(',') || '-'}`,
+        );
+        ctx.emitResult({ variants }, [`${variants.length} variant(s) in ${file}`, ...lines].join('\n'));
+        return 0;
+    });
+
+variantCommand
+    .command('remove', 'cli.cmd.variant-remove')
+    .option('--name <name>', 'cli.opt.name')
+    .actionCtx(async (options, _args, ctx) => {
+        const file = input(options);
+        if (file === undefined) {
+            ctx.fail('open-eda.cli.file-required', { message: 'a design document is required' });
+            return 2;
+        }
+        const name = text(options, 'name');
+        if (name === undefined || name.trim().length === 0) {
+            ctx.fail('open-eda.cli.arguments-invalid', { message: '`--name` is required' });
+            return 2;
+        }
+        const saved = await withDesign(file, async (design) => {
+            await design.removeVariant(name);
+            return savedReport(design);
+        });
+        ctx.emitResult(
+            { ...saved, revision: saved.revision, deleted: name },
+            `removed variant ${name} from ${file} revision=${saved.revision}`,
+        );
+        return 0;
+    });
+
 const wireCommand = cli.command('wire', 'cli.cmd.wire');
 wireCommand
     .command('delete', 'cli.cmd.wire-delete')
@@ -1297,6 +1390,7 @@ cli
     .command('export', 'cli.cmd.export')
     .option('--format <format>', 'cli.opt.format')
     .option('--out <file>', 'cli.opt.out')
+    .option('--variant <name>', 'cli.opt.variant')
     .actionCtx(async (options, _args, ctx) => {
         const file = input(options);
         if (file === undefined) {
@@ -1315,7 +1409,9 @@ cli
             ctx.fail('open-eda.cli.out-required', { message: '`--out <file>` is required' });
             return 2;
         }
-        const report = await withDesign(file, (design) => design.export({ format, target: out }));
+        const report = await withDesign(file, (design) =>
+            design.export({ format, target: out, variant: text(options, 'variant') }),
+        );
         ctx.emitResult(report, `exported ${format} to ${out} revision=${report.revision}`);
         return 0;
     });
