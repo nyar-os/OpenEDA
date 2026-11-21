@@ -27,7 +27,7 @@ open-eda open <file.oeda>
 open-eda list <file.oeda>
 open-eda symbols <file.oeda>
 open-eda connectivity <file.oeda>
-open-eda inspect <file.oeda> [--checks erc,nets,connectivity,footprints,power]
+open-eda inspect <file.oeda> [--checks erc,nets,connectivity,footprints,power] [--severity code=level,...] [--waive code[@objectId|@sheetId/objectId],...]
 open-eda export <file.oeda> --format net|net_csv|spice|svg|bom|bom_json|pdf|report|kicad_sch --out <file>
 open-eda import <file.kicad_sch> --out <file.oeda> [--overwrite]
 open-eda undo <file.oeda>
@@ -102,6 +102,12 @@ detects rails by case-insensitive prefix (`VCC`, `VDD`, `VSS`, `GND`, `VBAT`,
 `VIN`, `PWR`, or a leading `+`/`-`) and warns with `power-net-underconnected`
 below two nodes and `power-net-duplicate` when one rail name appears on more
 than one sheet. Errors fail the report; warnings are reported but do not.
+
+`inspect` also accepts `--severity code=level` overrides (`error`, `warning`,
+`info` or `off`) and `--waive code[@objectId|@sheetId/objectId]` entries. A
+waiver moves the finding from `issues` to `waived` (shape plus `waived: true`),
+and only active errors fail the report. Never use a waiver to hide a finding the
+user has not accepted.
 
 `drc` and `clearance` are declared but not implemented; requesting them rejects
 with `capability/not-implemented`. Never describe a design as DRC clean or

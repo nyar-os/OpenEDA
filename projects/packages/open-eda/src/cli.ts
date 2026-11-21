@@ -25,7 +25,10 @@ import type {
     DesignSummary,
     ExportTarget,
     InspectCheck,
+    InspectOptions,
     InspectReport,
+    InspectSeverity,
+    InspectWaiver,
     SaveReport,
     SymbolLibraryResult,
 } from './types.js';
@@ -139,11 +142,57 @@ function describeDesign(design: DesignSummary): string {
 }
 
 function describeReport(report: InspectReport): string {
-    const lines = [`inspect revision=${report.revision} checker=${report.checkerVersion} passed=${report.passed}`];
+    const lines = [
+        `inspect revision=${report.revision} checker=${report.checkerVersion} passed=${report.passed} active=${report.issues.length} waived=${report.waived.length}`,
+    ];
     for (const issue of report.issues) {
         lines.push(`  ${issue.severity} ${issue.code} ${issue.sheetId ?? '-'} ${issue.message}`);
     }
+    for (const issue of report.waived) {
+        lines.push(`  (waived) ${issue.severity} ${issue.code} ${issue.sheetId ?? '-'} ${issue.message}`);
+    }
     return lines.join('\n');
+}
+
+type Parsed<T> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly message: string };
+
+const severityLevels: readonly InspectSeverity[] = ['error', 'warning', 'info', 'off'];
+
+function parseSeverity(raw: string): Parsed<Record<string, InspectSeverity>> {
+    const overrides: Record<string, InspectSeverity> = {};
+    for (const entry of raw.split(',').map((item) => item.trim()).filter((item) => item.length > 0)) {
+        const separator = entry.indexOf('=');
+        const code = separator > 0 ? entry.slice(0, separator).trim() : '';
+        const level = separator > 0 ? entry.slice(separator + 1).trim() : '';
+        if (code.length === 0 || !(severityLevels as readonly string[]).includes(level)) {
+            return { ok: false, message: '`--severity` entries must be `code=level` with level error, warning, info or off' };
+        }
+        overrides[code] = level as InspectSeverity;
+    }
+    return { ok: true, value: overrides };
+}
+
+function parseWaivers(raw: string): Parsed<InspectWaiver[]> {
+    const waivers: InspectWaiver[] = [];
+    for (const entry of raw.split(',').map((item) => item.trim()).filter((item) => item.length > 0)) {
+        const separator = entry.indexOf('@');
+        const code = separator > 0 ? entry.slice(0, separator).trim() : entry;
+        const target = separator > 0 ? entry.slice(separator + 1).trim() : '';
+        if (code.length === 0) {
+            return { ok: false, message: '`--waive` entries must be `code`, `code@objectId` or `code@sheetId/objectId`' };
+        }
+        if (target.length === 0) {
+            waivers.push({ code });
+            continue;
+        }
+        const slash = target.indexOf('/');
+        waivers.push(
+            slash > 0
+                ? { code, sheetId: target.slice(0, slash), objectId: target.slice(slash + 1) }
+                : { code, objectId: target },
+        );
+    }
+    return { ok: true, value: waivers };
 }
 
 function describeObjects(objects: DesignObjects): string {
@@ -1018,6 +1067,8 @@ for (const [name, description] of [
 cli
     .command('inspect', 'cli.cmd.inspect')
     .option('--checks <list>', 'cli.opt.checks')
+    .option('--severity <pairs>', 'cli.opt.severity')
+    .option('--waive <list>', 'cli.opt.waive')
     .actionCtx(async (options, _args, ctx) => {
         const file = input(options);
         if (file === undefined) {
@@ -1028,7 +1079,28 @@ cli
             ?.split(',')
             .map((name) => name.trim())
             .filter((name) => name.length > 0) as InspectCheck[] | undefined;
-        const report = await withDesign(file, (design) => design.inspect({ checks }));
+        let severity: Record<string, InspectSeverity> | undefined;
+        const rawSeverity = text(options, 'severity');
+        if (rawSeverity !== undefined) {
+            const parsed = parseSeverity(rawSeverity);
+            if (!parsed.ok) {
+                ctx.fail('open-eda.cli.arguments-invalid', { message: parsed.message });
+                return 2;
+            }
+            severity = parsed.value;
+        }
+        let waivers: InspectWaiver[] | undefined;
+        const rawWaivers = text(options, 'waive');
+        if (rawWaivers !== undefined) {
+            const parsed = parseWaivers(rawWaivers);
+            if (!parsed.ok) {
+                ctx.fail('open-eda.cli.arguments-invalid', { message: parsed.message });
+                return 2;
+            }
+            waivers = parsed.value;
+        }
+        const inspectOptions: InspectOptions = { checks, severity, waivers };
+        const report = await withDesign(file, (design) => design.inspect(inspectOptions));
         ctx.emitResult(report, describeReport(report));
         return report.passed ? 0 : 1;
     });

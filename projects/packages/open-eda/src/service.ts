@@ -25,7 +25,7 @@ import type {
     ExportReport,
     ExportTarget,
     HistoryResult,
-    InspectCheck,
+    InspectOptions,
     InspectReport,
     Junction,
     JunctionInput,
@@ -213,11 +213,24 @@ export function save(handle: number, target: string, overwrite: boolean): SaveRe
 }
 
 /** Runs the requested rule checks on one open design. */
-export function inspect(handle: number, checks?: readonly InspectCheck[]): InspectReport {
+export function inspect(handle: number, options?: InspectOptions): InspectReport {
+    if (options?.severity !== undefined || options?.waivers !== undefined) {
+        return decode<InspectReport>(() =>
+            binding('design.inspectWith').design_inspect_with(
+                handle,
+                JSON.stringify({
+                    checks: options.checks,
+                    severity: options.severity ?? {},
+                    waivers: options.waivers ?? [],
+                }),
+            ),
+        );
+    }
+    const checks = options?.checks;
     return decode<InspectReport>(() =>
         checks === undefined
             ? binding('inspect').design_inspect(handle)
-            : binding('inspect').design_inspect(handle, JSON.stringify(checks)),
+            : binding('inspect').design_inspect(handle, JSON.stringify([...checks])),
     );
 }
 

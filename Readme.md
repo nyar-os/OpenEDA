@@ -62,6 +62,12 @@ ambiguous file. The `nets` check reports `net-bus-member-collision` when a
 declared net has the same name as a member the bus expansion would write, so the
 netlist never emits one `NET` line twice.
 
+Inspection accepts per-code severity overrides and waivers. An override promotes,
+demotes or silences one finding code (`error`, `warning`, `info` or `off`); a
+waiver accepts a finding by code, optionally narrowed to one object or sheet.
+Accepted findings move from `issues` to `waived` with the same shape plus
+`waived: true`, and only active errors fail the report.
+
 A bus is a design-level declaration, not a drawn bus wire. A bus named `DATA`
 with width 4 expands into the member nets `DATA0`..`DATA3` (name plus the 0-based
 index, no separator). A declared net with the bus name repeats its nodes into
@@ -159,6 +165,7 @@ open-eda redo blinker.oeda
 
 # Run the supported checks and list objects
 open-eda inspect blinker.oeda --checks erc,nets,connectivity,footprints,power
+open-eda inspect blinker.oeda --severity erc/unconnected-pin=warning --waive erc/dangling-net@net-3
 open-eda list blinker.oeda
 open-eda symbols blinker.oeda
 open-eda connectivity blinker.oeda

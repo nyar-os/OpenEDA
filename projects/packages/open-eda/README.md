@@ -16,7 +16,8 @@ crate. `new OpenEDA(options?)` creates a session synchronously, and the returned
 - `addSheet`, `renameSheet`, `deleteSheet`
 - `undo`, `redo`, with `canUndo`/`canRedo` and a bounded 32-step history
 - `listObjects`, `listComponents`, `listNets`, `listSymbols`, `connectivity`
-- `inspect` with `erc`, `nets`, `connectivity`, `footprints` and `power`
+- `inspect` with `erc`, `nets`, `connectivity`, `footprints` and `power`, plus
+  per-code `severity` overrides and `waivers` that move findings to `waived`
 - `save` to a native `.oeda` document and reopen it
 - `export` to `net`, `net_csv`, `spice`, `svg`, `bom`, `bom_json`, `pdf`, `report`, `json` or `kicad_sch`
 - `OpenEDA.importKicadSch({ source, target? })` from KiCad schematic text or a

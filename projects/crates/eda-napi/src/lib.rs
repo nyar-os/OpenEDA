@@ -23,8 +23,8 @@ use std::{
 
 use open_eda_model::{
     AddBusRequest, AddComponentRequest, AddJunctionRequest, AddTextRequest, AddWireRequest, ConnectNetRequest, CreateRequest,
-    DeleteNetRequest, DisconnectNetRequest, MoveComponentRequest, RenameNetRequest, ServiceError, SetFootprintRequest,
-    UpdateComponentRequest,
+    DeleteNetRequest, DisconnectNetRequest, InspectOptions, MoveComponentRequest, RenameNetRequest, ServiceError,
+    SetFootprintRequest, UpdateComponentRequest,
 };
 use serde_json::{Value, json};
 use wae::{
@@ -125,6 +125,15 @@ fn design_inspect(ctx: CallContext) -> Result<JsValue> {
         None => None,
     };
     let report = open_eda_model::inspect(handle, checks).map_err(fail)?;
+    respond(&ctx, &report)
+}
+
+/// Runs rule checks with severity overrides and waivers from a JSON request.
+#[function]
+fn design_inspect_with(ctx: CallContext) -> Result<JsValue> {
+    let handle = handle(&ctx, 0)?;
+    let options: InspectOptions = decode(serde_json::from_str(&text(&ctx, 1)?))?;
+    let report = open_eda_model::inspect_with_options(handle, options).map_err(fail)?;
     respond(&ctx, &report)
 }
 
@@ -1204,6 +1213,7 @@ register_module![
     design_open,
     design_save,
     design_inspect,
+    design_inspect_with,
     design_export,
     import_kicad_sch,
     design_close,

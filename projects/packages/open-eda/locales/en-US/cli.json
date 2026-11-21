@@ -51,6 +51,8 @@
             "template": "Template the design starts from (only blank is implemented)",
             "overwrite": "Replace the output file when it already exists",
             "checks": "Comma-separated checks: erc, nets, connectivity, footprints, power (drc and clearance are unsupported)",
+            "severity": "Comma-separated finding overrides in code=level form, level error, warning, info or off",
+            "waive": "Comma-separated accepted findings: code, code@objectId or code@sheetId/objectId",
             "format": "Export target: net, net_csv, spice, svg, pdf, bom, bom_json, report, json or kicad_sch (kicad_pcb and gbr are unsupported)",
             "ref": "Reference designator, for example R1",
             "value": "Component value, for example 10k",

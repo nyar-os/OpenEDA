@@ -155,7 +155,7 @@ export class OpenEDA {
         this.assertActive();
         const opened = service.open(openPath(input));
         try {
-            return service.inspect(opened.handle, options?.checks);
+            return service.inspect(opened.handle, options);
         } finally {
             service.close(opened.handle);
         }
@@ -316,7 +316,7 @@ function attach(opened: service.DesignHandle, options: AttachOptions): Design {
             return counts === undefined ? current.canRedo : counts.redo > 0;
         },
         async inspect(inspectOptions?: InspectOptions): Promise<InspectReport> {
-            return service.inspect(handle, inspectOptions?.checks);
+            return service.inspect(handle, inspectOptions);
         },
         async save(saveOptions: SaveOptions = {}): Promise<SaveReport> {
             const target = saveOptions.target ?? sourcePath;

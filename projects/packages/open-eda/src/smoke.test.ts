@@ -347,6 +347,16 @@ test('inspection reports findings and refuses unsupported checks', { skip: witho
         assert.ok(codes.includes('net-fewer-than-two-nodes'));
         assert.ok(codes.includes('component-empty-value'));
         assert.ok(codes.includes('unreferenced-pin'));
+        assert.deepEqual(report.waived, []);
+        const waived = await design.inspect({ waivers: [{ code: 'unreferenced-pin', objectId: 'component-1' }] });
+        assert.ok(waived.waived.some((issue) => issue.code === 'unreferenced-pin'));
+        assert.equal(waived.waived[0]?.waived, true);
+        assert.ok(!waived.issues.some((issue) => issue.code === 'unreferenced-pin'));
+        assert.equal(waived.counts.waived, 1);
+        const silenced = await design.inspect({ severity: { 'component-empty-value': 'off' } });
+        assert.ok(!silenced.issues.some((issue) => issue.code === 'component-empty-value'));
+        const promoted = await design.inspect({ severity: { 'component-empty-value': 'error' } });
+        assert.equal(promoted.issues.find((issue) => issue.code === 'component-empty-value')?.severity, 'error');
         await assert.rejects(
             design.inspect({ checks: ['drc'] }),
             (error: unknown) => error instanceof OpenEDAError && error.code === 'capability/not-implemented',

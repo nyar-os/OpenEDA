@@ -484,6 +484,40 @@ pub struct DeleteNetRequest {
     pub net: String,
 }
 
+/// Options of [`inspect_with_options`].
+///
+/// `severity` maps a finding code to `error`, `warning`, `info` or `off`, so a
+/// project can promote or silence one rule without changing the others.
+/// `waivers` move matching findings from `issues` to `waived`; a waiver with no
+/// `sheetId` or `objectId` matches the code everywhere.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InspectOptions {
+    /// Checks to run; every supported check runs when omitted.
+    #[serde(default)]
+    pub checks: Option<Vec<String>>,
+    /// Per-code severity overrides.
+    #[serde(default)]
+    pub severity: BTreeMap<String, String>,
+    /// Findings accepted for this run.
+    #[serde(default)]
+    pub waivers: Vec<Waiver>,
+}
+
+/// One accepted finding of [`inspect_with_options`].
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Waiver {
+    /// Finding code to waive, for example `erc/unconnected-pin`.
+    pub code: String,
+    /// Restrict the waiver to one sheet id.
+    #[serde(default)]
+    pub sheet_id: Option<String>,
+    /// Restrict the waiver to one object id.
+    #[serde(default)]
+    pub object_id: Option<String>,
+}
+
 /// What this build can actually do.
 ///
 /// The matrix is the single source of truth for the CLI, the SDK and the
@@ -720,24 +754,86 @@ struct DocumentFile<'a> {
 
 /// Runs the requested rule checks on one open design.
 pub fn inspect(handle: u64, checks: Option<Vec<String>>) -> Result<Value, ServiceError> {
-    let design = with_session(handle, |session| Ok(session.design.clone()))?;
-    let selected = checks.unwrap_or_else(|| SUPPORTED_CHECKS.iter().map(|name| (*name).to_string()).collect());
-    for check in &selected {
-        if !INSPECT_CHECKS.contains(&check.as_str()) {
-            return Err(not_implemented(&format!("inspect check `{check}`")));
+    inspect_with_options(handle, InspectOptions { checks, ..InspectOptions::default() })
+}
+
+/// Runs the requested rule checks with severity overrides and waivers.
+///
+/// A `severity` entry of `off` drops the finding, the other levels replace it,
+/// and a matching waiver moves the finding from `issues` to `waived`. `passed`
+/// only considers active errors, so an accepted or demoted finding never fails
+/// the report.
+pub fn inspect_with_options(handle: u64, options: InspectOptions) -> Result<Value, ServiceError> {
+    for (code, level) in &options.severity {
+        if code.trim().is_empty() {
+            return Err(ServiceError::new("session/argument-invalid", "a severity override needs a finding code"));
         }
-        if !SUPPORTED_CHECKS.contains(&check.as_str()) {
+        if !matches!(level.as_str(), "error" | "warning" | "info" | "off") {
+            return Err(ServiceError::new(
+                "session/argument-invalid",
+                format!("severity level `{level}` for `{code}` must be error, warning, info or off"),
+            ));
+        }
+    }
+    for waiver in &options.waivers {
+        if waiver.code.trim().is_empty() {
+            return Err(ServiceError::new("session/argument-invalid", "a waiver needs a finding code"));
+        }
+    }
+    let design = with_session(handle, |session| Ok(session.design.clone()))?;
+    let selected = options.checks.unwrap_or_else(|| SUPPORTED_CHECKS.iter().map(|name| (*name).to_string()).collect());
+    for check in &selected {
+        if !INSPECT_CHECKS.contains(&check.as_str()) || !SUPPORTED_CHECKS.contains(&check.as_str()) {
             return Err(not_implemented(&format!("inspect check `{check}`")));
         }
     }
-    let issues = inspect_design(&design, &selected);
-    let passed = !issues.iter().any(|issue| issue["severity"] == "error");
+    let found = inspect_design(&design, &selected);
+    let mut active = Vec::new();
+    let mut waived = Vec::new();
+    for mut issue in found {
+        let code = issue["code"].as_str().unwrap_or("").to_string();
+        if let Some(level) = options.severity.get(&code) {
+            if level == "off" {
+                continue;
+            }
+            issue["severity"] = json!(level);
+        }
+        if options.waivers.iter().any(|waiver| waiver_matches(waiver, &issue)) {
+            issue["waived"] = json!(true);
+            waived.push(issue);
+        }
+        else {
+            active.push(issue);
+        }
+    }
+    let passed = !active.iter().any(|issue| issue["severity"] == "error");
+    let counts = json!({ "active": active.len(), "waived": waived.len() });
     Ok(json!({
         "revision": design.revision,
         "checkerVersion": format!("open-eda-erc/{}", env!("CARGO_PKG_VERSION")),
         "passed": passed,
-        "issues": issues,
+        "issues": active,
+        "waived": waived,
+        "counts": counts,
     }))
+}
+
+/// Whether one waiver accepts one finding.
+fn waiver_matches(waiver: &Waiver, issue: &Value) -> bool {
+    if issue["code"].as_str() != Some(waiver.code.as_str()) {
+        return false;
+    }
+    if let Some(sheet_id) = &waiver.sheet_id
+        && issue["sheetId"].as_str() != Some(sheet_id.as_str())
+    {
+        return false;
+    }
+    if let Some(object_id) = &waiver.object_id
+        && issue["objectId"].as_str() != Some(object_id.as_str())
+    {
+        return false;
+    }
+    true
 }
 
 /// Reads the summary of one open design.
@@ -3712,6 +3808,127 @@ mod tests {
         };
         let issues = inspect_design(&design, &["erc".to_string()]);
         assert!(issues.iter().any(|issue| issue["code"] == "duplicate-net-name" && issue["severity"] == "error"));
+    }
+
+    #[test]
+    fn inspection_applies_severity_overrides_and_waivers() {
+        let design = Design {
+            id: "design-1".to_string(),
+            title: None,
+            revision: 2,
+            units: "mm".to_string(),
+            sheets: vec![Sheet {
+                id: "sheet-1".to_string(),
+                name: "Sheet 1".to_string(),
+                components: vec![Component {
+                    id: "component-1".to_string(),
+                    reference: "U1".to_string(),
+                    value: "buffer".to_string(),
+                    footprint: String::new(),
+                    x: 0.0,
+                    y: 0.0,
+                    rotation: 0.0,
+                    pins: vec!["1".to_string(), "2".to_string(), "3".to_string(), "4".to_string()],
+                }],
+                nets: vec![
+                    Net {
+                        id: "net-1".to_string(),
+                        name: "VCC".to_string(),
+                        nodes: vec![
+                            Node { reference: "U1".to_string(), pin: "1".to_string() },
+                            Node { reference: "U1".to_string(), pin: "3".to_string() },
+                        ],
+                    },
+                    Net {
+                        id: "net-2".to_string(),
+                        name: "VCC".to_string(),
+                        nodes: vec![
+                            Node { reference: "U1".to_string(), pin: "2".to_string() },
+                            Node { reference: "U1".to_string(), pin: "4".to_string() },
+                        ],
+                    },
+                ],
+                wires: Vec::new(),
+                junctions: Vec::new(),
+                no_connects: Vec::new(),
+                texts: Vec::new(),
+            }],
+            buses: Vec::new(),
+            next_component: 2,
+            next_net: 3,
+            next_wire: 1,
+        };
+        let handle = insert_design(design);
+        let checks = Some(vec!["erc".to_string()]);
+
+        let demoted = inspect_with_options(
+            handle,
+            InspectOptions {
+                checks: checks.clone(),
+                severity: BTreeMap::from([
+                    ("duplicate-net-name".to_string(), "warning".to_string()),
+                    ("erc/duplicate-net-name".to_string(), "off".to_string()),
+                ]),
+                waivers: Vec::new(),
+            },
+        )
+        .expect("demote duplicate nets");
+        assert_eq!(demoted["passed"], true);
+        let active = demoted["issues"].as_array().expect("issues");
+        assert_eq!(active.len(), 1);
+        assert!(active.iter().all(|issue| issue["code"] == "duplicate-net-name"));
+        assert!(active.iter().all(|issue| issue["severity"] == "warning"));
+        assert_eq!(demoted["waived"], json!([]));
+        assert_eq!(demoted["counts"], json!({ "active": 1, "waived": 0 }));
+
+        let waived = inspect_with_options(
+            handle,
+            InspectOptions {
+                checks: checks.clone(),
+                severity: BTreeMap::new(),
+                waivers: vec![
+                    Waiver { code: "duplicate-net-name".to_string(), sheet_id: None, object_id: Some("net-2".to_string()) },
+                    Waiver { code: "erc/duplicate-net-name".to_string(), sheet_id: None, object_id: Some("net-2".to_string()) },
+                ],
+            },
+        )
+        .expect("waive one object");
+        assert_eq!(waived["issues"], json!([]));
+        assert_eq!(waived["passed"], true);
+        let accepted = waived["waived"].as_array().expect("waived");
+        assert_eq!(accepted.len(), 2);
+        assert!(accepted.iter().all(|issue| issue["objectId"] == "net-2"));
+        assert!(accepted.iter().all(|issue| issue["waived"] == true));
+        assert_eq!(waived["counts"], json!({ "active": 0, "waived": 2 }));
+
+        let silenced = inspect_with_options(
+            handle,
+            InspectOptions {
+                checks: checks.clone(),
+                severity: BTreeMap::from([
+                    ("duplicate-net-name".to_string(), "off".to_string()),
+                    ("erc/duplicate-net-name".to_string(), "off".to_string()),
+                ]),
+                waivers: Vec::new(),
+            },
+        )
+        .expect("silence duplicate nets");
+        assert_eq!(silenced["issues"], json!([]));
+        assert_eq!(silenced["waived"], json!([]));
+        assert_eq!(silenced["counts"], json!({ "active": 0, "waived": 0 }));
+        assert_eq!(silenced["passed"], true);
+
+        let invalid = inspect_with_options(
+            handle,
+            InspectOptions {
+                checks,
+                severity: BTreeMap::from([("duplicate-net-name".to_string(), "loud".to_string())]),
+                waivers: Vec::new(),
+            },
+        )
+        .unwrap_err();
+        assert_eq!(invalid.code, "session/argument-invalid");
+        close(handle).expect("close");
     }
 
     #[test]

@@ -439,6 +439,8 @@ export interface InspectIssue {
     readonly objectId?: ObjectId;
     readonly recoverable: boolean;
     readonly message: string;
+    /** True only on findings returned in `InspectReport.waived`. */
+    readonly waived?: boolean;
 }
 
 /** Result of `design.inspect()`. Rules only, never an aesthetic score. */
@@ -446,12 +448,35 @@ export interface InspectReport {
     readonly revision: number;
     readonly checkerVersion: string;
     readonly passed: boolean;
+    /** Active findings; accepted findings are in `waived`. */
     readonly issues: readonly InspectIssue[];
+    /** Findings a waiver accepted for this run. */
+    readonly waived: readonly InspectIssue[];
+    readonly counts: { readonly active: number; readonly waived: number };
+}
+
+/** Level one finding code may be promoted, demoted or silenced to. */
+export type InspectSeverity = 'error' | 'warning' | 'info' | 'off';
+
+/**
+ * One accepted finding.
+ *
+ * With no `sheetId` or `objectId` the waiver accepts the code everywhere on the
+ * design; each field narrows it to one sheet or object.
+ */
+export interface InspectWaiver {
+    readonly code: string;
+    readonly sheetId?: SheetId;
+    readonly objectId?: ObjectId;
 }
 
 /** Options of `design.inspect()`. */
 export interface InspectOptions {
     readonly checks?: readonly InspectCheck[];
+    /** Per-code severity overrides; `off` drops the finding. */
+    readonly severity?: Readonly<Record<string, InspectSeverity>>;
+    /** Findings accepted for this run; they move from `issues` to `waived`. */
+    readonly waivers?: readonly InspectWaiver[];
 }
 
 /** Options of `design.save()` (native document, not an exchange format). */
