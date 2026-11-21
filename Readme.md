@@ -19,13 +19,14 @@ reopens one `.oeda` document, runs ERC, net, connectivity, footprint and power
 checks, and writes netlist, SPICE, SVG, BOM, PDF, Markdown report and JSON
 document projections. It also exports and imports the same schematic subset as a KiCad
 6/7 schematic (`kicad_sch`): symbols, wires, junctions, no-connect flags, text
-annotations and net labels, including global and hierarchical labels. Editing covers components, nets (derive, disconnect, delete), wires,
-junctions and text (move and delete by index), sheet add/rename/delete, and
-undo/redo. The SDK and studio keep a bounded 32-step history per open handle. A
-session created with `history: 'sidecar'` additionally records each replaced
-document in `<file>.history.json`, which is how the CLI makes undo/redo work
-across separate invocations. All entry points exercise the same model, so no one
-reports a different capability.
+annotations and net labels, including global and hierarchical labels. Editing
+covers components, nets (derive, disconnect, delete), design-level buses
+(declare, list, remove), wires, junctions and text (move and delete by index),
+sheet add/rename/delete, and undo/redo. The SDK and studio keep a bounded
+32-step history per open handle. A session created with `history: 'sidecar'`
+additionally records each replaced document in `<file>.history.json`, which is
+how the CLI makes undo/redo work across separate invocations. All entry points
+exercise the same model, so no one reports a different capability.
 
 The board engine and the interactive renderer are not implemented. DRC,
 clearance, KiCad board and Gerber exchange, drill output, footprint assignment
@@ -34,7 +35,7 @@ prints exactly which entries are supported.
 
 | Capability | Status | Notes |
 | --- | --- | --- |
-| `.oeda` create/open/save/edit | supported | sheets, components, nets, wires, junctions, text, undo/redo |
+| `.oeda` create/open/save/edit | supported | sheets, components, nets, buses, wires, junctions, text, undo/redo |
 | checks `erc`, `nets`, `connectivity`, `footprints`, `power` | supported | `drc` and `clearance` are unsupported |
 | export `net`, `spice`, `svg`, `bom`, `pdf`, `report`, `json`, `kicad_sch` | supported | read-only projections; `kicad_pcb` and `gbr` are unsupported |
 | import `kicad_sch` | supported | symbols, wires, junctions, no-connect flags, text and labels; other constructs are reported as loss entries |
@@ -49,6 +50,19 @@ sheet-local net labels and each occurrence adds a
 `{"code": "kicad/label-scope", "detail": "..."}` entry, because the document
 does not model cross-sheet label scope. Junctions, no-connect flags and text
 annotations are part of the subset and round-trip without a loss entry.
+
+ERC keeps the inspection codes stable: `erc/duplicate-pin` reports a component
+that declares one pin name twice, `erc/dangling-net` reports a declared net with
+no nodes, and `erc/duplicate-net-name`, `erc/single-node-net`,
+`erc/unconnected-pin` and `erc/floating-wire` report the remaining findings. The
+`nets` check reports `net-bus-member-collision` when a declared net has the same
+name as a member the bus expansion would write, so the netlist never emits one
+`NET` line twice.
+
+A bus is a design-level declaration, not a drawn bus wire. A bus named `DATA`
+with width 4 expands into the member nets `DATA0`..`DATA3` (name plus the 0-based
+index, no separator). A declared net with the bus name repeats its nodes into
+every member; a bus without such a net still lists its members, without nodes.
 
 The SPICE writer projects the schematic to a deterministic `.cir` netlist.
 Elements follow their reference prefix (`R`/`C`/`L` two-pin, `D` two-pin with a
@@ -78,6 +92,8 @@ await design.connectNet({ net: 'VCC', nodes: ['R1.1'] });
 await design.addJunction({ x: 55, y: 30 });
 await design.addText({ text: 'Revision A', x: 20, y: 12 });
 await design.addWire({ net: 'VCC', from: [40, 30], to: [70, 30] });
+await design.addBus({ name: 'DATA', width: 4 });
+const buses = await design.listBuses();
 
 await design.save({ target: 'blinker.oeda', overwrite: true });
 await design.export({ format: 'kicad_sch', target: 'blinker.kicad_sch' });
@@ -109,6 +125,9 @@ open-eda net disconnect blinker.oeda --net VCC --nodes C1.1
 open-eda net derive blinker.oeda
 open-eda net rename blinker.oeda --id VCC --name VIN
 open-eda net delete blinker.oeda --net VIN
+open-eda bus add blinker.oeda --name DATA --width 4
+open-eda bus list blinker.oeda
+open-eda bus remove blinker.oeda --id DATA
 open-eda component move blinker.oeda --ref R1 --x 50 --y 30 --rotation 90
 open-eda component update blinker.oeda --ref R1 --value 22k
 
@@ -150,8 +169,9 @@ open-eda gui
 ```
 
 A native document is UTF-8 JSON with the tag `open-eda-design` and version `1`.
-The netlist writer emits `# OpenEDA netlist v1`, then `NET <name>` followed by
-`NODE <ref>.<pin>` lines. The SPICE writer emits `* OpenEDA SPICE netlist v1`,
+The netlist writer emits `# OpenEDA netlist v1`, then `BUS <name> <width>` for
+every declared bus, then `NET <name>` followed by `NODE <ref>.<pin>` lines. The
+SPICE writer emits `* OpenEDA SPICE netlist v1`,
 one element line per component, `NC_<ref>_<pin>` nodes for open pins, and
 `.END`. The SVG writer draws a frame, wires, junctions, text annotations and
 component boxes with reference and value labels. The BOM writer groups
@@ -210,6 +230,8 @@ served by the desktop window and talks to the same operations over JSON-RPC.
   and arcs are reported as import losses instead of being reconstructed; global
   and hierarchical labels are flattened to sheet-local nets and reported as
   `kicad/label-scope`.
+- It models buses as design-level name and width declarations. It does not draw
+  bus wires or infer bus membership from schematic geometry.
 - It does not draw an interactive schematic or board, route, or check clearance.
 - It does not assign footprints or run DRC or clearance checks.
 - Connectivity and power checks analyse the schematic's wires and nets only;
