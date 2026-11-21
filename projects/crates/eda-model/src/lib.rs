@@ -255,7 +255,7 @@ pub struct Component {
     ///
     /// An empty map means no pin has been typed yet. The `electrical` check
     /// only reads pins listed here and ignores the rest.
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    #[serde(default, rename = "pinTypes", skip_serializing_if = "BTreeMap::is_empty")]
     pub pin_types: BTreeMap<String, PinType>,
 }
 
@@ -4996,6 +4996,11 @@ mod tests {
         )
         .expect("inspect");
         assert!(codes(&conflict).contains(&"erc/output-output-conflict".to_string()));
+        let listed = list_components(handle, None).expect("list components");
+        let u1 =
+            listed["components"].as_array().expect("components").iter().find(|component| component["ref"] == "U1").expect("U1");
+        assert_eq!(u1["pinTypes"]["1"], "output");
+        assert_eq!(u1["pinTypes"].get("2"), None);
 
         set("U2", "1", Some(PinType::Input));
         set("U1", "2", Some(PinType::PowerIn));
