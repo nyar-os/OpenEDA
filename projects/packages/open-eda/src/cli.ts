@@ -1749,6 +1749,53 @@ cli
         return 0;
     });
 
+const netlistCommand = cli.command('netlist', 'cli.cmd.netlist');
+
+netlistCommand
+    .command('import', 'cli.cmd.netlist-import')
+    .option('--out <file>', 'cli.opt.out')
+    .option('--overwrite', 'cli.opt.overwrite')
+    .actionCtx(async (options, _args, ctx) => {
+        const file = input(options);
+        if (file === undefined) {
+            ctx.fail('open-eda.cli.file-required', { message: 'a KiCad netlist is required' });
+            return 2;
+        }
+        const out = text(options, 'out');
+        if (out === undefined) {
+            ctx.fail('open-eda.cli.out-required', { message: '`--out <file>` is required' });
+            return 2;
+        }
+        if (fs.existsSync(out) && !flag(options, 'overwrite')) {
+            ctx.fail('format/invalid', { message: `\`${out}\` already exists; pass --overwrite to replace it` });
+            return 2;
+        }
+        const imported = await app.importKicadNet({ source: file, target: out });
+        const design = await withDesign(out, async (opened) => opened.summary);
+        ctx.emitResult(
+            { path: out, design, totals: imported.totals, losses: imported.losses },
+            `imported netlist ${file} -> ${out} revision=${design.revision} components=${imported.totals.components} nets=${imported.totals.nets} pins=${imported.totals.pins} losses=${imported.losses.length}`,
+        );
+        return 0;
+    });
+
+netlistCommand
+    .command('diff', 'cli.cmd.netlist-diff')
+    .actionCtx(async (options, _args, ctx) => {
+        const [file, netlist] = options._ ?? [];
+        if (file === undefined || netlist === undefined) {
+            ctx.fail('open-eda.cli.arguments-invalid', { message: 'a design document and a netlist are required' });
+            return 2;
+        }
+        const report = await withDesign(file, (design) => design.compareNetlist(netlist));
+        const counts = [
+            `components added=${report.components.added.length} removed=${report.components.removed.length} modified=${report.components.modified.length}`,
+            `nets added=${report.nets.added.length} removed=${report.nets.removed.length} modified=${report.nets.modified.length}`,
+        ].join(' ');
+        ctx.emitResult(report, `${report.equal ? 'netlist matches' : 'netlist differs from'} ${file}: ${counts} losses=${report.losses.length}`);
+        return 0;
+    });
+
 cli
     .command('import', 'cli.cmd.import')
     .option('--out <file>', 'cli.opt.out')

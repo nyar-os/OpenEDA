@@ -47,11 +47,13 @@ import type {
     JunctionInput,
     KicadImportOptions,
     KicadImportResult,
+    KicadNetImportResult,
     KicadSymbolImportResult,
     MoveComponentInput,
     Net,
     NetClass,
     NetClassInput,
+    NetlistDiffReport,
     NoConnect,
     NoConnectInput,
     OpenEDAOptions,
@@ -193,6 +195,27 @@ export class OpenEDA {
     async importKicadSymbol(source: string): Promise<KicadSymbolImportResult> {
         this.assertActive();
         return service.importKicadSymbol(source);
+    }
+
+    /**
+     * Imports a KiCad netlist from its text or a file path.
+     *
+     * A netlist carries components, values, footprints and nets with their
+     * `REF.PIN` nodes, but no placement, wires, labels or buses. Passing `target`
+     * writes the imported document as a native `.oeda` file.
+     */
+    async importKicadNet(options: KicadImportOptions): Promise<KicadNetImportResult> {
+        this.assertActive();
+        if (typeof options?.source !== 'string' || options.source.length === 0) {
+            throw new OpenEDAError('session/argument-invalid', '`source` must be netlist text or a file path');
+        }
+        const imported = service.importKicadNet(options.source);
+        if (options.target !== undefined) {
+            const history = await loadHistory();
+            history.writeDocument(options.target, imported.design);
+            history.clearHistory(options.target);
+        }
+        return imported;
     }
 
     /** Inspects an input without keeping a design handle. */
@@ -564,6 +587,12 @@ function attach(opened: service.DesignHandle, options: AttachOptions): Design {
         },
         async listComponentClasses(): Promise<readonly ComponentClassAssignment[]> {
             return service.listComponentClasses(handle).componentClasses;
+        },
+        async compareNetlist(source: string): Promise<NetlistDiffReport> {
+            if (typeof source !== 'string' || source.length === 0) {
+                throw new OpenEDAError('session/argument-invalid', '`source` must be netlist text or a file path');
+            }
+            return service.compareNetlist(handle, source);
         },
         async deleteJunction(index: number, deleteOptions?: { readonly sheet?: string }): Promise<void> {
             const result = await mutate(() => service.deleteJunction(handle, index, deleteOptions?.sheet));

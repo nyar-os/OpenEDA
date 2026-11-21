@@ -40,12 +40,14 @@ import type {
     Junction,
     JunctionInput,
     KicadImportResult,
+    KicadNetImportResult,
     KicadSymbolImportResult,
     MoveComponentInput,
     Net,
     NetClassInput,
     NetClassListResult,
     NetClassResult,
+    NetlistDiffReport,
     NoConnect,
     NoConnectInput,
     ReferencePrefixInput,
@@ -333,6 +335,26 @@ export function importKicadSch(source: string): KicadImportResult {
  */
 export function importKicadSymbol(source: string): KicadSymbolImportResult {
     return decode<KicadSymbolImportResult>(() => binding('import.kicadSymbol').import_kicad_symbol(source));
+}
+
+/**
+ * Imports a KiCad netlist.
+ *
+ * The result carries the imported document, its totals and every construct the
+ * reader could not represent; nothing is written to disk.
+ */
+export function importKicadNet(source: string): KicadNetImportResult {
+    return decode<KicadNetImportResult>(() => binding('import.kicadNet').import_kicad_net(source));
+}
+
+/**
+ * Compares one open design with a KiCad netlist.
+ *
+ * The design is the reference side, so an entry that exists only in the netlist
+ * is reported as added. Netlist losses are returned next to the report.
+ */
+export function compareNetlist(handle: number, source: string): NetlistDiffReport {
+    return decode<NetlistDiffReport>(() => binding('design.compareNetlist').design_compare_netlist(handle, source));
 }
 
 /**

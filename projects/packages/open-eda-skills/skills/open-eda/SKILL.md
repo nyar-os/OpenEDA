@@ -25,7 +25,8 @@ delete, and junction/text move and delete work in place. Design-level net classe
 declare trace width, clearance and via attributes and assign declared nets and
 buses to them. Reference prefix rules declare the expected designator prefix per
 component class and the `references` check reports violations with severities and
-waivers. Board layout, the
+waivers. A KiCad `.net` netlist imports into a new document and compares with an
+open one. Board layout, the
 interactive renderer, DRC and clearance checks, and KiCad board, Gerber and drill
 exchange are not implemented and report `capability/not-implemented`.
 
@@ -47,6 +48,8 @@ open-eda variant add <file.oeda> --name <name> [--dnp R1,R2] [--values R1=22k]
 open-eda variant list <file.oeda>
 open-eda variant remove <file.oeda> --name <name>
 open-eda import <file.kicad_sch> --out <file.oeda> [--overwrite]
+open-eda netlist import <file.net> --out <file.oeda> [--overwrite]
+open-eda netlist diff <file.oeda> <file.net>
 open-eda library <file.kicad_sym>
 open-eda undo <file.oeda>
 open-eda redo <file.oeda>
@@ -170,6 +173,25 @@ conflicts between `power_out` pins, or between a `power_out` and a logic
 `power/output-driver-conflict`). Roles are written
 into the KiCad library symbols and read back; an unknown imported type is a loss
 entry, not a guess.
+
+## KiCad netlist import and comparison
+
+`open-eda netlist import <file.net> --out <file.oeda>` reads a KiCad `.net`
+export: components contribute their reference, value and footprint; nets
+contribute their name and `REF.PIN` nodes, and those nodes are the only pin
+evidence a netlist carries, so unconnected pins are not invented. Components are
+laid out on a deterministic grid because a netlist has no placement, and no
+wires, junctions, labels or buses exist in the result. A node that names an
+undeclared component (`net/missing-component`), a repeated reference
+(`net/duplicate-reference`), a component without a reference
+(`net/missing-reference`) and a section outside the subset
+(`net/unsupported-element`) are reported as losses. `netlist diff <file.oeda>
+<file.net>` compares the design (reference side) with the netlist: components are
+matched by reference and compared by value and footprint, nets by name and their
+sorted `REF.PIN` node sets, and the report lists added, removed and modified
+entries plus netlist losses. Placement, wires and pin order are not compared
+because a netlist does not carry them. The same entry points are
+`OpenEDA.importKicadNet()` and `design.compareNetlist()` in the SDK.
 
 ## Reference annotation
 

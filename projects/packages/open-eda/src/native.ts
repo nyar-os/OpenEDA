@@ -25,6 +25,8 @@ export interface NativeBinding {
     design_export(handle: number, format: string, path: string, variant?: string): string;
     import_kicad_sch(source: string): string;
     import_kicad_symbol(source: string): string;
+    import_kicad_net(source: string): string;
+    design_compare_netlist(handle: number, source: string): string;
     diff_documents(left: string, right: string): string;
     design_close(handle: number): boolean;
     design_summary(handle: number): string;

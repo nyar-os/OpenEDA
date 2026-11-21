@@ -69,6 +69,17 @@ pub(crate) const MISSING_REFERENCE: &str = "kicad/missing-reference";
 pub(crate) const LABEL_SCOPE: &str = "kicad/label-scope";
 /// Loss code reported for a `.kicad_sym` construct the reader skips.
 pub(crate) const SYMBOL_UNSUPPORTED_ELEMENT: &str = "kicad_sym/unsupported-element";
+/// Loss code reported for a netlist section the reader does not import.
+pub(crate) const NET_UNSUPPORTED_ELEMENT: &str = "net/unsupported-element";
+/// Loss code reported when a netlist node names a component the netlist does not declare.
+pub(crate) const NET_MISSING_COMPONENT: &str = "net/missing-component";
+/// Loss code reported when two netlist components share one reference.
+pub(crate) const NET_DUPLICATE_REFERENCE: &str = "net/duplicate-reference";
+/// Loss code reported when a netlist component carries no reference designator.
+pub(crate) const NET_MISSING_REFERENCE: &str = "net/missing-reference";
+
+/// Netlist root children that carry no placed design object.
+const NET_STRUCTURAL_TAGS: &[&str] = &["version", "design", "libraries", "components", "nets"];
 
 /// Root tags of the schematic file that carry no design object.
 const STRUCTURAL_TAGS: &[&str] = &["version", "generator", "generator_version", "uuid", "paper", "lib_symbols", "title_block"];
@@ -518,6 +529,246 @@ pub(crate) fn import(text: &str) -> Result<(Design, Vec<Value>), ServiceError> {
         hierarchy,
     };
     Ok((design, losses))
+}
+
+/// Reads a KiCad 6/7 netlist and turns its components and nets into a design.
+///
+/// A netlist carries no placement, wires, junctions, labels or bus declarations,
+/// so the imported components are laid out on a deterministic grid and a net's
+/// nodes are the only evidence of its pins: an unconnected pin cannot appear in
+/// a netlist and is therefore not invented. A node that names an undeclared
+/// component, a duplicate reference and a component without a reference each add
+/// a structured loss instead of being dropped silently.
+pub(crate) fn import_net(text: &str) -> Result<(Design, Vec<Value>), ServiceError> {
+    let nodes = parse(text)?;
+    let root = nodes
+        .iter()
+        .find(|node| node.head() == Some("export"))
+        .ok_or_else(|| invalid("the file is not a KiCad netlist: no `(export ...)` root was found"))?;
+
+    let mut losses = Vec::new();
+    let mut components: Vec<Component> = Vec::new();
+    let mut references = HashSet::new();
+    if let Some(section) = root.find("components") {
+        for node in section.children().iter().filter(|node| node.head() == Some("comp")) {
+            let reference = child_text(node, "ref").unwrap_or("").trim().to_string();
+            if reference.is_empty() {
+                losses.push(loss(NET_MISSING_REFERENCE, "a netlist component without `(ref ...)` was skipped".to_string()));
+                continue;
+            }
+            if !references.insert(reference.clone()) {
+                losses.push(loss(
+                    NET_DUPLICATE_REFERENCE,
+                    format!("a netlist component repeats reference `{reference}` and was skipped"),
+                ));
+                continue;
+            }
+            let index = components.len();
+            components.push(Component {
+                id: String::new(),
+                reference,
+                value: child_text(node, "value").unwrap_or("").to_string(),
+                footprint: child_text(node, "footprint").unwrap_or("").to_string(),
+                x: 25.0 + (index % 8) as f64 * 25.0,
+                y: 25.0 + (index / 8) as f64 * 25.0,
+                rotation: 0.0,
+                pins: Vec::new(),
+                pin_types: BTreeMap::new(),
+            });
+        }
+    }
+
+    let mut nets: Vec<Net> = Vec::new();
+    if let Some(section) = root.find("nets") {
+        for node in section.children().iter().filter(|node| node.head() == Some("net")) {
+            let Some(name) = child_text(node, "name").map(str::trim).filter(|name| !name.is_empty())
+            else {
+                losses.push(loss(NET_UNSUPPORTED_ELEMENT, "a netlist net without a name was skipped".to_string()));
+                continue;
+            };
+            let net_index = match nets.iter().position(|net| net.name == name) {
+                Some(index) => index,
+                None => {
+                    nets.push(Net { id: String::new(), name: name.to_string(), nodes: Vec::new() });
+                    nets.len() - 1
+                }
+            };
+            for item in node.children().iter().filter(|item| item.head() == Some("node")) {
+                let reference = child_text(item, "ref").unwrap_or("").trim().to_string();
+                let pin = child_text(item, "pin").unwrap_or("").trim().to_string();
+                if reference.is_empty() || pin.is_empty() {
+                    losses.push(loss(
+                        NET_UNSUPPORTED_ELEMENT,
+                        format!("a node of net `{name}` without both `(ref ...)` and `(pin ...)` was skipped"),
+                    ));
+                    continue;
+                }
+                let Some(component) = components.iter_mut().find(|component| component.reference == reference)
+                else {
+                    losses.push(loss(
+                        NET_MISSING_COMPONENT,
+                        format!("net `{name}` references `{reference}`, which the netlist does not declare"),
+                    ));
+                    continue;
+                };
+                if !component.pins.iter().any(|entry| entry == &pin) {
+                    component.pins.push(pin.clone());
+                }
+                if !nets[net_index].nodes.iter().any(|node| node.reference == reference && node.pin == pin) {
+                    nets[net_index].nodes.push(NetNode { reference: reference.clone(), pin });
+                }
+            }
+        }
+    }
+
+    for node in root.children() {
+        match node.head() {
+            Some(tag) if NET_STRUCTURAL_TAGS.contains(&tag) => {}
+            Some(tag) => losses.push(loss(
+                NET_UNSUPPORTED_ELEMENT,
+                format!("netlist section `{tag}` is outside the imported subset and was skipped"),
+            )),
+            None => {}
+        }
+    }
+
+    for (index, component) in components.iter_mut().enumerate() {
+        component.id = format!("component-{}", index + 1);
+    }
+    for (index, net) in nets.iter_mut().enumerate() {
+        net.id = format!("net-{}", index + 1);
+    }
+
+    let component_count = components.len();
+    let net_count = nets.len();
+    let design = Design {
+        id: "design-1".to_string(),
+        title: None,
+        rev: String::new(),
+        company: String::new(),
+        date: String::new(),
+        revision: 1,
+        units: "mm".to_string(),
+        next_component: component_count as u64 + 1,
+        next_net: net_count as u64 + 1,
+        next_wire: 1,
+        sheets: vec![Sheet {
+            id: "sheet-1".to_string(),
+            name: "Sheet 1".to_string(),
+            components,
+            nets,
+            wires: Vec::new(),
+            junctions: Vec::new(),
+            no_connects: Vec::new(),
+            texts: Vec::new(),
+        }],
+        buses: Vec::new(),
+        variants: Vec::new(),
+        rules: crate::DesignRules::default(),
+        hierarchy: Vec::new(),
+    };
+    Ok((design, losses))
+}
+
+/// Compares an open design with a netlist-derived design.
+///
+/// Components are keyed by reference and compared by value and footprint; nets
+/// are keyed by name and compared by their `REF.PIN` node sets. The reference
+/// side is the design, so `added` means present only in the netlist, `removed`
+/// means present only in the design, and `modified` lists both values. Placement,
+/// wires and pin ordering are not part of the comparison because a netlist does
+/// not carry them.
+pub(crate) fn compare_net(design: &Design, imported: &Design) -> Value {
+    let left_components = net_components(design);
+    let right_components = net_components(imported);
+    let mut added_components = Vec::new();
+    let mut removed_components = Vec::new();
+    let mut modified_components = Vec::new();
+    for (reference, (value, footprint)) in &right_components {
+        match left_components.get(reference) {
+            None => added_components.push(json!({ "reference": reference, "value": value, "footprint": footprint })),
+            Some((left_value, left_footprint)) if left_value != value || left_footprint != footprint => {
+                modified_components.push(json!({
+                    "reference": reference,
+                    "changes": {
+                        "value": { "from": left_value, "to": value },
+                        "footprint": { "from": left_footprint, "to": footprint },
+                    },
+                }));
+            }
+            Some(_) => {}
+        }
+    }
+    for (reference, (value, footprint)) in &left_components {
+        if !right_components.contains_key(reference) {
+            removed_components.push(json!({ "reference": reference, "value": value, "footprint": footprint }));
+        }
+    }
+
+    let left_nets = net_membership(design);
+    let right_nets = net_membership(imported);
+    let mut added_nets = Vec::new();
+    let mut removed_nets = Vec::new();
+    let mut modified_nets = Vec::new();
+    for (name, nodes) in &right_nets {
+        match left_nets.get(name) {
+            None => added_nets.push(json!({ "name": name, "nodes": nodes })),
+            Some(left_nodes) if left_nodes != nodes => modified_nets.push(json!({
+                "name": name,
+                "addedNodes": nodes.difference(left_nodes).collect::<Vec<_>>(),
+                "removedNodes": left_nodes.difference(nodes).collect::<Vec<_>>(),
+            })),
+            Some(_) => {}
+        }
+    }
+    for (name, nodes) in &left_nets {
+        if !right_nets.contains_key(name) {
+            removed_nets.push(json!({ "name": name, "nodes": nodes }));
+        }
+    }
+
+    let equal = added_components.is_empty()
+        && removed_components.is_empty()
+        && modified_components.is_empty()
+        && added_nets.is_empty()
+        && removed_nets.is_empty()
+        && modified_nets.is_empty();
+    json!({
+        "format": "open-eda-netlist-diff",
+        "version": 1,
+        "equal": equal,
+        "components": {
+            "added": added_components,
+            "removed": removed_components,
+            "modified": modified_components,
+        },
+        "nets": {
+            "added": added_nets,
+            "removed": removed_nets,
+            "modified": modified_nets,
+        },
+    })
+}
+
+/// Flattens every sheet into reference -> (value, footprint) for comparison.
+fn net_components(design: &Design) -> BTreeMap<String, (String, String)> {
+    let mut components = BTreeMap::new();
+    for component in design.sheets.iter().flat_map(|sheet| sheet.components.iter()) {
+        components.insert(component.reference.clone(), (component.value.clone(), component.footprint.clone()));
+    }
+    components
+}
+
+/// Flattens every sheet into net name -> sorted `REF.PIN` node set.
+fn net_membership(design: &Design) -> BTreeMap<String, std::collections::BTreeSet<String>> {
+    let mut nets: BTreeMap<String, std::collections::BTreeSet<String>> = BTreeMap::new();
+    for net in design.sheets.iter().flat_map(|sheet| sheet.nets.iter()) {
+        let entry = nets.entry(net.name.clone()).or_default();
+        for node in &net.nodes {
+            entry.insert(format!("{}.{}", node.reference, node.pin));
+        }
+    }
+    nets
 }
 
 fn loss(code: &str, detail: String) -> Value {

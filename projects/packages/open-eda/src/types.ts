@@ -855,6 +855,75 @@ export interface KicadImportResult {
     readonly losses: readonly KicadImportLoss[];
 }
 
+/** Object counts of one imported KiCad netlist. */
+export interface KicadNetTotals {
+    readonly components: number;
+    readonly nets: number;
+    /** Pins recovered from net nodes; unconnected pins are not part of a netlist. */
+    readonly pins: number;
+}
+
+/** Result of `OpenEDA.importKicadNet()`. */
+export interface KicadNetImportResult {
+    readonly kind: 'net';
+    /** Imported document, validated against the native schema. */
+    readonly design: ImportedDesign;
+    readonly totals: KicadNetTotals;
+    /** Netlist constructs outside the imported subset. */
+    readonly losses: readonly KicadImportLoss[];
+}
+
+/** One component present on only one side of a netlist comparison. */
+export interface NetlistComponentEntry {
+    readonly reference: string;
+    readonly value: string;
+    readonly footprint: string;
+}
+
+/** One component whose value or footprint differs between design and netlist. */
+export interface NetlistComponentChange {
+    readonly reference: string;
+    readonly changes: {
+        readonly value: { readonly from: string; readonly to: string };
+        readonly footprint: { readonly from: string; readonly to: string };
+    };
+}
+
+/** One net present on only one side of a netlist comparison. */
+export interface NetlistNetEntry {
+    readonly name: string;
+    /** Sorted `REF.PIN` nodes. */
+    readonly nodes: readonly string[];
+}
+
+/** One net whose `REF.PIN` node set differs between design and netlist. */
+export interface NetlistNetChange {
+    readonly name: string;
+    /** Nodes present only in the netlist. */
+    readonly addedNodes: readonly string[];
+    /** Nodes present only in the design. */
+    readonly removedNodes: readonly string[];
+}
+
+/** Result of `design.compareNetlist()`, tagged `open-eda-netlist-diff`. */
+export interface NetlistDiffReport {
+    readonly format: 'open-eda-netlist-diff';
+    readonly version: number;
+    readonly equal: boolean;
+    readonly components: {
+        readonly added: readonly NetlistComponentEntry[];
+        readonly removed: readonly NetlistComponentEntry[];
+        readonly modified: readonly NetlistComponentChange[];
+    };
+    readonly nets: {
+        readonly added: readonly NetlistNetEntry[];
+        readonly removed: readonly NetlistNetEntry[];
+        readonly modified: readonly NetlistNetChange[];
+    };
+    /** Netlist constructs the importer could not represent. */
+    readonly losses: readonly KicadImportLoss[];
+}
+
 /** One pin of a symbol imported from a KiCad `.kicad_sym` library. */
 export interface KicadSymbolPin {
     /** Pin number, for example `1`. */
@@ -1094,6 +1163,13 @@ export interface Design {
     setComponentClass(input: ComponentClassInput): Promise<ComponentClassResult>;
     /** Lists component class assignments with their resolved references. */
     listComponentClasses(): Promise<readonly ComponentClassAssignment[]>;
+    /**
+     * Compares the design with a KiCad netlist.
+     *
+     * The design is the reference side: `added` entries exist only in the
+     * netlist and `removed` entries exist only in the design.
+     */
+    compareNetlist(source: string): Promise<NetlistDiffReport>;
     /** Deletes the junction at a 0-based index on a sheet. */
     deleteJunction(index: number, options?: { readonly sheet?: SheetId }): Promise<void>;
     /** Moves the junction at a 0-based index to a new placement. */

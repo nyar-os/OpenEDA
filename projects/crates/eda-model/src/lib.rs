@@ -116,11 +116,19 @@ const SPICE_OPEN_PIN: &str = "spice/open-pin";
 const SPICE_PIN_COUNT: &str = "spice/pin-count";
 
 /// Import sources this build actually reads.
-const SUPPORTED_IMPORTS: &[&str] = &["kicad_sch"];
+const SUPPORTED_IMPORTS: &[&str] = &["kicad_sch", "net"];
 
 /// Loss codes the KiCad schematic importer reports.
 const KICAD_LOSS_CODES: &[&str] =
     &[kicad::UNSUPPORTED_ELEMENT, kicad::DUPLICATE_REFERENCE, kicad::MISSING_REFERENCE, kicad::LABEL_SCOPE];
+
+/// Loss codes the KiCad netlist importer reports.
+const NET_LOSS_CODES: &[&str] = &[
+    kicad::NET_UNSUPPORTED_ELEMENT,
+    kicad::NET_DUPLICATE_REFERENCE,
+    kicad::NET_MISSING_REFERENCE,
+    kicad::NET_MISSING_COMPONENT,
+];
 
 /// Render targets this build actually renders for preview. Only `svg` is a
 /// preview projection; `pdf` is written by the export writer, not the preview.
@@ -921,7 +929,11 @@ pub fn capabilities() -> Value {
         let import = level(format!("format.{format}.import"));
         let edit = level(format!("format.{format}.edit"));
         let export = level(format!("format.{format}.export"));
-        let loss_codes = if SUPPORTED_IMPORTS.contains(&format) { json!(KICAD_LOSS_CODES) } else { json!([]) };
+        let loss_codes = match format {
+            "kicad_sch" => json!(KICAD_LOSS_CODES),
+            "net" => json!(NET_LOSS_CODES),
+            _ => json!([]),
+        };
         formats
             .insert(format.to_string(), json!({ "import": import, "edit": edit, "export": export, "lossCodes": loss_codes }));
     }
@@ -2868,6 +2880,46 @@ pub fn import_kicad_sch(text: &str) -> Result<Value, ServiceError> {
     let (design, losses) = kicad::import(text)?;
     validate_design(&design)?;
     Ok(json!({ "design": design, "losses": losses }))
+}
+
+/// Imports one KiCad netlist into a validated design document.
+///
+/// A netlist carries components, their value and footprint, and the nets with
+/// their `REF.PIN` nodes; it carries no placement, wires, labels or bus
+/// declarations. Components are laid out on a deterministic grid and every
+/// node contributes its pin, so an unconnected pin cannot be recovered. Each
+/// construct outside that subset is reported in `losses` with a stable code.
+/// The returned document is not written to disk.
+pub fn import_kicad_net(text: &str) -> Result<Value, ServiceError> {
+    let (design, losses) = kicad::import_net(text)?;
+    validate_design(&design)?;
+    let totals = json!({
+        "components": design.sheets.iter().map(|sheet| sheet.components.len()).sum::<usize>(),
+        "nets": design.sheets.iter().map(|sheet| sheet.nets.len()).sum::<usize>(),
+        "pins": design
+            .sheets
+            .iter()
+            .flat_map(|sheet| sheet.components.iter())
+            .map(|component| component.pins.len())
+            .sum::<usize>(),
+    });
+    Ok(json!({ "kind": "net", "design": design, "totals": totals, "losses": losses }))
+}
+
+/// Compares one open design with a KiCad netlist.
+///
+/// The design is the reference side: `added` entries exist only in the netlist,
+/// `removed` entries exist only in the design, and `modified` entries list the
+/// components whose value or footprint differs plus the nets whose `REF.PIN`
+/// node sets differ. Placement, wires and pin order are not compared because a
+/// netlist does not carry them. Netlist losses are returned next to the report.
+pub fn compare_kicad_net(handle: u64, text: &str) -> Result<Value, ServiceError> {
+    let (imported, losses) = kicad::import_net(text)?;
+    validate_design(&imported)?;
+    let design = with_session(handle, |session| Ok(session.design.clone()))?;
+    let mut report = kicad::compare_net(&design, &imported);
+    report["losses"] = json!(losses);
+    Ok(report)
 }
 
 /// Imports one KiCad `.kicad_sym` symbol library and reports its symbols.
@@ -5363,8 +5415,12 @@ mod tests {
             else {
                 "unsupported"
             };
-            let expected_import = if format == "kicad_sch" { "supported" } else { "unsupported" };
-            let expected_losses = if format == "kicad_sch" { json!(KICAD_LOSS_CODES) } else { json!([]) };
+            let expected_import = if matches!(format, "kicad_sch" | "net") { "supported" } else { "unsupported" };
+            let expected_losses = match format {
+                "kicad_sch" => json!(KICAD_LOSS_CODES),
+                "net" => json!(NET_LOSS_CODES),
+                _ => json!([]),
+            };
             assert_eq!(matrix["formats"][format]["import"], expected_import, "format {format}");
             assert_eq!(matrix["formats"][format]["edit"], "unsupported");
             assert_eq!(matrix["formats"][format]["export"], expected_export, "format {format}");
@@ -8473,6 +8529,117 @@ mod tests {
         .expect("clear assignment");
         assert_eq!(cleared["class"], Value::Null);
         assert_eq!(list_component_classes(handle).expect("list after clear")["componentClasses"], json!([]));
+        close(handle).expect("close");
+    }
+
+    const KICAD_NETLIST: &str = r#"(export (version "E")
+  (design (source "demo.kicad_sch"))
+  (components
+    (comp (ref "R1") (value "10k") (footprint "Resistor_SMD:R_0805"))
+    (comp (ref "C1") (value "100n") (footprint "Capacitor_SMD:C_0603"))
+  )
+  (nets
+    (net (code "1") (name "VCC")
+      (node (ref "R1") (pin "1"))
+      (node (ref "C1") (pin "1")))
+    (net (code "2") (name "GND")
+      (node (ref "R1") (pin "2"))
+      (node (ref "C1") (pin "2")))
+  )
+)"#;
+
+    fn declared_netlist_design(handle: u64) {
+        for (reference, value, footprint) in [("R1", "10k", "Resistor_SMD:R_0805"), ("C1", "100n", "Capacitor_SMD:C_0603")] {
+            add_component(
+                handle,
+                AddComponentRequest {
+                    sheet: None,
+                    reference: reference.to_string(),
+                    value: value.to_string(),
+                    x: 0.0,
+                    y: 0.0,
+                    rotation: 0.0,
+                    pins: vec!["1".to_string(), "2".to_string()],
+                },
+            )
+            .expect("add component");
+            set_component_footprint(
+                handle,
+                SetFootprintRequest { sheet: None, reference: reference.to_string(), footprint: footprint.to_string() },
+            )
+            .expect("set footprint");
+        }
+        for (net, nodes) in
+            [("VCC", vec!["R1.1".to_string(), "C1.1".to_string()]), ("GND", vec!["R1.2".to_string(), "C1.2".to_string()])]
+        {
+            connect_net(handle, ConnectNetRequest { sheet: None, net: net.to_string(), nodes }).expect("connect net");
+        }
+    }
+
+    #[test]
+    fn kicad_netlist_import_builds_a_design_that_compares_equal() {
+        let imported = import_kicad_net(KICAD_NETLIST).expect("import netlist");
+        assert_eq!(imported["kind"], "net");
+        assert_eq!(imported["totals"], json!({ "components": 2, "nets": 2, "pins": 4 }));
+        assert_eq!(imported["losses"], json!([]));
+        assert_eq!(imported["design"]["sheets"][0]["components"][0]["ref"], "R1");
+        assert_eq!(imported["design"]["sheets"][0]["components"][0]["pins"], json!(["1", "2"]));
+
+        let created = create(CreateRequest::default()).expect("create");
+        let handle = created["handle"].as_u64().expect("handle");
+        declared_netlist_design(handle);
+        let report = compare_kicad_net(handle, KICAD_NETLIST).expect("compare");
+        assert_eq!(report["format"], "open-eda-netlist-diff");
+        assert_eq!(report["equal"], true, "{report}");
+        assert_eq!(report["components"]["added"], json!([]));
+        assert_eq!(report["components"]["modified"], json!([]));
+        assert_eq!(report["nets"]["modified"], json!([]));
+        close(handle).expect("close");
+    }
+
+    #[test]
+    fn kicad_netlist_import_reports_losses_and_netlist_conflicts() {
+        let lossy = import_kicad_net(
+            r#"(export (version "E")
+  (components
+    (comp (ref "R1") (value "10k"))
+    (comp (ref "R1") (value "1k"))
+    (comp (value "no reference"))
+  )
+  (nets
+    (net (code "1") (name "VCC") (node (ref "R1") (pin "1")) (node (ref "U9") (pin "1")))
+  )
+  (unknown_section (value "x"))
+)"#,
+        )
+        .expect("import lossy netlist");
+        let codes: Vec<&str> =
+            lossy["losses"].as_array().expect("losses").iter().map(|loss| loss["code"].as_str().unwrap_or("")).collect();
+        assert!(codes.contains(&"net/duplicate-reference"));
+        assert!(codes.contains(&"net/missing-reference"));
+        assert!(codes.contains(&"net/missing-component"));
+        assert!(codes.contains(&"net/unsupported-element"));
+        assert_eq!(lossy["totals"]["components"], 1);
+        assert_eq!(lossy["totals"]["nets"], 1);
+
+        let created = create(CreateRequest::default()).expect("create");
+        let handle = created["handle"].as_u64().expect("handle");
+        declared_netlist_design(handle);
+        update_component(handle, UpdateComponentRequest { sheet: None, reference: "R1".to_string(), value: "12k".to_string() })
+            .expect("change value");
+        disconnect_net(handle, DisconnectNetRequest { sheet: None, net: "VCC".to_string(), nodes: vec!["C1.1".to_string()] })
+            .expect("drop a node");
+        connect_net(handle, ConnectNetRequest { sheet: None, net: "SIG".to_string(), nodes: vec!["R1.2".to_string()] })
+            .expect("add a local net");
+
+        let report = compare_kicad_net(handle, KICAD_NETLIST).expect("compare");
+        assert_eq!(report["equal"], false);
+        assert_eq!(report["components"]["modified"][0]["reference"], "R1");
+        assert_eq!(report["components"]["modified"][0]["changes"]["value"]["to"], "10k");
+        assert_eq!(report["nets"]["modified"][0]["name"], "VCC");
+        assert_eq!(report["nets"]["modified"][0]["addedNodes"], json!(["C1.1"]));
+        assert_eq!(report["nets"]["removed"][0]["name"], "SIG");
+        assert_eq!(import_kicad_net("(kicad_sch (version 20230121))").unwrap_err().code, "format/invalid");
         close(handle).expect("close");
     }
 
