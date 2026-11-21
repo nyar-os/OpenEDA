@@ -44,6 +44,9 @@ export interface NativeBinding {
     design_add_bus(handle: number, requestJson: string): string;
     design_remove_bus(handle: number, bus: string): string;
     design_list_buses(handle: number): string;
+    design_add_net_class(handle: number, requestJson: string): string;
+    design_remove_net_class(handle: number, netClass: string): string;
+    design_list_net_classes(handle: number): string;
     design_add_variant(handle: number, requestJson: string): string;
     design_remove_variant(handle: number, name: string): string;
     design_list_variants(handle: number): string;

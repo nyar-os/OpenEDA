@@ -424,6 +424,64 @@ export interface Variant {
     readonly values: Readonly<Record<string, string>>;
 }
 
+/**
+ * One net class: routing attributes shared by the nets and buses assigned to it.
+ *
+ * Width, clearance and via diameter use the design unit and are never converted.
+ * The model declares and assigns these attributes; it does not route with them.
+ */
+export interface NetClass {
+    readonly id: ObjectId;
+    readonly name: string;
+    /** Trace width; greater than zero. */
+    readonly width: number;
+    /** Clearance to neighbouring copper; zero means no declared requirement. */
+    readonly clearance: number;
+    /** Via diameter; zero means no via is declared. */
+    readonly via: number;
+    /** Assigned net names. */
+    readonly nets?: readonly string[];
+    /** Assigned buses, stored by canonical bus name. */
+    readonly buses?: readonly string[];
+}
+
+/** Input of `design.addNetClass()`; replaces a class with the same name. */
+export interface NetClassInput {
+    readonly name: string;
+    readonly width: number;
+    readonly clearance?: number;
+    readonly via?: number;
+    /** Net names assigned to the class; every name must already be declared. */
+    readonly nets?: readonly string[];
+    /** Bus names or aliases assigned to the class. */
+    readonly buses?: readonly string[];
+}
+
+/** Result of `design.addNetClass()`. */
+export interface NetClassResult {
+    readonly revision: number;
+    readonly design: DesignSummary;
+    readonly canUndo: boolean;
+    readonly canRedo: boolean;
+    readonly netClass: NetClass;
+}
+
+/** Result of `design.removeNetClass()`. */
+export interface DeleteNetClassResult {
+    readonly revision: number;
+    readonly design: DesignSummary;
+    readonly canUndo: boolean;
+    readonly canRedo: boolean;
+    readonly deleted: string;
+    readonly remaining: number;
+}
+
+/** Result of `design.listNetClasses()`. */
+export interface NetClassListResult {
+    readonly revision: number;
+    readonly netClasses: readonly NetClass[];
+}
+
 /** Input of `design.addVariant()`; replaces a variant with the same name. */
 export interface VariantInput {
     readonly name: string;
@@ -941,6 +999,12 @@ export interface Design {
     removeVariant(name: string): Promise<void>;
     /** Lists the BOM variants declared by the design. */
     listVariants(): Promise<readonly Variant[]>;
+    /** Declares or replaces a net class with routing attributes and net/bus assignments. */
+    addNetClass(input: NetClassInput): Promise<NetClass>;
+    /** Removes one net class by id or name. */
+    removeNetClass(netClass: ObjectId | string): Promise<void>;
+    /** Lists the net classes declared by the design. */
+    listNetClasses(): Promise<readonly NetClass[]>;
     /** Deletes the junction at a 0-based index on a sheet. */
     deleteJunction(index: number, options?: { readonly sheet?: SheetId }): Promise<void>;
     /** Moves the junction at a 0-based index to a new placement. */

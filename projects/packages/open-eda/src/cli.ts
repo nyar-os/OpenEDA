@@ -967,6 +967,100 @@ busCommand
         return 0;
     });
 
+const netClassCommand = cli.command('net-class', 'cli.cmd.net-class');
+
+netClassCommand
+    .command('add', 'cli.cmd.net-class-add')
+    .option('--name <name>', 'cli.opt.net-class-name')
+    .option('--width <number>', 'cli.opt.net-class-width')
+    .option('--clearance <number>', 'cli.opt.clearance')
+    .option('--via <number>', 'cli.opt.via')
+    .option('--nets <list>', 'cli.opt.nets')
+    .option('--buses <list>', 'cli.opt.buses')
+    .actionCtx(async (options, _args, ctx) => {
+        const file = input(options);
+        if (file === undefined) {
+            ctx.fail('open-eda.cli.file-required', { message: 'a design document is required' });
+            return 2;
+        }
+        const name = text(options, 'name');
+        const width = number(options, 'width');
+        const clearance = number(options, 'clearance');
+        const via = number(options, 'via');
+        if (
+            name === undefined ||
+            name.trim().length === 0 ||
+            width === undefined ||
+            Number.isNaN(width) ||
+            width <= 0 ||
+            (clearance !== undefined && (Number.isNaN(clearance) || clearance < 0)) ||
+            (via !== undefined && (Number.isNaN(via) || via < 0))
+        ) {
+            ctx.fail('open-eda.cli.arguments-invalid', {
+                message: '`--name` and a positive `--width` are required; `--clearance` and `--via` cannot be negative',
+            });
+            return 2;
+        }
+        const { netClass, saved } = await withDesign(file, async (design) => {
+            const netClass = await design.addNetClass({
+                name,
+                width,
+                clearance: clearance ?? 0,
+                via: via ?? 0,
+                nets: list(options, 'nets'),
+                buses: list(options, 'buses'),
+            });
+            return { netClass, saved: await savedReport(design) };
+        });
+        ctx.emitResult(
+            { ...saved, revision: saved.revision, netClass },
+            `declared net class ${netClass.name} width=${netClass.width} clearance=${netClass.clearance} via=${netClass.via} nets=${(netClass.nets ?? []).length} buses=${(netClass.buses ?? []).length} in ${file} revision=${saved.revision}`,
+        );
+        return 0;
+    });
+
+netClassCommand
+    .command('list', 'cli.cmd.net-class-list')
+    .actionCtx(async (options, _args, ctx) => {
+        const file = input(options);
+        if (file === undefined) {
+            ctx.fail('open-eda.cli.file-required', { message: 'a design document is required' });
+            return 2;
+        }
+        const netClasses = await withDesign(file, (design) => design.listNetClasses());
+        const lines = netClasses.map(
+            (netClass) =>
+                `${netClass.id} ${netClass.name} width=${netClass.width} clearance=${netClass.clearance} via=${netClass.via} nets=${(netClass.nets ?? []).join(',') || '-'} buses=${(netClass.buses ?? []).join(',') || '-'}`,
+        );
+        ctx.emitResult({ netClasses }, [`${netClasses.length} net class(es) in ${file}`, ...lines].join('\n'));
+        return 0;
+    });
+
+netClassCommand
+    .command('remove', 'cli.cmd.net-class-remove')
+    .option('--id <name>', 'cli.opt.net-class-id')
+    .actionCtx(async (options, _args, ctx) => {
+        const file = input(options);
+        if (file === undefined) {
+            ctx.fail('open-eda.cli.file-required', { message: 'a design document is required' });
+            return 2;
+        }
+        const netClass = text(options, 'id');
+        if (netClass === undefined || netClass.trim().length === 0) {
+            ctx.fail('open-eda.cli.arguments-invalid', { message: '`--id` is required' });
+            return 2;
+        }
+        const saved = await withDesign(file, async (design) => {
+            await design.removeNetClass(netClass);
+            return savedReport(design);
+        });
+        ctx.emitResult(
+            { ...saved, revision: saved.revision, deleted: netClass },
+            `removed net class ${netClass} from ${file} revision=${saved.revision}`,
+        );
+        return 0;
+    });
+
 const variantCommand = cli.command('variant', 'cli.cmd.variant');
 variantCommand
     .command('add', 'cli.cmd.variant-add')

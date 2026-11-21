@@ -24,7 +24,8 @@ use std::{
 use open_eda_model::{
     AddBusRequest, AddComponentRequest, AddJunctionRequest, AddNoConnectRequest, AddTextRequest, AddWireRequest,
     ConnectNetRequest, CreateRequest, DeleteNetRequest, DisconnectNetRequest, InspectOptions, MoveComponentRequest,
-    RenameNetRequest, ServiceError, SetFootprintRequest, SetPinTypeRequest, UpdateComponentRequest, UpdateDesignRequest,
+    NetClassRequest, RenameNetRequest, ServiceError, SetFootprintRequest, SetPinTypeRequest, UpdateComponentRequest,
+    UpdateDesignRequest,
 };
 use serde_json::{Value, json};
 use wae::{
@@ -400,6 +401,32 @@ fn design_list_variants(ctx: CallContext) -> Result<JsValue> {
 fn design_list_buses(ctx: CallContext) -> Result<JsValue> {
     let handle = handle(&ctx, 0)?;
     let report = open_eda_model::list_buses(handle).map_err(fail)?;
+    respond(&ctx, &report)
+}
+
+/// Declares or replaces one net class with its routing attributes and assignments.
+#[function]
+fn design_add_net_class(ctx: CallContext) -> Result<JsValue> {
+    let handle = handle(&ctx, 0)?;
+    let request: NetClassRequest = decode(serde_json::from_str(&text(&ctx, 1)?))?;
+    let report = open_eda_model::add_net_class(handle, request).map_err(fail)?;
+    respond(&ctx, &report)
+}
+
+/// Removes one net class by id or name.
+#[function]
+fn design_remove_net_class(ctx: CallContext) -> Result<JsValue> {
+    let handle = handle(&ctx, 0)?;
+    let net_class = text(&ctx, 1)?;
+    let report = open_eda_model::remove_net_class(handle, &net_class).map_err(fail)?;
+    respond(&ctx, &report)
+}
+
+/// Lists the net classes declared by one open design.
+#[function]
+fn design_list_net_classes(ctx: CallContext) -> Result<JsValue> {
+    let handle = handle(&ctx, 0)?;
+    let report = open_eda_model::list_net_classes(handle).map_err(fail)?;
     respond(&ctx, &report)
 }
 
@@ -1366,6 +1393,9 @@ register_module![
     design_add_bus,
     design_remove_bus,
     design_list_buses,
+    design_add_net_class,
+    design_remove_net_class,
+    design_list_net_classes,
     design_add_variant,
     design_remove_variant,
     design_list_variants,

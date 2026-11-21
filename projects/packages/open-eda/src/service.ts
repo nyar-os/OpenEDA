@@ -17,6 +17,7 @@ import type {
     ConnectNetInput,
     ConnectivityReport,
     DeleteNetInput,
+    DeleteNetClassResult,
     DesignCapabilities,
     DesignCreateOptions,
     DesignDiffInput,
@@ -38,6 +39,9 @@ import type {
     KicadSymbolImportResult,
     MoveComponentInput,
     Net,
+    NetClassInput,
+    NetClassListResult,
+    NetClassResult,
     NoConnect,
     NoConnectInput,
     RenameNetInput,
@@ -608,6 +612,35 @@ export function removeVariant(handle: number, name: string): DeleteBusResult {
 /** Lists the BOM variants declared by one open design. */
 export function listVariants(handle: number): VariantListResult {
     return decode<VariantListResult>(() => binding('design.listVariants').design_list_variants(handle));
+}
+
+/** Declares or replaces one net class. */
+export function addNetClass(handle: number, input: NetClassInput): NetClassResult {
+    return decode<NetClassResult>(() =>
+        binding('design.addNetClass').design_add_net_class(
+            handle,
+            JSON.stringify({
+                name: input.name,
+                width: input.width,
+                clearance: input.clearance ?? 0,
+                via: input.via ?? 0,
+                nets: [...(input.nets ?? [])],
+                buses: [...(input.buses ?? [])],
+            }),
+        ),
+    );
+}
+
+/** Removes one net class by id or name. */
+export function removeNetClass(handle: number, netClass: string): DeleteNetClassResult {
+    return decode<DeleteNetClassResult>(() =>
+        binding('design.removeNetClass').design_remove_net_class(handle, netClass),
+    );
+}
+
+/** Lists the net classes declared by one open design. */
+export function listNetClasses(handle: number): NetClassListResult {
+    return decode<NetClassListResult>(() => binding('design.listNetClasses').design_list_net_classes(handle));
 }
 
 /** Deletes the junction at a 0-based index on a sheet. */

@@ -698,6 +698,7 @@ mod tests {
             buses,
             variants: Vec::new(),
             hierarchy: Vec::new(),
+            rules: crate::DesignRules::default(),
             next_component: 1,
             next_net: 1,
             next_wire: 1,

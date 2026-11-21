@@ -47,6 +47,8 @@ import type {
     KicadSymbolImportResult,
     MoveComponentInput,
     Net,
+    NetClass,
+    NetClassInput,
     NoConnect,
     NoConnectInput,
     OpenEDAOptions,
@@ -523,6 +525,19 @@ function attach(opened: service.DesignHandle, options: AttachOptions): Design {
         async listVariants(): Promise<readonly Variant[]> {
             return service.listVariants(handle).variants;
         },
+        async addNetClass(input: NetClassInput): Promise<NetClass> {
+            assertNetClassInput(input);
+            const result = await mutate(() => service.addNetClass(handle, input));
+            current = result.design;
+            return result.netClass;
+        },
+        async removeNetClass(netClass: string): Promise<void> {
+            const result = await mutate(() => service.removeNetClass(handle, netClass));
+            current = result.design;
+        },
+        async listNetClasses(): Promise<readonly NetClass[]> {
+            return service.listNetClasses(handle).netClasses;
+        },
         async deleteJunction(index: number, deleteOptions?: { readonly sheet?: string }): Promise<void> {
             const result = await mutate(() => service.deleteJunction(handle, index, deleteOptions?.sheet));
             current = result.design;
@@ -629,8 +644,32 @@ function assertVariantInput(input: VariantInput): void {
     }
 }
 
-function assertPropertiesInput(properties: DesignPropertiesInput): void {
-    for (const key of ['title', 'rev', 'company', 'date'] as const) {
+function assertNetClassInput(input: NetClassInput): void {
+    if (typeof input?.name !== 'string' || input.name.trim().length === 0) {
+        throw new OpenEDAError('session/argument-invalid', '`name` must be a non-empty net class name');
+    }
+    if (typeof input.width !== 'number' || !Number.isFinite(input.width) || input.width <= 0) {
+        throw new OpenEDAError('session/argument-invalid', '`width` must be a finite number above zero');
+    }
+    for (const key of ['clearance', 'via'] as const) {
+        const value = input[key];
+        if (value !== undefined && (typeof value !== 'number' || !Number.isFinite(value) || value < 0)) {
+            throw new OpenEDAError('session/argument-invalid', `\`${key}\` must be a finite number that is not negative`);
+        }
+    }
+    for (const name of input.nets ?? []) {
+        if (typeof name !== 'string' || name.trim().length === 0) {
+            throw new OpenEDAError('session/argument-invalid', '`nets` must contain non-empty net names');
+        }
+    }
+    for (const name of input.buses ?? []) {
+        if (typeof name !== 'string' || name.trim().length === 0) {
+            throw new OpenEDAError('session/argument-invalid', '`buses` must contain non-empty bus names');
+        }
+    }
+}
+
+function assertPropertiesInput(properties: DesignPropertiesInput): void {    for (const key of ['title', 'rev', 'company', 'date'] as const) {
         const value = properties[key];
         if (value !== undefined && typeof value !== 'string') {
             throw new OpenEDAError('session/argument-invalid', `\`${key}\` must be a string`);

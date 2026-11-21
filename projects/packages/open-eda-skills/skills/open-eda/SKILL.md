@@ -21,7 +21,9 @@ per open handle, and the CLI mirrors it in a `<file>.history.json` sidecar so
 add/rename/delete, component move, update and delete, deterministic reference
 annotation, BOM variants with do-not-populate lists, no-connect flags that can
 mark a pin as deliberately open, net derive, disconnect and
-delete, and junction/text move and delete work in place. Board layout, the
+delete, and junction/text move and delete work in place. Design-level net classes
+declare trace width, clearance and via attributes and assign declared nets and
+buses to them. Board layout, the
 interactive renderer, DRC and clearance checks, and KiCad board, Gerber and drill
 exchange are not implemented and report `capability/not-implemented`.
 
@@ -60,6 +62,9 @@ open-eda net rename <file.oeda> --id <net> --name <new-name> [--sheet <sheet>]
 open-eda bus add <file.oeda> --name <name> --width <n> [--aliases D,E]
 open-eda bus list <file.oeda>
 open-eda bus remove <file.oeda> --id <bus>
+open-eda net-class add <file.oeda> --name <name> --width <n> [--clearance <n>] [--via <n>] [--nets VCC,GND] [--buses DATA]
+open-eda net-class list <file.oeda>
+open-eda net-class remove <file.oeda> --id <name>
 open-eda wire delete <file.oeda> --id <wire-id> [--sheet <sheet>]
 open-eda junction add <file.oeda> --x <n> --y <n> [--sheet <sheet>]
 open-eda junction move <file.oeda> --index <n> --x <n> --y <n> [--sheet <sheet>]
@@ -167,8 +172,22 @@ Net nodes are rewritten to the new references, and the command reports every
 `from`/`to` change. An already annotated design adds no revision. References
 without leading letters join the `U` group; the numerals in `TP_A` are replaced.
 
-## BOM variants and DNP
+## Net classes
 
+`open-eda net-class add` declares a design-level class with a trace width above
+zero, a clearance and a via diameter that default to zero, and optional net and
+bus assignments. Width, clearance and via use the design unit (`mm` or `mil`)
+verbatim; the model declares the attributes and never routes or checks clearance
+with them. Every assigned net must already be declared, every assigned bus must
+exist, and a bus alias is stored as its canonical bus name. Redeclaring a class
+replaces it as a whole and adds no revision when nothing changed.
+`net-class list` reports the declared classes. `net-class remove` drops one by
+id or name. Deleting a net, deleting a component that emptied a net, renaming a
+net and removing a bus keep the assignments consistent: the class follows a
+rename and loses a name the document no longer declares. Net classes appear in
+the `json` projection as `netClasses` and in the `report` projection as a table.
+
+## BOM variants and DNP
 `open-eda variant add` declares a design-level variant with `--dnp` (reference
 designators that are not populated) and `--values` (`ref=value` overrides). It
 replaces a variant with the same name. Every designator must already be placed;

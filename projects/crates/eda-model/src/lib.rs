@@ -252,6 +252,56 @@ pub struct Variant {
     pub values: BTreeMap<String, String>,
 }
 
+/// One net class: routing attributes shared by the nets and buses assigned to it.
+///
+/// A class belongs to the design, not to one sheet. Width, clearance and via
+/// diameter are stored in the design unit (`mm` or `mil`) and are never
+/// converted; a net name or bus name may belong to at most one class. The model
+/// only declares and assigns these attributes, it does not route or check
+/// clearance with them.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct NetClass {
+    /// Stable object identity, for example `net-class-1`.
+    pub id: String,
+    /// Class name, unique inside the design.
+    pub name: String,
+    /// Trace width; must be greater than zero.
+    #[serde(default)]
+    pub width: f64,
+    /// Clearance to neighbouring copper; zero means no declared requirement.
+    #[serde(default)]
+    pub clearance: f64,
+    /// Via diameter; zero means no via is declared for the class.
+    #[serde(default)]
+    pub via: f64,
+    /// Net names assigned to this class.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub nets: Vec<String>,
+    /// Declared bus names assigned to this class.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub buses: Vec<String>,
+}
+
+/// Design-wide rules carried by the document.
+///
+/// The bundle is absent from older documents, where every member defaults to
+/// empty. Rules never change the schematic itself: net classes declare routing
+/// attributes and reference-prefix rules declare the expected designator prefix
+/// per component class.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct DesignRules {
+    /// Declared net classes; absent when the design declares none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub net_classes: Vec<NetClass>,
+}
+
+impl DesignRules {
+    /// Whether the document declares no rule at all.
+    fn is_empty(&self) -> bool {
+        self.net_classes.is_empty()
+    }
+}
+
 /// Electrical role of one pin.
 ///
 /// The `electrical` inspection check reads these roles; an untyped pin is
@@ -480,6 +530,9 @@ pub struct Design {
     /// Hierarchical sheet symbols; absent in older documents.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub hierarchy: Vec<HierarchicalSheet>,
+    /// Design-wide rules such as net classes; absent in older documents.
+    #[serde(default, skip_serializing_if = "DesignRules::is_empty")]
+    pub rules: DesignRules,
     /// Next component number used to build deterministic object identities.
     pub next_component: u64,
     /// Next net number used to build deterministic object identities.
@@ -723,6 +776,31 @@ pub struct VariantRequest {
     pub values: BTreeMap<String, String>,
 }
 
+/// Request of [`add_net_class`].
+///
+/// A class with an existing name is replaced as a whole, so one request always
+/// describes its attributes and both assignment lists.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NetClassRequest {
+    /// Class name, for example `HighSpeed`.
+    pub name: String,
+    /// Trace width; must be greater than zero.
+    pub width: f64,
+    /// Clearance to neighbouring copper; zero means no declared requirement.
+    #[serde(default)]
+    pub clearance: f64,
+    /// Via diameter; zero means no via is declared for the class.
+    #[serde(default)]
+    pub via: f64,
+    /// Net names assigned to the class; every name must already be declared.
+    #[serde(default)]
+    pub nets: Vec<String>,
+    /// Declared bus names assigned to the class.
+    #[serde(default)]
+    pub buses: Vec<String>,
+}
+
 /// Request of [`delete_net`].
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -955,6 +1033,7 @@ pub fn create(request: CreateRequest) -> Result<Value, ServiceError> {
         }],
         buses: Vec::new(),
         variants: Vec::new(),
+        rules: DesignRules::default(),
         hierarchy: Vec::new(),
         next_component: 1,
         next_net: 1,
@@ -1296,6 +1375,9 @@ pub fn remove_bus(handle: u64, bus: &str) -> Result<Value, ServiceError> {
             .position(|entry| entry.id == bus || entry.name == bus || entry.aliases.iter().any(|alias| alias == bus))
             .ok_or_else(|| not_found(format!("no bus `{bus}` is declared")))?;
         let removed = design.buses.remove(position);
+        for net_class in &mut design.rules.net_classes {
+            net_class.buses.retain(|entry| entry != &removed.name);
+        }
         design.revision += 1;
         let mut payload = Map::new();
         payload.insert("deleted".to_string(), json!(removed.name));
@@ -1379,6 +1461,134 @@ pub fn list_variants(handle: u64) -> Result<Value, ServiceError> {
     with_session(handle, |session| Ok(json!({ "revision": session.design.revision, "variants": session.design.variants })))
 }
 
+/// Declares or replaces one net class.
+///
+/// The width must be a finite number greater than zero, and clearance and via
+/// diameter must be finite and not negative. Every assigned net must already be
+/// declared on some sheet and every assigned bus must be declared; an alias
+/// resolves to its bus name, so the class always stores the canonical name. A
+/// class with an existing name is replaced, an unchanged class adds no revision,
+/// and a name already used by another class in the same document cannot occur
+/// because names are the identity.
+pub fn add_net_class(handle: u64, request: NetClassRequest) -> Result<Value, ServiceError> {
+    let name = request.name.trim().to_string();
+    if name.is_empty() {
+        return Err(ServiceError::new("session/argument-invalid", "a net class name must not be empty"));
+    }
+    if breaks_net_grammar(&name) {
+        return Err(ServiceError::new(
+            "session/argument-invalid",
+            format!("net class name `{name}` contains whitespace or a control character"),
+        ));
+    }
+    if !request.width.is_finite() || request.width <= 0.0 {
+        return Err(ServiceError::new("session/argument-invalid", "a net class width must be a finite number above zero"));
+    }
+    if !request.clearance.is_finite() || request.clearance < 0.0 {
+        return Err(ServiceError::new(
+            "session/argument-invalid",
+            "net class clearance must be a finite number that is not negative",
+        ));
+    }
+    if !request.via.is_finite() || request.via < 0.0 {
+        return Err(ServiceError::new(
+            "session/argument-invalid",
+            "a net class via diameter must be a finite number that is not negative",
+        ));
+    }
+    mutate(handle, |design| {
+        let mut nets: Vec<String> = Vec::new();
+        for net in &request.nets {
+            let net = net.trim();
+            if net.is_empty() {
+                return Err(ServiceError::new("session/argument-invalid", "a net class assignment must not be empty"));
+            }
+            let declared = design.sheets.iter().any(|sheet| sheet.nets.iter().any(|entry| entry.name == net));
+            if !declared {
+                return Err(not_found(format!("net class `{name}` assigns undeclared net `{net}`")));
+            }
+            if !nets.iter().any(|entry| entry == net) {
+                nets.push(net.to_string());
+            }
+        }
+        let mut buses: Vec<String> = Vec::new();
+        for bus in &request.buses {
+            let bus = bus.trim();
+            if bus.is_empty() {
+                return Err(ServiceError::new("session/argument-invalid", "a bus class assignment must not be empty"));
+            }
+            let canonical = design
+                .buses
+                .iter()
+                .find(|entry| entry.name == bus || entry.aliases.iter().any(|alias| alias == bus))
+                .map(|entry| entry.name.clone())
+                .ok_or_else(|| not_found(format!("net class `{name}` assigns undeclared bus `{bus}`")))?;
+            if !buses.iter().any(|entry| entry == &canonical) {
+                buses.push(canonical);
+            }
+        }
+        let id = match design.rules.net_classes.iter().find(|entry| entry.name == name) {
+            Some(existing) => existing.id.clone(),
+            None => free_net_class_id(design),
+        };
+        let net_class = NetClass {
+            id,
+            name: name.clone(),
+            width: request.width,
+            clearance: request.clearance,
+            via: request.via,
+            nets,
+            buses,
+        };
+        let existing = design.rules.net_classes.iter().position(|entry| entry.name == name);
+        let changed = match existing {
+            Some(position) if design.rules.net_classes[position] == net_class => false,
+            Some(position) => {
+                design.rules.net_classes[position] = net_class.clone();
+                true
+            }
+            None => {
+                design.rules.net_classes.push(net_class.clone());
+                true
+            }
+        };
+        if changed {
+            design.revision += 1;
+        }
+        let mut payload = Map::new();
+        payload.insert("netClass".to_string(), json!(net_class));
+        Ok(payload)
+    })
+}
+
+/// Removes one net class selected by id or name.
+pub fn remove_net_class(handle: u64, net_class: &str) -> Result<Value, ServiceError> {
+    mutate(handle, |design| {
+        let position = design
+            .rules
+            .net_classes
+            .iter()
+            .position(|entry| entry.id == net_class || entry.name == net_class)
+            .ok_or_else(|| not_found(format!("no net class `{net_class}` is declared")))?;
+        let removed = design.rules.net_classes.remove(position);
+        design.revision += 1;
+        let mut payload = Map::new();
+        payload.insert("deleted".to_string(), json!(removed.name));
+        payload.insert("remaining".to_string(), json!(design.rules.net_classes.len()));
+        Ok(payload)
+    })
+}
+
+/// Lists the net classes declared by one design.
+pub fn list_net_classes(handle: u64) -> Result<Value, ServiceError> {
+    with_session(handle, |session| {
+        Ok(json!({
+            "revision": session.design.revision,
+            "netClasses": session.design.rules.net_classes,
+        }))
+    })
+}
+
 /// Adds one component to a sheet and returns the created object.
 pub fn add_component(handle: u64, request: AddComponentRequest) -> Result<Value, ServiceError> {
     if request.reference.trim().is_empty() {
@@ -1448,6 +1658,8 @@ pub fn delete_component(handle: u64, reference: &str, sheet: Option<&str>) -> Re
                 wire.net = None;
             }
         }
+        let dropped: Vec<String> = dropped.into_iter().collect();
+        prune_net_class_nets(design, &dropped);
         design.revision += 1;
         let mut payload = Map::new();
         payload.insert("deleted".to_string(), json!(reference));
@@ -1720,6 +1932,12 @@ pub fn rename_net(handle: u64, request: RenameNetRequest) -> Result<Value, Servi
                 wire.net = Some(name.clone());
             }
         }
+        for net_class in &mut design.rules.net_classes {
+            if net_class.nets.iter().any(|entry| entry == &previous) {
+                net_class.nets.retain(|entry| entry != &previous && entry != &name);
+                net_class.nets.push(name.clone());
+            }
+        }
         let net = sheet.nets[target].clone();
         design.revision += 1;
         let mut payload = Map::new();
@@ -1857,6 +2075,7 @@ pub fn delete_net(handle: u64, request: DeleteNetRequest) -> Result<Value, Servi
                 detached += 1;
             }
         }
+        prune_net_class_nets(design, std::slice::from_ref(&removed.name));
         design.revision += 1;
         let mut payload = Map::new();
         payload.insert("deleted".to_string(), json!(removed.name));
@@ -2391,6 +2610,7 @@ pub fn export_with_variant(handle: u64, format: &str, path: &Path, variant: Opti
                 "junctions": design.sheets.iter().map(|sheet| sheet.junctions.len()).sum::<usize>(),
                 "noConnects": design.sheets.iter().map(|sheet| sheet.no_connects.len()).sum::<usize>(),
                 "texts": design.sheets.iter().map(|sheet| sheet.texts.len()).sum::<usize>(),
+                "netClasses": design.rules.net_classes.len(),
             });
             (render_json_projection(&design)?, artifact)
         }
@@ -2592,6 +2812,32 @@ fn free_bus_id(design: &Design) -> String {
     }
 }
 
+/// Removes dropped net names from every net class assignment.
+///
+/// A class never keeps a net the document no longer declares, so deleting a net
+/// or a component that emptied it also detaches it from its class.
+fn prune_net_class_nets(design: &mut Design, dropped: &[String]) {
+    if dropped.is_empty() {
+        return;
+    }
+    for net_class in &mut design.rules.net_classes {
+        net_class.nets.retain(|net| !dropped.iter().any(|name| name == net));
+    }
+}
+
+/// Picks a free `net-class-N` identity without adding a document counter field.
+fn free_net_class_id(design: &Design) -> String {
+    let used: HashSet<&str> = design.rules.net_classes.iter().map(|entry| entry.id.as_str()).collect();
+    let mut counter = design.rules.net_classes.len() + 1;
+    loop {
+        let candidate = format!("net-class-{counter}");
+        if !used.contains(candidate.as_str()) {
+            return candidate;
+        }
+        counter += 1;
+    }
+}
+
 fn validate_design(design: &Design) -> Result<(), ServiceError> {
     if design.id.trim().is_empty() {
         return Err(invalid("the design id must not be empty"));
@@ -2643,6 +2889,55 @@ fn validate_design(design: &Design) -> Result<(), ServiceError> {
         }
         if !variant_names.insert(variant.name.clone()) {
             return Err(invalid(format!("variant name `{}` appears more than once", variant.name)));
+        }
+    }
+    let mut net_class_ids = HashSet::new();
+    let mut net_class_names = HashSet::new();
+    for net_class in &design.rules.net_classes {
+        if !net_class_ids.insert(net_class.id.clone()) {
+            return Err(invalid(format!("net class id `{}` appears more than once", net_class.id)));
+        }
+        if net_class.name.trim().is_empty() {
+            return Err(invalid(format!("net class `{}` has an empty name", net_class.id)));
+        }
+        if breaks_net_grammar(&net_class.name) {
+            return Err(invalid(format!("net class name `{}` contains whitespace or a control character", net_class.name)));
+        }
+        if !net_class_names.insert(net_class.name.clone()) {
+            return Err(invalid(format!("net class name `{}` appears more than once", net_class.name)));
+        }
+        if !net_class.width.is_finite() || net_class.width <= 0.0 {
+            return Err(invalid(format!("net class `{}` has a width that is not a positive number", net_class.name)));
+        }
+        if !net_class.clearance.is_finite() || net_class.clearance < 0.0 {
+            return Err(invalid(format!("net class `{}` has a negative clearance", net_class.name)));
+        }
+        if !net_class.via.is_finite() || net_class.via < 0.0 {
+            return Err(invalid(format!("net class `{}` has a negative via diameter", net_class.name)));
+        }
+        let mut assigned_nets = HashSet::new();
+        for net in &net_class.nets {
+            if net.trim().is_empty() {
+                return Err(invalid(format!("net class `{}` assigns an empty net name", net_class.name)));
+            }
+            if !assigned_nets.insert(net.as_str()) {
+                return Err(invalid(format!("net class `{}` assigns net `{net}` more than once", net_class.name)));
+            }
+            if !design.sheets.iter().any(|sheet| sheet.nets.iter().any(|entry| entry.name == *net)) {
+                return Err(invalid(format!("net class `{}` assigns undeclared net `{net}`", net_class.name)));
+            }
+        }
+        let mut assigned_buses = HashSet::new();
+        for bus in &net_class.buses {
+            if bus.trim().is_empty() {
+                return Err(invalid(format!("net class `{}` assigns an empty bus name", net_class.name)));
+            }
+            if !assigned_buses.insert(bus.as_str()) {
+                return Err(invalid(format!("net class `{}` assigns bus `{bus}` more than once", net_class.name)));
+            }
+            if !design.buses.iter().any(|entry| entry.name == *bus) {
+                return Err(invalid(format!("net class `{}` assigns undeclared bus `{bus}`", net_class.name)));
+            }
         }
     }
     let mut hierarchy_ids = HashSet::new();
@@ -4340,6 +4635,24 @@ fn render_report(design: &Design) -> (String, usize, usize) {
     }
     text.push('\n');
 
+    if !design.rules.net_classes.is_empty() {
+        sections += 1;
+        text.push_str("## Net classes\n\n| Class | Width | Clearance | Via | Nets | Buses |\n");
+        text.push_str("| --- | --- | --- | --- | --- | --- |\n");
+        for net_class in &design.rules.net_classes {
+            text.push_str(&format!(
+                "| {} | {} | {} | {} | {} | {} |\n",
+                markdown_cell(&net_class.name),
+                format_number(net_class.width),
+                format_number(net_class.clearance),
+                format_number(net_class.via),
+                markdown_cell(&net_class.nets.join(", ")),
+                markdown_cell(&net_class.buses.join(", ")),
+            ));
+        }
+        text.push('\n');
+    }
+
     sections += 1;
     text.push_str("## Nets\n");
     for sheet in &design.sheets {
@@ -4493,11 +4806,32 @@ fn render_json_projection(design: &Design) -> Result<String, ServiceError> {
         "units": design.units,
         "sheets": sheets,
         "hierarchy": hierarchy,
+        "netClasses": design
+            .rules
+            .net_classes
+            .iter()
+            .map(|net_class| json!({
+                "id": net_class.id,
+                "name": net_class.name,
+                "width": net_class.width,
+                "clearance": net_class.clearance,
+                "via": net_class.via,
+                "nets": net_class.nets,
+                "buses": net_class.buses,
+            }))
+            .collect::<Vec<_>>(),
     });
     let mut encoded = serde_json::to_string_pretty(&projection)
         .map_err(|error| invalid(format!("the JSON projection could not be encoded: {error}")))?;
     encoded.push('\n');
     Ok(encoded)
+}
+
+/// Formats a numeric attribute without redundant trailing zeros.
+fn format_number(value: f64) -> String {
+    let text = format!("{value:.4}");
+    let trimmed = text.trim_end_matches('0').trim_end_matches('.');
+    if trimmed.is_empty() || trimmed == "-0" { "0".to_string() } else { trimmed.to_string() }
 }
 
 fn severity_title(severity: &str) -> String {
@@ -5076,6 +5410,7 @@ mod tests {
             }],
             buses: Vec::new(),
             variants: Vec::new(),
+            rules: DesignRules::default(),
             hierarchy: Vec::new(),
             next_component: 3,
             next_net: 1,
@@ -5110,6 +5445,7 @@ mod tests {
             }],
             buses: Vec::new(),
             variants: Vec::new(),
+            rules: DesignRules::default(),
             hierarchy: Vec::new(),
             next_component: 1,
             next_net: 3,
@@ -5168,6 +5504,7 @@ mod tests {
             }],
             buses: Vec::new(),
             variants: Vec::new(),
+            rules: DesignRules::default(),
             hierarchy: Vec::new(),
             next_component: 2,
             next_net: 3,
@@ -5703,6 +6040,7 @@ mod tests {
             }],
             buses: Vec::new(),
             variants: Vec::new(),
+            rules: DesignRules::default(),
             hierarchy: Vec::new(),
             next_component: 2,
             next_net: 1,
@@ -5980,6 +6318,7 @@ mod tests {
             }],
             buses: Vec::new(),
             variants: Vec::new(),
+            rules: DesignRules::default(),
             hierarchy: Vec::new(),
             next_component: 1,
             next_net: 1,
@@ -6163,6 +6502,7 @@ mod tests {
             }],
             buses: Vec::new(),
             variants: Vec::new(),
+            rules: DesignRules::default(),
             hierarchy: vec![HierarchicalSheet {
                 id: "hierarchy-1".to_string(),
                 name: "Power".to_string(),
@@ -6853,6 +7193,7 @@ mod tests {
             }],
             buses: Vec::new(),
             variants: Vec::new(),
+            rules: DesignRules::default(),
             hierarchy: Vec::new(),
             next_component: 2,
             next_net: 3,
@@ -7240,6 +7581,7 @@ mod tests {
             }],
             buses: Vec::new(),
             variants: Vec::new(),
+            rules: DesignRules::default(),
             hierarchy: Vec::new(),
             next_component: 2,
             next_net: 2,
@@ -7306,6 +7648,7 @@ mod tests {
             }],
             buses: Vec::new(),
             variants: Vec::new(),
+            rules: DesignRules::default(),
             hierarchy: Vec::new(),
             next_component: 3,
             next_net: 2,
@@ -7359,6 +7702,7 @@ mod tests {
             }],
             buses: vec![Bus { id: "bus-1".to_string(), name: "DATA".to_string(), width: 4, aliases: Vec::new() }],
             variants: Vec::new(),
+            rules: DesignRules::default(),
             hierarchy: Vec::new(),
             next_component: 2,
             next_net: 2,
@@ -7417,6 +7761,7 @@ mod tests {
             }],
             buses: vec![Bus { id: "bus-1".to_string(), name: "DATA".to_string(), width: 4, aliases: vec!["D".to_string()] }],
             variants: Vec::new(),
+            rules: DesignRules::default(),
             hierarchy: Vec::new(),
             next_component: 2,
             next_net: 3,
@@ -7521,6 +7866,145 @@ mod tests {
         assert_eq!(removed["remaining"], 0);
         assert_eq!(list_buses(handle).expect("list again")["buses"], json!([]));
         assert_eq!(remove_bus(handle, "DATA").unwrap_err().code, "object/not-found");
+        close(handle).expect("close");
+    }
+
+    #[test]
+    fn net_classes_keep_attributes_and_follow_net_and_bus_edits() {
+        let created = create(CreateRequest::default()).expect("create");
+        let handle = created["handle"].as_u64().expect("handle");
+        add_component(
+            handle,
+            AddComponentRequest {
+                sheet: None,
+                reference: "R1".to_string(),
+                value: "10k".to_string(),
+                x: 0.0,
+                y: 0.0,
+                rotation: 0.0,
+                pins: vec!["1".to_string(), "2".to_string()],
+            },
+        )
+        .expect("add R1");
+        connect_net(handle, ConnectNetRequest { sheet: None, net: "VCC".to_string(), nodes: vec!["R1.1".to_string()] })
+            .expect("connect VCC");
+        connect_net(handle, ConnectNetRequest { sheet: None, net: "GND".to_string(), nodes: vec!["R1.2".to_string()] })
+            .expect("connect GND");
+        add_bus(handle, AddBusRequest { name: "DATA".to_string(), width: 4, aliases: vec!["D".to_string()] }).expect("add bus");
+
+        let added = add_net_class(
+            handle,
+            NetClassRequest {
+                name: "HighSpeed".to_string(),
+                width: 0.2,
+                clearance: 0.15,
+                via: 0.4,
+                nets: vec!["VCC".to_string(), "GND".to_string()],
+                buses: vec!["D".to_string()],
+            },
+        )
+        .expect("add net class");
+        assert_eq!(added["netClass"]["id"], "net-class-1");
+        assert_eq!(added["netClass"]["buses"], json!(["DATA"]), "an alias is stored as its canonical bus name");
+        let revision = added["revision"].as_u64().expect("revision");
+        let unchanged = add_net_class(
+            handle,
+            NetClassRequest {
+                name: "HighSpeed".to_string(),
+                width: 0.2,
+                clearance: 0.15,
+                via: 0.4,
+                nets: vec!["VCC".to_string(), "GND".to_string()],
+                buses: vec!["D".to_string()],
+            },
+        )
+        .expect("redeclare equal class");
+        assert_eq!(unchanged["revision"], revision, "an unchanged class adds no revision");
+
+        rename_net(handle, RenameNetRequest { sheet: None, net: "VCC".to_string(), name: "VCC_3V3".to_string() })
+            .expect("rename net");
+        let listed = list_net_classes(handle).expect("list net classes");
+        assert_eq!(listed["netClasses"][0]["nets"], json!(["GND", "VCC_3V3"]));
+        delete_net(handle, DeleteNetRequest { sheet: None, net: "GND".to_string() }).expect("delete net");
+        let listed = list_net_classes(handle).expect("list after net delete");
+        assert_eq!(listed["netClasses"][0]["nets"], json!(["VCC_3V3"]), "a deleted net leaves its class");
+        remove_bus(handle, "DATA").expect("remove bus");
+        let listed = list_net_classes(handle).expect("list after bus delete");
+        assert!(listed["netClasses"][0].get("buses").is_none(), "a removed bus leaves its class");
+
+        let removed = remove_net_class(handle, "HighSpeed").expect("remove class");
+        assert_eq!(removed["deleted"], "HighSpeed");
+        assert_eq!(removed["remaining"], 0);
+        close(handle).expect("close");
+    }
+
+    #[test]
+    fn net_class_declaration_rejects_bad_attributes_and_unknown_targets() {
+        let created = create(CreateRequest::default()).expect("create");
+        let handle = created["handle"].as_u64().expect("handle");
+        add_component(
+            handle,
+            AddComponentRequest {
+                sheet: None,
+                reference: "R1".to_string(),
+                value: "10k".to_string(),
+                x: 0.0,
+                y: 0.0,
+                rotation: 0.0,
+                pins: vec!["1".to_string()],
+            },
+        )
+        .expect("add R1");
+        connect_net(handle, ConnectNetRequest { sheet: None, net: "VCC".to_string(), nodes: vec!["R1.1".to_string()] })
+            .expect("connect VCC");
+        add_bus(handle, AddBusRequest { name: "DATA".to_string(), width: 2, aliases: Vec::new() }).expect("add bus");
+
+        let base = |name: &str, width: f64, clearance: f64, via: f64, nets: Vec<String>, buses: Vec<String>| NetClassRequest {
+            name: name.to_string(),
+            width,
+            clearance,
+            via,
+            nets,
+            buses,
+        };
+        assert_eq!(
+            add_net_class(handle, base("", 0.2, 0.0, 0.0, Vec::new(), Vec::new())).unwrap_err().code,
+            "session/argument-invalid",
+            "a class needs a name"
+        );
+        assert_eq!(
+            add_net_class(handle, base("Bad Name", 0.2, 0.0, 0.0, Vec::new(), Vec::new())).unwrap_err().code,
+            "session/argument-invalid",
+            "a class name cannot contain whitespace"
+        );
+        assert_eq!(
+            add_net_class(handle, base("Signal", 0.0, 0.0, 0.0, Vec::new(), Vec::new())).unwrap_err().code,
+            "session/argument-invalid",
+            "a width must be above zero"
+        );
+        assert_eq!(
+            add_net_class(handle, base("Signal", 0.2, -1.0, 0.0, Vec::new(), Vec::new())).unwrap_err().code,
+            "session/argument-invalid",
+            "clearance cannot be negative"
+        );
+        assert_eq!(
+            add_net_class(handle, base("Signal", 0.2, 0.0, -1.0, Vec::new(), Vec::new())).unwrap_err().code,
+            "session/argument-invalid",
+            "a via diameter cannot be negative"
+        );
+        assert_eq!(
+            add_net_class(handle, base("Signal", 0.2, 0.0, 0.0, vec!["NOPE".to_string()], Vec::new())).unwrap_err().code,
+            "object/not-found",
+            "a class cannot assign a net the document does not declare"
+        );
+        assert_eq!(
+            add_net_class(handle, base("Signal", 0.2, 0.0, 0.0, Vec::new(), vec!["NOPE".to_string()])).unwrap_err().code,
+            "object/not-found",
+            "a class cannot assign a bus the document does not declare"
+        );
+        let added = add_net_class(handle, base("Signal", 0.2, 0.0, 0.0, vec!["VCC".to_string()], vec!["DATA".to_string()]))
+            .expect("valid class");
+        assert_eq!(added["netClass"]["nets"], json!(["VCC"]));
         close(handle).expect("close");
     }
 
