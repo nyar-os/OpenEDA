@@ -37,7 +37,7 @@ open-eda connectivity <file.oeda>
 open-eda inspect <file.oeda> [--checks erc,electrical,nets,connectivity,footprints,power] [--severity code=level,...] [--waive code[@objectId|@sheetId/objectId],...]
 open-eda diff <left.oeda> <right.oeda>
 open-eda annotate <file.oeda>
-open-eda export <file.oeda> --format net|net_csv|spice|svg|bom|bom_json|bom_html|pdf|report|kicad_sch --out <file> [--variant <name>]
+open-eda export <file.oeda> --format net|net_csv|spice|spice_subckt|svg|bom|bom_json|bom_html|pdf|report|kicad_sch --out <file> [--variant <name>]
 open-eda variant add <file.oeda> --name <name> [--dnp R1,R2] [--values R1=22k]
 open-eda variant list <file.oeda>
 open-eda variant remove <file.oeda> --name <name>
@@ -225,6 +225,10 @@ a footprint and never claims a library part exists outside the document.
   needs it.
 - `spice` writes a deterministic `.cir` netlist; open pins become
   `NC_<ref>_<pin>` and are reported with `spice/open-pin`.
+- `spice_subckt` writes one `.SUBCKT <name> <ports>` block per sheet, with the
+  sheet's nets as ports and a `.ENDS <name>` terminator; names and ports are
+  legalized and unique, open pins use the same `NC_<ref>_<pin>` nodes, and the
+  file ends with `.END`.
 - `svg` writes a sheet frame, wires and component boxes with reference and value
   labels; the viewBox is derived from the placed geometry.
 - `bom` writes `Comment,Footprint,Designator,Quantity`, grouped by value and

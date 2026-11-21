@@ -59,6 +59,7 @@ const EXPORT_TARGETS: &[&str] = &[
     "net",
     "net_csv",
     "spice",
+    "spice_subckt",
     "gbr",
     "pdf",
     "svg",
@@ -71,7 +72,7 @@ const EXPORT_TARGETS: &[&str] = &[
 
 /// Export targets this build actually writes.
 const SUPPORTED_EXPORTS: &[&str] =
-    &["kicad_sch", "net", "net_csv", "spice", "svg", "pdf", "bom", "bom_json", "bom_html", "report", "json"];
+    &["kicad_sch", "net", "net_csv", "spice", "spice_subckt", "svg", "pdf", "bom", "bom_json", "bom_html", "report", "json"];
 
 /// Tag written into the deterministic JSON document projection.
 const JSON_PROJECTION_FORMAT: &str = "open-eda-projection";
@@ -2217,6 +2218,17 @@ pub fn export_with_variant(handle: u64, format: &str, path: &Path, variant: Opti
             });
             (contents, artifact)
         }
+        "spice_subckt" => {
+            let (contents, spice_losses) = render_spice_subcircuits(&design);
+            losses = spice_losses;
+            let artifact = json!({
+                "kind": "spice_subckt",
+                "subcircuits": design.sheets.len(),
+                "elements": design.sheets.iter().map(|sheet| sheet.components.len()).sum::<usize>(),
+                "nets": design.sheets.iter().map(|sheet| sheet.nets.len()).sum::<usize>(),
+            });
+            (contents, artifact)
+        }
         "svg" => {
             let artifact = json!({
                 "kind": "svg",
@@ -2318,7 +2330,7 @@ pub fn export_with_variant(handle: u64, format: &str, path: &Path, variant: Opti
         "editable": false,
         "artifact": artifact,
     });
-    if format == "spice" {
+    if format == "spice" || format == "spice_subckt" {
         report["losses"] = json!(losses);
     }
     Ok(report)
@@ -3537,6 +3549,78 @@ fn render_spice(design: &Design) -> (String, Vec<Value>) {
     (text, losses)
 }
 
+/// Projects one design to a deterministic SPICE subcircuit library plus its
+/// losses.
+///
+/// Every sheet becomes one `.SUBCKT <name> <ports>` block: the ports are the
+/// sheet's nets in declaration order, legalized once so a net never collides
+/// with another port. Component elements follow the same mapping as the flat
+/// SPICE writer, including the `NC_<ref>_<pin>` nodes and losses for open pins.
+/// Subcircuit names are derived from the sheet name and made unique, so two
+/// sheets can share a name without producing a duplicate definition.
+fn render_spice_subcircuits(design: &Design) -> (String, Vec<Value>) {
+    let mut losses = Vec::new();
+    let mut text = String::from("* OpenEDA SPICE subcircuits v1\n");
+    text.push_str(&format!("* design {} revision {}\n", design.id, design.revision));
+
+    let mut subcircuit_names: HashSet<String> = HashSet::new();
+    for sheet in &design.sheets {
+        let base = legal_node_name(&sheet.name);
+        let mut name = base.clone();
+        let mut suffix = 2;
+        while subcircuit_names.contains(&name) {
+            name = format!("{base}_{suffix}");
+            suffix += 1;
+        }
+        subcircuit_names.insert(name.clone());
+
+        let mut used: HashSet<String> = HashSet::new();
+        let mut net_names: HashMap<String, String> = HashMap::new();
+        for net in &sheet.nets {
+            if net_names.contains_key(&net.name) {
+                continue;
+            }
+            let base = legal_node_name(&net.name);
+            let mut port = base.clone();
+            let mut suffix = 2;
+            while used.contains(&port) {
+                port = format!("{base}_{suffix}");
+                suffix += 1;
+            }
+            used.insert(port.clone());
+            net_names.insert(net.name.clone(), port);
+        }
+        let mut seen: HashSet<String> = HashSet::new();
+        let ports = sheet
+            .nets
+            .iter()
+            .filter_map(|net| net_names.get(&net.name).cloned())
+            .filter(|port| seen.insert(port.clone()))
+            .collect::<Vec<_>>();
+
+        if ports.is_empty() {
+            text.push_str(&format!(".SUBCKT {name}\n"));
+        }
+        else {
+            text.push_str(&format!(".SUBCKT {name} {}\n", ports.join(" ")));
+        }
+        for component in &sheet.components {
+            let nodes = component
+                .pins
+                .iter()
+                .map(|pin| spice_pin_node(sheet, &net_names, &mut used, component, pin, &mut losses))
+                .collect::<Vec<_>>();
+            if let Some(line) = spice_element(component, &nodes, &mut losses) {
+                text.push_str(&line);
+                text.push('\n');
+            }
+        }
+        text.push_str(&format!(".ENDS {name}\n"));
+    }
+    text.push_str(".END\n");
+    (text, losses)
+}
+
 /// Resolves one component pin to its legal node name, inventing a stable NC node
 /// and a loss entry when the pin is not connected to a net.
 fn spice_pin_node(
@@ -4402,6 +4486,7 @@ mod tests {
         assert_eq!(matrix["exportTargets"]["net"], "supported");
         assert_eq!(matrix["exportTargets"]["net_csv"], "supported");
         assert_eq!(matrix["exportTargets"]["spice"], "supported");
+        assert_eq!(matrix["exportTargets"]["spice_subckt"], "supported");
         assert_eq!(matrix["exportTargets"]["svg"], "supported");
         assert_eq!(matrix["exportTargets"]["pdf"], "supported");
         assert_eq!(matrix["exportTargets"]["bom"], "supported");
@@ -5500,6 +5585,98 @@ mod tests {
         let text = fs::read_to_string(&path).expect("read spice");
         assert!(text.contains("R1 VCC NC_R1_2 10k\n"));
         assert!(text.contains("* design design-1 revision"));
+        close(handle).expect("close");
+    }
+
+    #[test]
+    fn spice_subcircuit_export_wraps_each_sheet_in_a_subckt() {
+        let dir = TempDir::new("spice-subckt");
+        let first = dir.join("library.cir");
+        let second = dir.join("library-again.cir");
+        let created =
+            create(CreateRequest { title: Some("Blinker".to_string()), rev: None, company: None, date: None, template: None })
+                .expect("create");
+        let handle = created["handle"].as_u64().expect("handle");
+        blinker(handle);
+        rename_sheet(handle, "sheet-1", "Main").expect("rename sheet");
+        add_sheet(handle, Some("Power")).expect("add sheet");
+        add_component(
+            handle,
+            AddComponentRequest {
+                sheet: Some("Power".to_string()),
+                reference: "R2".to_string(),
+                value: "1k".to_string(),
+                x: 0.0,
+                y: 0.0,
+                rotation: 0.0,
+                pins: vec!["1".to_string(), "2".to_string()],
+            },
+        )
+        .expect("add R2");
+        connect_net(
+            handle,
+            ConnectNetRequest { sheet: Some("Power".to_string()), net: "VIN".to_string(), nodes: vec!["R2.1".to_string()] },
+        )
+        .expect("connect VIN");
+
+        let report = export(handle, "spice_subckt", &first).expect("export spice_subckt");
+        assert_eq!(report["format"], "spice_subckt");
+        assert_eq!(report["artifact"]["kind"], "spice_subckt");
+        assert_eq!(report["artifact"]["subcircuits"], 2);
+        let losses = report["losses"].as_array().expect("losses");
+        assert_eq!(losses.len(), 1, "the open R2.2 pin is reported");
+        assert_eq!(losses[0]["code"], "spice/open-pin");
+
+        let text = fs::read_to_string(&first).expect("read spice subckt");
+        assert!(text.starts_with("* OpenEDA SPICE subcircuits v1\n"));
+        assert!(text.contains(".SUBCKT Main VCC GND\n"), "{text}");
+        assert!(text.contains("R1 VCC GND 10k\n"));
+        assert!(text.contains(".ENDS Main\n"));
+        assert!(text.contains(".SUBCKT Power VIN\n"));
+        assert!(text.contains("R2 VIN NC_R2_2 1k\n"));
+        assert!(text.contains(".ENDS Power\n"));
+        assert!(text.trim_end().ends_with(".END"));
+
+        export(handle, "spice_subckt", &second).expect("export again");
+        assert_eq!(text, fs::read_to_string(&second).expect("read second"), "export must be byte-stable");
+        close(handle).expect("close");
+    }
+
+    #[test]
+    fn spice_subcircuit_names_and_ports_stay_unique() {
+        let dir = TempDir::new("spice-subckt-duplicate");
+        let path = dir.join("duplicate.cir");
+        let created = create(CreateRequest::default()).expect("create");
+        let handle = created["handle"].as_u64().expect("handle");
+        rename_sheet(handle, "sheet-1", "A-B").expect("rename first sheet");
+        add_sheet(handle, Some("A_B")).expect("add second sheet");
+        for (sheet, reference) in [(None, "R1"), (Some("sheet-2".to_string()), "R2")] {
+            add_component(
+                handle,
+                AddComponentRequest {
+                    sheet,
+                    reference: reference.to_string(),
+                    value: "1k".to_string(),
+                    x: 0.0,
+                    y: 0.0,
+                    rotation: 0.0,
+                    pins: vec!["1".to_string(), "2".to_string()],
+                },
+            )
+            .expect("add component");
+        }
+        connect_net(handle, ConnectNetRequest { sheet: None, net: "A-B".to_string(), nodes: vec!["R1.1".to_string()] })
+            .expect("connect first net");
+        connect_net(
+            handle,
+            ConnectNetRequest { sheet: Some("sheet-2".to_string()), net: "A_B".to_string(), nodes: vec!["R2.1".to_string()] },
+        )
+        .expect("connect second net");
+
+        export(handle, "spice_subckt", &path).expect("export");
+        let text = fs::read_to_string(&path).expect("read");
+        assert!(text.contains(".SUBCKT A_B A_B\n"), "{text}");
+        assert!(text.contains(".SUBCKT A_B_2 A_B\n"), "{text}");
         close(handle).expect("close");
     }
 

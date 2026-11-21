@@ -69,6 +69,7 @@ export type ExportTarget =
     | 'net'
     | 'net_csv'
     | 'spice'
+    | 'spice_subckt'
     | 'gbr'
     | 'pdf'
     | 'svg'

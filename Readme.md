@@ -47,7 +47,7 @@ prints exactly which entries are supported.
 | reference annotation `annotate` | supported | renumbers per prefix by sheet and placement order; net nodes follow |
 | BOM variants and DNP | supported | named DNP designator lists and value overrides applied to `bom`/`bom_json` |
 | checks `erc`, `electrical`, `nets`, `connectivity`, `footprints`, `power` | supported | `drc` and `clearance` are unsupported |
-| export `net`, `net_csv`, `spice`, `svg`, `bom`, `bom_json`, `bom_html`, `pdf`, `report`, `json`, `kicad_sch` | supported | read-only projections; `kicad_pcb` and `gbr` are unsupported |
+| export `net`, `net_csv`, `spice`, `spice_subckt`, `svg`, `bom`, `bom_json`, `bom_html`, `pdf`, `report`, `json`, `kicad_sch` | supported | read-only projections; `kicad_pcb` and `gbr` are unsupported |
 | import `kicad_sch` | supported | symbols, wires, junctions, no-connect flags, text, labels, hierarchical sheet symbols and ports; other constructs are reported as loss entries |
 | KiCad board, Gerber, drill, STEP | unsupported | declared in the capability matrix only |
 | interactive schematic/board renderer | unsupported | the preview is an SVG projection |
@@ -143,7 +143,11 @@ Elements follow their reference prefix (`R`/`C`/`L` two-pin, `D` two-pin with a
 model, `Q`/`J` three-pin, `V`/`I` sources, `U`/`X` subcircuit calls, unknown
 prefixes as generic `X` elements). A pin without a net becomes a stable
 `NC_<ref>_<pin>` node and is reported with `spice/open-pin`, so it is never
-dropped silently.
+dropped silently. The `spice_subckt` writer wraps every sheet in one
+`.SUBCKT <name> <ports>` block, with the sheet's nets as ports and one
+`.ENDS <name>` terminator; subcircuit names and ports are legalized and made
+unique, and open pins become the same `NC_<ref>_<pin>` nodes with the same loss
+codes.
 
 Undo history is never written into the `.oeda` document. A session created with
 `history: 'sidecar'` keeps it beside the document in `<file>.history.json`;
@@ -259,6 +263,7 @@ open-eda component pin-type blinker.oeda U1 1 --clear
 open-eda export blinker.oeda --format net --out blinker.net
 open-eda export blinker.oeda --format net_csv --out blinker-nodes.csv
 open-eda export blinker.oeda --format spice --out blinker.cir
+open-eda export blinker.oeda --format spice_subckt --out blinker-lib.cir
 open-eda export blinker.oeda --format svg --out blinker.svg
 open-eda export blinker.oeda --format bom --out blinker.csv
 open-eda export blinker.oeda --format bom --variant lite --out blinker-lite.csv
@@ -283,7 +288,9 @@ every declared bus, then `NET <name>` followed by `NODE <ref>.<pin>` lines. The
 bus nets expanded into their member names and CSV quoting applied where needed.
 The SPICE writer emits `* OpenEDA SPICE netlist v1`,
 one element line per component, `NC_<ref>_<pin>` nodes for open pins, and
-`.END`. The SVG writer draws a frame, wires, junctions, text annotations and
+`.END`. The `spice_subckt` writer emits `* OpenEDA SPICE subcircuits v1`,
+one `.SUBCKT <name> <ports>` block and `.ENDS <name>` terminator per sheet,
+and a final `.END`. The SVG writer draws a frame, wires, junctions, text annotations and
 component boxes with reference and value labels. The BOM writer groups components by value and footprint and emits
 `Comment,Footprint,Designator,Quantity` with sorted designators compressed into
 inclusive ranges (`R5-R7` for three or more consecutive numbers). A BOM variant
