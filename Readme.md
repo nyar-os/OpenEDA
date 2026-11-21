@@ -54,7 +54,11 @@ annotations are part of the subset and round-trip without a loss entry.
 ERC keeps the inspection codes stable: `erc/duplicate-pin` reports a component
 that declares one pin name twice, `erc/dangling-net` reports a declared net with
 no nodes, and `erc/duplicate-net-name`, `erc/single-node-net`,
-`erc/unconnected-pin` and `erc/floating-wire` report the remaining findings. The
+`erc/unconnected-pin` and `erc/floating-wire` report the remaining findings.
+`erc/reference-illegal`, `erc/pin-name-illegal` and `erc/net-name-illegal` reject
+names that would break the `REF.PIN` node or `NET` line grammar the netlist and
+SPICE writers emit, so an illegal name fails inspection instead of producing an
+ambiguous file. The
 `nets` check reports `net-bus-member-collision` when a declared net has the same
 name as a member the bus expansion would write, so the netlist never emits one
 `NET` line twice.

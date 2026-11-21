@@ -88,6 +88,10 @@ of the design and is never written into `.oeda`.
 
 `erc` reports duplicate references, empty references, duplicate net names and net
 nodes that point at a missing component or pin, and warns about unconnected pins.
+It also rejects names that would break the writer grammar:
+`erc/reference-illegal` and `erc/pin-name-illegal` for whitespace or a dot inside
+a `REF.PIN` token, and `erc/net-name-illegal` for whitespace or control
+characters in a net name.
 `nets` reports floating wires, wires that name an undeclared net, single-node
 nets and empty sheets. `connectivity` groups wires by coincident endpoints,
 junctions and T-junctions, then reports `wire-net-conflict` (one error per group

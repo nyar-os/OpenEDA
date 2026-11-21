@@ -488,8 +488,9 @@ pub struct DeleteNetRequest {
 /// check is reported as unsupported. Design-level buses are edited through
 /// `add_bus`, `remove_bus` and `list_buses`, and ERC reports the stable codes
 /// `erc/duplicate-net-name`, `erc/duplicate-pin`, `erc/single-node-net`,
-/// `erc/dangling-net`, `erc/unconnected-pin` and `erc/floating-wire` next to the
-/// legacy codes. The `nets` check also reports `net-bus-member-collision` when a
+/// `erc/dangling-net`, `erc/unconnected-pin`, `erc/floating-wire`,
+/// `erc/reference-illegal`, `erc/pin-name-illegal` and `erc/net-name-illegal`
+/// next to the legacy codes. The `nets` check also reports `net-bus-member-collision` when a
 /// declared net would be written twice as a bus member. The JSON keys of this
 /// report are unchanged.
 pub fn capabilities() -> Value {
@@ -1879,6 +1880,22 @@ fn validate_design(design: &Design) -> Result<(), ServiceError> {
     Ok(())
 }
 
+/// Whether a reference or pin name breaks the `REF.PIN` node grammar.
+///
+/// The netlist and SPICE writers join a reference and a pin with a dot, so
+/// whitespace or a dot inside either token makes the node ambiguous.
+fn breaks_node_grammar(text: &str) -> bool {
+    text.chars().any(|character| character.is_whitespace() || character.is_control() || character == '.')
+}
+
+/// Whether a net name breaks the `NET <name>` line grammar.
+///
+/// A net name is written verbatim on one line, so whitespace or a control
+/// character would split the record.
+fn breaks_net_grammar(text: &str) -> bool {
+    text.chars().any(|character| character.is_whitespace() || character.is_control())
+}
+
 fn inspect_design(design: &Design, checks: &[String]) -> Vec<Value> {
     let mut issues = CheckReport::new();
     if checks.iter().any(|check| check == "erc") {
@@ -1920,6 +1937,34 @@ fn inspect_design(design: &Design, checks: &[String]) -> Vec<Value> {
                             format!("component `{}` declares pin `{pin}` more than once", component.reference),
                         ));
                     }
+                    if breaks_node_grammar(pin) {
+                        issues.push(issue(
+                            "erc/pin-name-illegal",
+                            "error",
+                            design.revision,
+                            &sheet.id,
+                            &component.id,
+                            true,
+                            format!(
+                                "component `{}` declares pin `{pin}`, which contains whitespace or a dot; `REF.PIN` nodes cannot carry it",
+                                component.reference
+                            ),
+                        ));
+                    }
+                }
+                if breaks_node_grammar(&component.reference) {
+                    issues.push(issue(
+                        "erc/reference-illegal",
+                        "error",
+                        design.revision,
+                        &sheet.id,
+                        &component.id,
+                        true,
+                        format!(
+                            "reference `{}` contains whitespace or a dot, so `REF.PIN` netlist nodes would be ambiguous",
+                            component.reference
+                        ),
+                    ));
                 }
             }
             let mut net_names = HashSet::new();
@@ -1946,6 +1991,20 @@ fn inspect_design(design: &Design, checks: &[String]) -> Vec<Value> {
                 }
             }
             for net in &sheet.nets {
+                if breaks_net_grammar(&net.name) {
+                    issues.push(issue(
+                        "erc/net-name-illegal",
+                        "error",
+                        design.revision,
+                        &sheet.id,
+                        &net.id,
+                        true,
+                        format!(
+                            "net name `{}` contains whitespace or a control character, so the `NET` line would not round-trip",
+                            net.name
+                        ),
+                    ));
+                }
                 if net.nodes.is_empty() {
                     issues.push(issue(
                         "erc/dangling-net",
@@ -4671,6 +4730,65 @@ mod tests {
         assert_eq!(dangling["severity"], "warning");
         assert!(dangling["message"].as_str().expect("message").contains("SPARE"));
         assert!(!issues.iter().any(|issue| issue["code"] == "erc/single-node-net"));
+    }
+
+    #[test]
+    fn inspection_rejects_names_that_break_the_node_and_net_grammar() {
+        let design = Design {
+            id: "design-1".to_string(),
+            title: None,
+            revision: 2,
+            units: "mm".to_string(),
+            sheets: vec![Sheet {
+                id: "sheet-1".to_string(),
+                name: "Sheet 1".to_string(),
+                components: vec![
+                    Component {
+                        id: "component-1".to_string(),
+                        reference: "R 1".to_string(),
+                        value: "1k".to_string(),
+                        footprint: String::new(),
+                        x: 0.0,
+                        y: 0.0,
+                        rotation: 0.0,
+                        pins: vec!["1".to_string(), "2".to_string()],
+                    },
+                    Component {
+                        id: "component-2".to_string(),
+                        reference: "U1".to_string(),
+                        value: "mcu".to_string(),
+                        footprint: String::new(),
+                        x: 10.0,
+                        y: 0.0,
+                        rotation: 0.0,
+                        pins: vec!["1.2".to_string()],
+                    },
+                ],
+                nets: vec![Net {
+                    id: "net-1".to_string(),
+                    name: "V CC".to_string(),
+                    nodes: vec![
+                        Node { reference: "R 1".to_string(), pin: "1".to_string() },
+                        Node { reference: "R 1".to_string(), pin: "2".to_string() },
+                    ],
+                }],
+                wires: Vec::new(),
+                junctions: Vec::new(),
+                no_connects: Vec::new(),
+                texts: Vec::new(),
+            }],
+            buses: Vec::new(),
+            next_component: 3,
+            next_net: 2,
+            next_wire: 1,
+        };
+
+        let issues = inspect_design(&design, &["erc".to_string()]);
+        for code in ["erc/reference-illegal", "erc/pin-name-illegal", "erc/net-name-illegal"] {
+            let finding = issues.iter().find(|issue| issue["code"] == code).unwrap_or_else(|| panic!("missing {code}"));
+            assert_eq!(finding["severity"], "error", "{code} severity");
+        }
+        assert_eq!(issues.iter().filter(|issue| issue["code"] == "erc/pin-name-illegal").count(), 1);
     }
 
     #[test]
