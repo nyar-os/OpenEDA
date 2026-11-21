@@ -542,7 +542,7 @@ busCommand
         }
         const buses = await withDesign(file, (design) => design.listBuses());
         const lines = buses.map((bus) => `${bus.id} ${bus.name} width=${bus.width}`);
-        ctx.emitResult({ buses }, [file, ...lines].join('\n'));
+        ctx.emitResult({ buses }, [`${buses.length} bus(es) in ${file}`, ...lines].join('\n'));
         return 0;
     });
 
