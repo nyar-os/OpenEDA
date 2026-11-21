@@ -9,6 +9,7 @@
 import { NotImplementedError, OpenEDAError, errorCodes, type OpenEDAErrorCode } from './errors.js';
 import { nativeBinding } from './native.js';
 import type {
+    AnnotateResult,
     Bus,
     BusInput,
     Component,
@@ -254,6 +255,11 @@ export function setPinType(handle: number, input: SetPinTypeInput): SetPinTypeRe
             }),
         ),
     );
+}
+
+/** Renumbers every reference designator of one open design. */
+export function annotate(handle: number): AnnotateResult {
+    return decode<AnnotateResult>(() => binding('design.annotate').design_annotate(handle));
 }
 
 /** Runs the requested rule checks on one open design. */

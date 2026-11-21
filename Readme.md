@@ -24,7 +24,7 @@ annotations, net labels, including global and hierarchical labels, and the
 title-block title, date, revision and company. Editing
 covers components, nets (derive, disconnect, delete), design-level buses
 (declare, list, remove), wires, junctions and text (move and delete by index),
-sheet add/rename/delete, and undo/redo. The SDK and studio keep a bounded
+sheet add/rename/delete, deterministic reference annotation, and undo/redo. The SDK and studio keep a bounded
 32-step history per open handle. A session created with `history: 'sidecar'`
 additionally records each replaced document in `<file>.history.json`, which is
 how the CLI makes undo/redo work across separate invocations. All entry points
@@ -40,6 +40,7 @@ prints exactly which entries are supported.
 | `.oeda` create/open/save/edit | supported | sheets, components, nets, buses, wires, junctions, text, title block, undo/redo |
 | design compare `diff` | supported | read-only report of added, removed and modified sheets, components, nets, wires and buses |
 | pin electrical types | supported | per-pin roles, the `electrical` check and the KiCad library pin types |
+| reference annotation `annotate` | supported | renumbers per prefix by sheet and placement order; net nodes follow |
 | checks `erc`, `electrical`, `nets`, `connectivity`, `footprints`, `power` | supported | `drc` and `clearance` are unsupported |
 | export `net`, `net_csv`, `spice`, `svg`, `bom`, `bom_json`, `pdf`, `report`, `json`, `kicad_sch` | supported | read-only projections; `kicad_pcb` and `gbr` are unsupported |
 | import `kicad_sch` | supported | symbols, wires, junctions, no-connect flags, text and labels; other constructs are reported as loss entries |
@@ -78,6 +79,12 @@ check only reads typed pins and reports `erc/input-input-conflict` and
 net. Pin roles are written into the KiCad library symbols and read back from
 them; a role the importer does not know is reported as an unsupported element
 instead of being guessed.
+
+Reference annotation is deterministic. `annotate` visits sheets in document
+order, then components top to bottom and left to right, and numbers each
+reference prefix from 1, so `R2 R1 C1` placed left to right becomes
+`R1 R2 C1`. Net nodes are rewritten to the new references, the report lists
+every `from`/`to` change, and an already annotated design keeps its revision.
 
 Inspection accepts per-code severity overrides and waivers. An override promotes,
 demotes or silences one finding code (`error`, `warning`, `info` or `off`); a
@@ -145,6 +152,7 @@ await design.addText({ text: 'Revision A', x: 20, y: 12 });
 await design.addWire({ net: 'VCC', from: [40, 30], to: [70, 30] });
 await design.addBus({ name: 'DATA', width: 4 });
 const buses = await design.listBuses();
+await design.annotate();
 
 await design.save({ target: 'blinker.oeda', overwrite: true });
 await design.setProperties({ rev: 'B' });
@@ -174,6 +182,9 @@ open-eda design set blinker.oeda --rev B --company "Acme"
 open-eda component add blinker.oeda --ref R1 --value 10k --x 40 --y 30 --pins 1,2
 open-eda component add blinker.oeda --ref C1 --value 100n --x 70 --y 30 --pins 1,2
 open-eda component footprint blinker.oeda --ref R1 --footprint Resistor_SMD:R_0805_2012Metric
+
+# Renumber reference designators by sheet and placement order
+open-eda annotate blinker.oeda
 
 # Connect pins to a net, then edit the objects
 open-eda net connect blinker.oeda --net VCC --nodes R1.1,C1.1

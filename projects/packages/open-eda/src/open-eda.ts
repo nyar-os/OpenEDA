@@ -14,6 +14,7 @@ import { OpenEDAError } from './errors.js';
 import type { DesignIntent } from './formats.js';
 import * as service from './service.js';
 import type {
+    AnnotateResult,
     Bus,
     BusInput,
     Component,
@@ -380,6 +381,11 @@ function attach(opened: service.DesignHandle, options: AttachOptions): Design {
         async setPinType(input: SetPinTypeInput): Promise<SetPinTypeResult> {
             assertPinTypeInput(input);
             const result = await mutate(() => service.setPinType(handle, input));
+            current = result.design;
+            return result;
+        },
+        async annotate(): Promise<AnnotateResult> {
+            const result = await mutate(() => service.annotate(handle));
             current = result.design;
             return result;
         },

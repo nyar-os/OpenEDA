@@ -382,6 +382,25 @@ export interface ComponentInput {
     readonly pins: readonly string[];
 }
 
+/** One reference designator moved by `design.annotate()`. */
+export interface AnnotateChange {
+    readonly sheetId: SheetId;
+    readonly componentId: ObjectId;
+    readonly from: string;
+    readonly to: string;
+}
+
+/** Result of `design.annotate()`. */
+export interface AnnotateResult {
+    readonly revision: number;
+    readonly design: DesignSummary;
+    readonly canUndo: boolean;
+    readonly canRedo: boolean;
+    /** Designators that changed; zero when the design was already annotated. */
+    readonly annotated: number;
+    readonly changes: readonly AnnotateChange[];
+}
+
 /** Input of `design.setPinType()`. */
 export interface SetPinTypeInput {
     readonly sheet?: SheetId;
@@ -759,6 +778,8 @@ export interface Design {
     setProperties(properties: DesignPropertiesInput): Promise<DesignPropertiesResult>;
     /** Assigns or clears the electrical role of one pin; omitted `pinType` clears it. */
     setPinType(input: SetPinTypeInput): Promise<SetPinTypeResult>;
+    /** Renumbers every reference designator by sheet and placement order; net nodes follow. */
+    annotate(): Promise<AnnotateResult>;
     /** Restores the snapshot taken before the newest edit. */
     undo(): Promise<HistoryResult>;
     /** Reapplies the snapshot the newest undo displaced. */

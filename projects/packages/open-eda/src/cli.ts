@@ -367,6 +367,23 @@ cli
         return 0;
     });
 
+cli.command('annotate', 'cli.cmd.annotate').actionCtx(async (options, _args, ctx) => {
+    const file = input(options);
+    if (file === undefined) {
+        ctx.fail('open-eda.cli.file-required', { message: 'a design document is required' });
+        return 2;
+    }
+    const { result, saved } = await withDesign(file, async (design) => {
+        const result = await design.annotate();
+        return { result, saved: await savedReport(design) };
+    });
+    ctx.emitResult(
+        { ...saved, revision: saved.revision, annotated: result.annotated, changes: result.changes },
+        `annotated ${result.annotated} component(s) in ${file} revision=${saved.revision}`,
+    );
+    return 0;
+});
+
 cli.command('open', 'cli.cmd.open').actionCtx(async (options, _args, ctx) => {
     const file = input(options);
     if (file === undefined) {

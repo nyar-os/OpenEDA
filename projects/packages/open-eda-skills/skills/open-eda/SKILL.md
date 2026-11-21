@@ -16,8 +16,9 @@ drawing revision, company and date) that `design set` edits and the KiCad writer
 reads and writes. The SDK keeps a bounded 32-step undo/redo history
 per open handle, and the CLI mirrors it in a `<file>.history.json` sidecar so
 `undo` and `redo` work across separate command invocations. Sheet
-add/rename/delete, component move, update and delete, net derive, disconnect and
-delete, and junction/text move and delete work in place. Board layout, the
+add/rename/delete, component move, update and delete, deterministic reference
+annotation, net derive, disconnect and delete, and junction/text move and
+delete work in place. Board layout, the
 interactive renderer, DRC and clearance checks, and KiCad board, Gerber and drill
 exchange are not implemented and report `capability/not-implemented`.
 
@@ -33,6 +34,7 @@ open-eda symbols <file.oeda>
 open-eda connectivity <file.oeda>
 open-eda inspect <file.oeda> [--checks erc,electrical,nets,connectivity,footprints,power] [--severity code=level,...] [--waive code[@objectId|@sheetId/objectId],...]
 open-eda diff <left.oeda> <right.oeda>
+open-eda annotate <file.oeda>
 open-eda export <file.oeda> --format net|net_csv|spice|svg|bom|bom_json|pdf|report|kicad_sch --out <file>
 open-eda import <file.kicad_sch> --out <file.oeda> [--overwrite]
 open-eda undo <file.oeda>
@@ -130,6 +132,14 @@ Pins may carry a role: `input`, `output`, `bidirectional`, `tri_state`,
 `erc/power-in-unpowered`; an untyped pin is never a finding. Roles are written
 into the KiCad library symbols and read back; an unknown imported type is a loss
 entry, not a guess.
+
+## Reference annotation
+
+`open-eda annotate <file.oeda>` renumbers every reference designator: sheets in
+document order, components top to bottom and left to right, each prefix from 1.
+Net nodes are rewritten to the new references, and the command reports every
+`from`/`to` change. An already annotated design adds no revision. References
+without leading letters join the `U` group; the numerals in `TP_A` are replaced.
 
 ## Drawing properties
 `title`, `rev`, `company` and `date` are design-wide title-block properties.

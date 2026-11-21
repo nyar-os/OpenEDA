@@ -19,6 +19,7 @@ export interface NativeBinding {
     design_save(handle: number, path: string, overwrite: boolean): string;
     design_set_properties(handle: number, requestJson: string): string;
     design_set_pin_type(handle: number, requestJson: string): string;
+    design_annotate(handle: number): string;
     design_inspect(handle: number, checksJson?: string): string;
     design_inspect_with(handle: number, optionsJson: string): string;
     design_export(handle: number, format: string, path: string): string;

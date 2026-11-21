@@ -1275,6 +1275,81 @@ pub fn set_pin_type(handle: u64, request: SetPinTypeRequest) -> Result<Value, Se
     })
 }
 
+/// Renumbers every component reference designator deterministically.
+///
+/// Components are visited sheet by sheet, then top to bottom and left to right,
+/// and numbered per reference prefix starting at 1. Net nodes follow their
+/// component, so connectivity is preserved. A design that is already annotated
+/// keeps its revision.
+pub fn annotate(handle: u64) -> Result<Value, ServiceError> {
+    mutate(handle, |design| {
+        let mut targets: Vec<(usize, usize)> = Vec::new();
+        for (sheet_index, sheet) in design.sheets.iter().enumerate() {
+            for component_index in 0..sheet.components.len() {
+                targets.push((sheet_index, component_index));
+            }
+        }
+        targets.sort_by(|&(left_sheet, left_index), &(right_sheet, right_index)| {
+            let left = &design.sheets[left_sheet].components[left_index];
+            let right = &design.sheets[right_sheet].components[right_index];
+            left_sheet
+                .cmp(&right_sheet)
+                .then(left.y.total_cmp(&right.y))
+                .then(left.x.total_cmp(&right.x))
+                .then(left.reference.cmp(&right.reference))
+        });
+
+        let mut counters: BTreeMap<String, u64> = BTreeMap::new();
+        let mut renames: HashMap<String, String> = HashMap::new();
+        let mut changes = Vec::new();
+        for (sheet_index, component_index) in targets {
+            let component = &design.sheets[sheet_index].components[component_index];
+            let prefix = designator_prefix(&component.reference);
+            let counter = counters.entry(prefix.clone()).or_insert(0);
+            *counter += 1;
+            let next = format!("{prefix}{counter}");
+            if component.reference != next {
+                renames.insert(component.reference.clone(), next.clone());
+                changes.push(json!({
+                    "sheetId": design.sheets[sheet_index].id,
+                    "componentId": component.id,
+                    "from": component.reference,
+                    "to": next,
+                }));
+            }
+        }
+
+        for sheet in &mut design.sheets {
+            for component in &mut sheet.components {
+                if let Some(next) = renames.get(&component.reference) {
+                    component.reference = next.clone();
+                }
+            }
+            for net in &mut sheet.nets {
+                for node in &mut net.nodes {
+                    if let Some(next) = renames.get(&node.reference) {
+                        node.reference = next.clone();
+                    }
+                }
+            }
+        }
+        if !changes.is_empty() {
+            design.revision += 1;
+        }
+        let mut payload = Map::new();
+        payload.insert("annotated".to_string(), json!(renames.len()));
+        payload.insert("changes".to_string(), json!(changes));
+        Ok(payload)
+    })
+}
+
+/// Letters at the start of a reference designator; a designator without one
+/// belongs to the generic `U` group.
+fn designator_prefix(reference: &str) -> String {
+    let prefix: String = reference.chars().take_while(|character| character.is_ascii_alphabetic()).collect();
+    if prefix.is_empty() { "U".to_string() } else { prefix }
+}
+
 /// Connects nodes to a named net, creating the net when it does not exist.
 pub fn connect_net(handle: u64, request: ConnectNetRequest) -> Result<Value, ServiceError> {
     if request.net.trim().is_empty() {
@@ -6032,6 +6107,64 @@ mod tests {
         assert_eq!(removed["remaining"], 0);
         assert_eq!(list_buses(handle).expect("list again")["buses"], json!([]));
         assert_eq!(remove_bus(handle, "DATA").unwrap_err().code, "object/not-found");
+        close(handle).expect("close");
+    }
+
+    #[test]
+    fn annotate_renumbers_by_placement_and_updates_net_nodes() {
+        let created = create(CreateRequest::default()).expect("create");
+        let handle = created["handle"].as_u64().expect("handle");
+        for (reference, x) in [("R2", 10.0), ("R1", 20.0), ("C1", 40.0)] {
+            add_component(
+                handle,
+                AddComponentRequest {
+                    sheet: None,
+                    reference: reference.to_string(),
+                    value: "10k".to_string(),
+                    x,
+                    y: 0.0,
+                    rotation: 0.0,
+                    pins: vec!["1".to_string(), "2".to_string()],
+                },
+            )
+            .expect("add");
+        }
+        connect_net(
+            handle,
+            ConnectNetRequest { sheet: None, net: "VCC".to_string(), nodes: vec!["R2.1".to_string(), "R1.1".to_string()] },
+        )
+        .expect("connect");
+        let before = summary(handle).expect("summary")["revision"].as_u64().expect("revision");
+
+        let report = annotate(handle).expect("annotate");
+        assert_eq!(report["annotated"], 2);
+        let changes = report["changes"].as_array().expect("changes");
+        assert_eq!(changes.len(), 2);
+        assert_eq!(changes[0]["from"], "R2");
+        assert_eq!(changes[0]["to"], "R1");
+        assert_eq!(changes[1]["from"], "R1");
+        assert_eq!(changes[1]["to"], "R2");
+        assert_eq!(report["revision"], before + 1);
+
+        let listed = list(handle).expect("list");
+        let references = listed["components"]
+            .as_array()
+            .expect("components")
+            .iter()
+            .map(|component| component["ref"].as_str().expect("ref"))
+            .collect::<Vec<_>>();
+        assert_eq!(references, vec!["R1", "R2", "C1"]);
+        let nodes = listed["nets"][0]["nodes"]
+            .as_array()
+            .expect("nodes")
+            .iter()
+            .map(|node| format!("{}.{}", node["ref"].as_str().expect("ref"), node["pin"].as_str().expect("pin")))
+            .collect::<Vec<_>>();
+        assert_eq!(nodes, vec!["R1.1", "R2.1"]);
+
+        let again = annotate(handle).expect("annotate again");
+        assert_eq!(again["annotated"], 0);
+        assert_eq!(again["revision"], report["revision"]);
         close(handle).expect("close");
     }
 }

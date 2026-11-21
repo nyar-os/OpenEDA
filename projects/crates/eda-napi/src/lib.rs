@@ -195,6 +195,14 @@ fn design_set_pin_type(ctx: CallContext) -> Result<JsValue> {
     respond(&ctx, &report)
 }
 
+/// Renumbers every component reference designator of one open design.
+#[function]
+fn design_annotate(ctx: CallContext) -> Result<JsValue> {
+    let handle = handle(&ctx, 0)?;
+    let report = open_eda_model::annotate(handle).map_err(fail)?;
+    respond(&ctx, &report)
+}
+
 /// Closes one open design and releases its handle.
 #[function]
 fn design_close(ctx: CallContext) -> Result<JsValue> {
@@ -1273,6 +1281,7 @@ register_module![
     design_save,
     design_set_properties,
     design_set_pin_type,
+    design_annotate,
     design_inspect,
     design_inspect_with,
     design_export,
