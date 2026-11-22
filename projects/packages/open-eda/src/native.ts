@@ -69,6 +69,7 @@ export interface NativeBinding {
     design_delete_sheet(handle: number, sheet: string): string;
     design_add_hierarchy(handle: number, requestJson: string): string;
     design_list_hierarchy(handle: number): string;
+    design_check_hierarchy(handle: number): string;
     design_remove_hierarchy(handle: number, sheet: string): string;
     design_add_hierarchy_port(handle: number, requestJson: string): string;
     design_remove_hierarchy_port(handle: number, requestJson: string): string;

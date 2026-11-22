@@ -95,6 +95,7 @@
             "hierarchy": "Edit hierarchical sheet symbols",
             "hierarchy-add": "Declare one hierarchical sheet symbol in place",
             "hierarchy-list": "List the hierarchical sheet symbols of a design document",
+            "hierarchy-check": "Check the hierarchy against child documents without changing them",
             "hierarchy-remove": "Remove one hierarchical sheet symbol in place",
             "hierarchy-port-add": "Add a port to a hierarchical sheet symbol in place",
             "hierarchy-port-remove": "Remove a port from a hierarchical sheet symbol in place",

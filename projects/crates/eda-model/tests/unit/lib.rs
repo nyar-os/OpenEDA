@@ -48,6 +48,7 @@ fn capability_matrix_reports_only_the_implemented_entries() {
     assert_eq!(matrix["checks"]["connectivity"], "supported");
     assert_eq!(matrix["checks"]["footprints"], "supported");
     assert_eq!(matrix["checks"]["power"], "supported");
+    assert_eq!(matrix["checks"]["hierarchy"], "supported");
     assert_eq!(matrix["checks"]["drc"], "unsupported");
     assert_eq!(matrix["checks"]["clearance"], "unsupported");
     assert_eq!(matrix["renderers"]["svg"], "supported");
@@ -505,7 +506,7 @@ fn inspection_applies_severity_overrides_and_waivers() {
         next_net: 3,
         next_wire: 1,
     };
-    let handle = insert_design(design);
+    let handle = insert_session(Session::new(design));
     let checks = Some(vec!["erc".to_string()]);
 
     let demoted = inspect_with_options(
@@ -4542,5 +4543,196 @@ fn stats_reports_per_sheet_counts_and_design_totals() {
     let sheets = list_sheets(handle).expect("sheets");
     assert_eq!(sheets["sheets"][1]["name"], "Power");
     assert_eq!(sheets["sheets"][0]["id"], "sheet-1");
+    close(handle).expect("close");
+}
+
+fn hierarchy_document(dir: &TempDir, name: &str, build: impl FnOnce(u64)) -> std::path::PathBuf {
+    let path = dir.join(name);
+    let created = create(CreateRequest::default()).expect("create");
+    let handle = created["handle"].as_u64().expect("handle");
+    build(handle);
+    save(handle, &path, true).expect("save");
+    close(handle).expect("close");
+    path
+}
+
+fn add_hierarchy_symbol(handle: u64, name: &str, file: &str) {
+    add_hierarchy(
+        handle,
+        AddHierarchyRequest { name: name.to_string(), file: file.to_string(), x: 0.0, y: 0.0, width: 60.0, height: 40.0 },
+    )
+    .expect("add hierarchy");
+}
+
+fn add_hierarchical_label(handle: u64, label: &str) {
+    add_label(
+        handle,
+        AddLabelRequest {
+            sheet: None,
+            text: label.to_string(),
+            x: 0.0,
+            y: 0.0,
+            scope: Some(LabelScope::Hierarchical),
+            rotation: None,
+            justify: None,
+        },
+    )
+    .expect("add hierarchical label");
+}
+
+fn hierarchy_codes(report: &Value) -> Vec<&str> {
+    report["issues"].as_array().expect("issues").iter().filter_map(|issue| issue["code"].as_str()).collect()
+}
+
+#[test]
+fn hierarchy_check_passes_when_ports_and_labels_match_without_writing() {
+    let dir = TempDir::new("hierarchy-pass");
+    let child = hierarchy_document(&dir, "child.oeda", |handle| add_hierarchical_label(handle, "IN"));
+    let parent = hierarchy_document(&dir, "parent.oeda", |handle| {
+        add_hierarchy_symbol(handle, "Child", "child.oeda");
+        add_hierarchy_port(
+            handle,
+            AddHierarchyPortRequest {
+                sheet: "Child".to_string(),
+                name: "IN".to_string(),
+                direction: PortDirection::Input,
+                x: 0.0,
+                y: 0.0,
+            },
+        )
+        .expect("add port");
+    });
+    let parent_text = fs::read_to_string(&parent).expect("read parent");
+    let child_text = fs::read_to_string(&child).expect("read child");
+
+    let opened = open(&parent).expect("open");
+    let handle = opened["handle"].as_u64().expect("handle");
+    let report = check_hierarchy(handle).expect("check");
+    assert_eq!(report["format"], "open-eda-hierarchy");
+    assert_eq!(report["version"], 1);
+    assert_eq!(report["sheets"], 1);
+    assert_eq!(report["issues"], json!([]));
+    assert_eq!(report["passed"], true);
+    assert_eq!(fs::read_to_string(&parent).expect("re-read parent"), parent_text);
+    assert_eq!(fs::read_to_string(&child).expect("re-read child"), child_text);
+    close(handle).expect("close");
+}
+
+#[test]
+fn hierarchy_check_reports_port_and_label_mismatches_in_order() {
+    let dir = TempDir::new("hierarchy-mismatch");
+    hierarchy_document(&dir, "child.oeda", |handle| {
+        add_hierarchical_label(handle, "IN");
+        add_hierarchical_label(handle, "EXTRA");
+    });
+    let parent = hierarchy_document(&dir, "parent.oeda", |handle| {
+        add_hierarchy_symbol(handle, "Child", "child.oeda");
+        for name in ["IN", "MISSING"] {
+            add_hierarchy_port(
+                handle,
+                AddHierarchyPortRequest {
+                    sheet: "Child".to_string(),
+                    name: name.to_string(),
+                    direction: PortDirection::Input,
+                    x: 0.0,
+                    y: 0.0,
+                },
+            )
+            .expect("add port");
+        }
+    });
+
+    let opened = open(&parent).expect("open");
+    let handle = opened["handle"].as_u64().expect("handle");
+    locked_sessions().get_mut(&handle).expect("session").design.hierarchy[0].ports.push(SheetPort {
+        name: "IN".to_string(),
+        direction: PortDirection::Input,
+        x: 0.0,
+        y: 0.0,
+    });
+    let report = check_hierarchy(handle).expect("check");
+    assert_eq!(report["sheets"], 1);
+    assert_eq!(
+        hierarchy_codes(&report),
+        vec!["hierarchy/duplicate-port", "hierarchy/port-without-label", "hierarchy/label-without-port"]
+    );
+    assert_eq!(report["issues"][0]["severity"], "error");
+    assert_eq!(report["issues"][1]["severity"], "error");
+    assert_eq!(report["issues"][2]["severity"], "warning");
+    assert!(report["issues"][0]["sheet"].as_str().expect("sheet").ends_with("child.oeda"));
+    assert_eq!(report["passed"], false);
+    close(handle).expect("close");
+}
+
+#[test]
+fn hierarchy_check_classifies_missing_unsupported_and_invalid_children() {
+    let dir = TempDir::new("hierarchy-children");
+    fs::write(dir.join("broken.oeda"), "not json").expect("write broken");
+    fs::write(dir.join("notes.txt"), "text").expect("write text");
+    let parent = hierarchy_document(&dir, "parent.oeda", |handle| {
+        add_hierarchy_symbol(handle, "Missing", "missing.oeda");
+        add_hierarchy_symbol(handle, "Notes", "notes.txt");
+        add_hierarchy_symbol(handle, "Broken", "broken.oeda");
+    });
+
+    let opened = open(&parent).expect("open");
+    let handle = opened["handle"].as_u64().expect("handle");
+    let report = check_hierarchy(handle).expect("check");
+    assert_eq!(report["sheets"], 0);
+    assert_eq!(
+        hierarchy_codes(&report),
+        vec!["hierarchy/file-missing", "hierarchy/child-format-unsupported", "hierarchy/child-invalid"]
+    );
+    assert_eq!(report["issues"][1]["severity"], "warning");
+    assert_eq!(report["passed"], false);
+    close(handle).expect("close");
+}
+
+#[test]
+fn hierarchy_check_stops_at_cycles_and_the_depth_limit() {
+    let dir = TempDir::new("hierarchy-cycle");
+    let first = hierarchy_document(&dir, "a.oeda", |handle| add_hierarchy_symbol(handle, "B", "b.oeda"));
+    hierarchy_document(&dir, "b.oeda", |handle| add_hierarchy_symbol(handle, "A", "a.oeda"));
+    let opened = open(&first).expect("open");
+    let handle = opened["handle"].as_u64().expect("handle");
+    let report = check_hierarchy(handle).expect("check");
+    assert_eq!(report["sheets"], 1);
+    assert_eq!(hierarchy_codes(&report), vec!["hierarchy/cycle"]);
+    assert_eq!(report["passed"], false);
+    close(handle).expect("close");
+
+    let dir = TempDir::new("hierarchy-depth");
+    for depth in (0..=33).rev() {
+        let next = (depth < 33).then(|| format!("depth-{}.oeda", depth + 1));
+        hierarchy_document(&dir, &format!("depth-{depth}.oeda"), |handle| {
+            if let Some(file) = next {
+                add_hierarchy_symbol(handle, "Next", &file);
+            }
+        });
+    }
+    let opened = open(&dir.join("depth-0.oeda")).expect("open root");
+    let handle = opened["handle"].as_u64().expect("handle");
+    let report = check_hierarchy(handle).expect("check");
+    assert_eq!(report["sheets"], 32);
+    assert_eq!(hierarchy_codes(&report), vec!["hierarchy/depth-exceeded"]);
+    assert_eq!(report["passed"], false);
+    close(handle).expect("close");
+}
+
+#[test]
+fn hierarchy_check_needs_a_document_path_and_stays_out_of_inspect() {
+    let dir = TempDir::new("hierarchy-path");
+    let target = dir.join("saved.oeda");
+    let created = create(CreateRequest::default()).expect("create");
+    let handle = created["handle"].as_u64().expect("handle");
+    assert_eq!(check_hierarchy(handle).expect_err("no path").code, "hierarchy/document-path-missing");
+    assert_eq!(
+        inspect(handle, Some(vec!["hierarchy".to_string()])).expect_err("inspect check").code,
+        "capability/not-implemented"
+    );
+    save(handle, &target, false).expect("save");
+    let report = check_hierarchy(handle).expect("check after save");
+    assert_eq!(report["sheets"], 0);
+    assert_eq!(report["passed"], true);
     close(handle).expect("close");
 }

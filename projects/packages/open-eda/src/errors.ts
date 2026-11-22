@@ -17,6 +17,7 @@ export const errorCodes = [
     'object/unsupported',
     'object/duplicate',
     'history/empty',
+    'hierarchy/document-path-missing',
     'junction/duplicate',
     'junction/not-found',
     'no-connect/duplicate',

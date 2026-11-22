@@ -47,6 +47,7 @@ import type {
     ExportOptions,
     ExportReport,
     HistoryResult,
+    HierarchyCheckReport,
     HierarchyListResult,
     HierarchyPortResult,
     HierarchyResult,
@@ -768,6 +769,9 @@ function attach(opened: service.DesignHandle, options: AttachOptions): Design {
         },
         async listHierarchy(): Promise<HierarchyListResult> {
             return service.listHierarchy(handle);
+        },
+        async checkHierarchy(): Promise<HierarchyCheckReport> {
+            return service.checkHierarchy(handle);
         },
         async removeHierarchy(sheet: string): Promise<RemoveHierarchyResult> {
             const result = await mutate(() => service.removeHierarchy(handle, sheet));

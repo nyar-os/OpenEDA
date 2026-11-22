@@ -22,7 +22,7 @@ mod kicad;
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     fmt, fs,
-    path::Path,
+    path::{Component as PathComponent, Path, PathBuf},
     sync::{
         Mutex, OnceLock,
         atomic::{AtomicU64, Ordering},
@@ -112,6 +112,13 @@ const BOM_PROJECTION_VERSION: u64 = 1;
 const STATS_FORMAT: &str = "open-eda-stats";
 /// Version written into the deterministic statistics report.
 const STATS_VERSION: u64 = 1;
+
+/// Tag written into the read-only hierarchy report.
+const HIERARCHY_REPORT_FORMAT: &str = "open-eda-hierarchy";
+/// Version written into the read-only hierarchy report.
+const HIERARCHY_REPORT_VERSION: u64 = 1;
+/// Deepest child document the hierarchy check opens; the root document is depth 0.
+const HIERARCHY_MAX_DEPTH: usize = 32;
 
 /// Loss code reported when a SPICE element pin has no net and gets an NC node.
 const SPICE_OPEN_PIN: &str = "spice/open-pin";
@@ -539,10 +546,11 @@ pub struct SheetPort {
 
 /// One hierarchical sheet symbol placed in a parent schematic.
 ///
-/// A symbol names the child sheet file and its ports. The model does not read
-/// that child file, so the symbol is a declaration: it survives import and
-/// export, participates in validation and is reported by the JSON projection,
-/// but its contents are not merged into the flat `sheets` list.
+/// A symbol names the child sheet file and its ports. Editing never reads that
+/// child file, so the symbol is a declaration: it survives import and export,
+/// participates in validation and is reported by the JSON projection, but its
+/// contents are not merged into the flat `sheets` list. Only the read-only
+/// [`check_hierarchy`] follows the file to compare ports with the child labels.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct HierarchicalSheet {
     /// Stable object identity, for example `hierarchy-1`.
@@ -1273,6 +1281,7 @@ pub fn capabilities() -> Value {
     for &check in INSPECT_CHECKS {
         checks.insert(check.to_string(), Value::String(level(format!("check.{check}")).to_string()));
     }
+    checks.insert("hierarchy".to_string(), Value::String(level("check.hierarchy".to_string()).to_string()));
 
     let mut renderers = Map::new();
     for &renderer in RENDER_FORMATS {
@@ -1313,6 +1322,7 @@ fn capability_matrix() -> CapabilityMatrix {
     for &check in INSPECT_CHECKS {
         matrix.insert(Capability::new(format!("check.{check}"), "check", support_of(SUPPORTED_CHECKS.contains(&check))));
     }
+    matrix.insert(Capability::new("check.hierarchy", "check", Support::Supported));
     for &renderer in RENDER_FORMATS {
         matrix.insert(Capability::new(
             format!("renderer.{renderer}"),
@@ -1339,11 +1349,17 @@ fn support_of(supported: bool) -> Support {
 struct Session {
     design: Design,
     history: History<Design>,
+    /// Document path the design was opened from or last saved to.
+    path: Option<PathBuf>,
 }
 
 impl Session {
     fn new(design: Design) -> Self {
-        Self { design, history: History::new(HISTORY_LIMIT) }
+        Self { design, history: History::new(HISTORY_LIMIT), path: None }
+    }
+
+    fn at(design: Design, path: PathBuf) -> Self {
+        Self { design, history: History::new(HISTORY_LIMIT), path: Some(path) }
     }
 }
 
@@ -1361,9 +1377,9 @@ fn locked_sessions() -> std::sync::MutexGuard<'static, std::collections::HashMap
     store().sessions.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
-fn insert_design(design: Design) -> u64 {
+fn insert_session(session: Session) -> u64 {
     let handle = store().next_handle.fetch_add(1, Ordering::SeqCst);
-    locked_sessions().insert(handle, Session::new(design));
+    locked_sessions().insert(handle, session);
     handle
 }
 
@@ -1437,16 +1453,16 @@ pub fn create(request: CreateRequest) -> Result<Value, ServiceError> {
     };
     let session = Session::new(design);
     let summary = summary_of(&session);
-    let handle = insert_design(session.design);
+    let handle = insert_session(session);
     Ok(json!({ "handle": handle, "design": summary }))
 }
 
 /// Opens a native design document and returns its handle and summary.
 pub fn open(path: &Path) -> Result<Value, ServiceError> {
     let design = read_design(path)?;
-    let session = Session::new(design);
+    let session = Session::at(design, path.to_path_buf());
     let summary = summary_of(&session);
-    let handle = insert_design(session.design);
+    let handle = insert_session(session);
     Ok(json!({ "handle": handle, "design": summary }))
 }
 
@@ -1495,6 +1511,9 @@ pub fn save(handle: u64, path: &Path, overwrite: bool) -> Result<Value, ServiceE
     let text =
         serde_json::to_string_pretty(&document).map_err(|error| invalid(format!("cannot serialize the design: {error}")))?;
     let bytes = write_atomic(path, &text, overwrite)?;
+    if let Some(session) = locked_sessions().get_mut(&handle) {
+        session.path = Some(path.to_path_buf());
+    }
     Ok(json!({ "path": path.display().to_string(), "revision": design.revision, "bytes": bytes }))
 }
 
@@ -3561,7 +3580,8 @@ pub fn add_text(handle: u64, request: AddTextRequest) -> Result<Value, ServiceEr
 /// The name and the child file are trimmed and must not be empty, and the name
 /// must be unique across the design. The size defaults to 60 by 40 design units
 /// and must be positive and finite, so the document stays valid right after the
-/// edit. The referenced child file is never opened or modified.
+/// edit. Editing never reads or modifies the referenced child file; only
+/// [`check_hierarchy`] opens it.
 pub fn add_hierarchy(handle: u64, request: AddHierarchyRequest) -> Result<Value, ServiceError> {
     let name = request.name.trim().to_string();
     if name.is_empty() {
@@ -3612,6 +3632,212 @@ pub fn list_hierarchy(handle: u64) -> Result<Value, ServiceError> {
     })
 }
 
+/// Checks the declared hierarchy against the child documents on disk.
+///
+/// The check only opens children whose file extension is `.oeda`; any other
+/// child is reported as `hierarchy/child-format-unsupported` and left alone.
+/// A missing child is `hierarchy/file-missing`, a child that cannot be read or
+/// parsed is `hierarchy/child-invalid`, and a normalised path that is already
+/// in the current chain is `hierarchy/cycle`. The walk stops at that branch so
+/// no file is visited twice in one chain, and stops below
+/// [`HIERARCHY_MAX_DEPTH`] with `hierarchy/depth-exceeded`.
+///
+/// Ports of each symbol are compared with the hierarchical-scope labels of the
+/// child's first sheet: a port without a matching label is
+/// `hierarchy/port-without-label` (error), a hierarchical label without a
+/// matching port is `hierarchy/label-without-port` (warning), and a port name
+/// declared twice is `hierarchy/duplicate-port` (error).
+///
+/// The report is deterministic and never writes a document. `sheets` counts the
+/// child documents that opened successfully and excludes the root, and `passed`
+/// is false only when at least one reported issue is an error.
+pub fn check_hierarchy(handle: u64) -> Result<Value, ServiceError> {
+    let (design, document_path) = with_session(handle, |session| {
+        let path = session.path.clone().ok_or_else(|| {
+            ServiceError::new(
+                "hierarchy/document-path-missing",
+                "the open design has no document path; open it from a file or save it before running the hierarchy check",
+            )
+        })?;
+        Ok((session.design.clone(), path))
+    })?;
+    let root = if document_path.is_file() {
+        fs::canonicalize(&document_path).unwrap_or_else(|_| normalize_path(&document_path))
+    }
+    else {
+        normalize_path(&document_path)
+    };
+    let mut found = HierarchyFindings { issues: Vec::new(), sheets: 0 };
+    let mut ancestors = vec![root.clone()];
+    walk_hierarchy(&root, &design, 0, &mut ancestors, &mut found);
+    let passed = !found.issues.iter().any(|issue| issue["severity"] == "error");
+    Ok(json!({
+        "format": HIERARCHY_REPORT_FORMAT,
+        "version": HIERARCHY_REPORT_VERSION,
+        "sheets": found.sheets,
+        "issues": found.issues,
+        "passed": passed,
+    }))
+}
+
+/// Accumulated findings of one hierarchy walk.
+struct HierarchyFindings {
+    issues: Vec<Value>,
+    sheets: usize,
+}
+
+fn hierarchy_issue(code: &str, severity: &str, sheet: String, detail: String) -> Value {
+    json!({ "code": code, "severity": severity, "sheet": sheet, "detail": detail })
+}
+
+/// Resolves one child file against the document that declares it.
+fn resolve_child(parent: &Path, file: &str) -> PathBuf {
+    let joined = parent.parent().unwrap_or_else(|| Path::new("")).join(file);
+    if joined.is_file() {
+        fs::canonicalize(&joined).unwrap_or_else(|_| normalize_path(&joined))
+    }
+    else {
+        normalize_path(&joined)
+    }
+}
+
+/// Lexically normalises a path so `.` and `..` cannot hide a repeated file.
+fn normalize_path(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            PathComponent::CurDir => {}
+            PathComponent::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
+}
+
+/// Walks one document's hierarchy declarations depth-first in document order.
+fn walk_hierarchy(
+    document_path: &Path,
+    design: &Design,
+    depth: usize,
+    ancestors: &mut Vec<PathBuf>,
+    found: &mut HierarchyFindings,
+) {
+    for symbol in &design.hierarchy {
+        let child = resolve_child(document_path, &symbol.file);
+        let label = child.display().to_string();
+        if ancestors.contains(&child) {
+            found.issues.push(hierarchy_issue(
+                "hierarchy/cycle",
+                "error",
+                label,
+                format!("`{}` is already open in this hierarchy chain", symbol.file),
+            ));
+            continue;
+        }
+        let child_depth = depth + 1;
+        if child_depth > HIERARCHY_MAX_DEPTH {
+            found.issues.push(hierarchy_issue(
+                "hierarchy/depth-exceeded",
+                "error",
+                label,
+                format!("the hierarchy is deeper than {HIERARCHY_MAX_DEPTH} levels"),
+            ));
+            continue;
+        }
+        let native = child
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("oeda"));
+        if !native {
+            found.issues.push(hierarchy_issue(
+                "hierarchy/child-format-unsupported",
+                "warning",
+                label,
+                format!("`{}` is not an `.oeda` document, so the check did not open it", symbol.file),
+            ));
+            continue;
+        }
+        if !child.is_file() {
+            found.issues.push(hierarchy_issue(
+                "hierarchy/file-missing",
+                "error",
+                label,
+                format!("`{}` does not exist", symbol.file),
+            ));
+            continue;
+        }
+        let child_design = match read_design(&child) {
+            Ok(child_design) => child_design,
+            Err(error) => {
+                found.issues.push(hierarchy_issue("hierarchy/child-invalid", "error", label, error.to_string()));
+                continue;
+            }
+        };
+        found.sheets += 1;
+
+        let mut seen = HashSet::new();
+        let mut reported = HashSet::new();
+        for port in &symbol.ports {
+            if !seen.insert(port.name.as_str()) && reported.insert(port.name.as_str()) {
+                found.issues.push(hierarchy_issue(
+                    "hierarchy/duplicate-port",
+                    "error",
+                    label.clone(),
+                    format!("port `{}` is declared more than once on `{}`", port.name, symbol.name),
+                ));
+            }
+        }
+        let root_sheet = child_design.sheets.first();
+        let labels: HashSet<&str> = root_sheet
+            .map(|sheet| {
+                sheet
+                    .labels
+                    .iter()
+                    .filter(|entry| entry.scope == LabelScope::Hierarchical)
+                    .map(|entry| entry.text.as_str())
+                    .collect()
+            })
+            .unwrap_or_default();
+        let mut checked = HashSet::new();
+        for port in &symbol.ports {
+            if !checked.insert(port.name.as_str()) {
+                continue;
+            }
+            if !labels.contains(port.name.as_str()) {
+                found.issues.push(hierarchy_issue(
+                    "hierarchy/port-without-label",
+                    "error",
+                    label.clone(),
+                    format!("port `{}` has no hierarchical label on the child root sheet", port.name),
+                ));
+            }
+        }
+        if let Some(sheet) = root_sheet {
+            let ports: HashSet<&str> = symbol.ports.iter().map(|port| port.name.as_str()).collect();
+            let mut reported_labels = HashSet::new();
+            for entry in &sheet.labels {
+                if entry.scope != LabelScope::Hierarchical {
+                    continue;
+                }
+                if !ports.contains(entry.text.as_str()) && reported_labels.insert(entry.text.as_str()) {
+                    found.issues.push(hierarchy_issue(
+                        "hierarchy/label-without-port",
+                        "warning",
+                        label.clone(),
+                        format!("hierarchical label `{}` has no matching port on `{}`", entry.text, symbol.name),
+                    ));
+                }
+            }
+        }
+
+        ancestors.push(child.clone());
+        walk_hierarchy(&child, &child_design, child_depth, ancestors, found);
+        ancestors.pop();
+    }
+}
+
 /// Removes one hierarchical sheet symbol by id or name.
 ///
 /// The child file is not touched; only the parent declaration is removed.
@@ -3633,7 +3859,8 @@ pub fn remove_hierarchy(handle: u64, sheet: &str) -> Result<Value, ServiceError>
 /// Adds one port to a hierarchical sheet symbol.
 ///
 /// The port name is trimmed, must not be empty, and must be unique inside the
-/// symbol. Coordinates must be finite. The child file is never opened.
+/// symbol. Coordinates must be finite. Editing never reads the child file; only
+/// [`check_hierarchy`] opens it.
 pub fn add_hierarchy_port(handle: u64, request: AddHierarchyPortRequest) -> Result<Value, ServiceError> {
     let name = request.name.trim().to_string();
     if name.is_empty() {

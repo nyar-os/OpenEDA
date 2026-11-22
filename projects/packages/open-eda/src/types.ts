@@ -108,7 +108,7 @@ export interface DesignCapabilities {
         readonly export: SupportLevel;
     };
     readonly formats: Readonly<Record<DesignFormat, FormatCapability>>;
-    readonly checks: Readonly<Record<InspectCheck, SupportLevel>>;
+    readonly checks: Readonly<Record<InspectCheck | 'hierarchy', SupportLevel>>;
     readonly renderers: Readonly<Record<RenderFormat, SupportLevel>>;
     readonly exportTargets: Readonly<Record<ExportTarget, SupportLevel>>;
     /** Editing surfaces that are implemented rather than read-only. */
@@ -1377,6 +1377,26 @@ export interface HierarchyPortResult {
     readonly port: SheetPort;
 }
 
+/** One finding of `design.checkHierarchy()`. */
+export interface HierarchyCheckIssue {
+    readonly code: string;
+    readonly severity: 'error' | 'warning' | 'info';
+    /** Child document path the finding belongs to. */
+    readonly sheet: string;
+    readonly detail: string;
+}
+
+/** Result of `design.checkHierarchy()`, tagged `open-eda-hierarchy`. */
+export interface HierarchyCheckReport {
+    readonly format: 'open-eda-hierarchy';
+    readonly version: number;
+    /** Child documents that opened successfully; the root is excluded. */
+    readonly sheets: number;
+    readonly issues: readonly HierarchyCheckIssue[];
+    /** False only when at least one issue is an error. */
+    readonly passed: boolean;
+}
+
 /** A sheet as returned by the sheet operations. */
 export interface Sheet {
     readonly id: SheetId;
@@ -1627,10 +1647,19 @@ export interface Design {
     renameSheet(sheet: SheetId, name: string): Promise<Sheet>;
     /** Deletes one empty sheet; the last sheet and sheets with objects are refused. */
     deleteSheet(sheet: SheetId): Promise<void>;
-    /** Adds one hierarchical sheet symbol; the child file is never opened. */
+    /** Adds one hierarchical sheet symbol; editing does not read the child file. */
     addHierarchy(input: AddHierarchyInput): Promise<HierarchyResult>;
     /** Lists the hierarchical sheet symbols of the design. */
     listHierarchy(): Promise<HierarchyListResult>;
+    /**
+     * Checks the declared hierarchy against the child `.oeda` documents.
+     *
+     * Only `.oeda` children are opened; other extensions, missing files, parse
+     * failures, cycles, excessive depth and port/label mismatches are reported
+     * as deterministic issues. The check is read-only and needs the document
+     * path of an opened or saved design.
+     */
+    checkHierarchy(): Promise<HierarchyCheckReport>;
     /** Removes one hierarchical sheet symbol by id or name. */
     removeHierarchy(sheet: string): Promise<RemoveHierarchyResult>;
     /** Adds one port to a hierarchical sheet symbol. */

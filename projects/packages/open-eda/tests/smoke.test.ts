@@ -950,3 +950,117 @@ test('junction and no-connect commands edit a document in place', { skip: withou
         fs.rmSync(directory, { recursive: true, force: true });
     }
 });
+
+test('hierarchy check reads child documents without writing them', { skip: withoutAddon }, async () => {
+    const eda = new OpenEDA();
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'open-eda-hierarchy-'));
+    const child = path.join(directory, 'child.oeda');
+    const parent = path.join(directory, 'parent.oeda');
+    try {
+        const childDesign = await eda.create();
+        await childDesign.addLabel({ text: 'IN', x: 0, y: 0, scope: 'hierarchical' });
+        await childDesign.addLabel({ text: 'EXTRA', x: 1, y: 1, scope: 'hierarchical' });
+        await childDesign.save({ target: child, overwrite: true });
+        await childDesign.close();
+
+        const parentDesign = await eda.create();
+        await parentDesign.addHierarchy({ name: 'Child', file: 'child.oeda' });
+        await parentDesign.addHierarchyPort({ sheet: 'Child', name: 'IN', direction: 'input' });
+        await parentDesign.addHierarchyPort({ sheet: 'Child', name: 'MISSING', direction: 'input' });
+        await parentDesign.save({ target: parent, overwrite: true });
+        await parentDesign.close();
+
+        const before = fs.readFileSync(parent, 'utf8');
+        const opened = await eda.open({ path: parent });
+        const report = await opened.checkHierarchy();
+        assert.equal(report.format, 'open-eda-hierarchy');
+        assert.equal(report.version, 1);
+        assert.equal(report.sheets, 1);
+        assert.equal(report.passed, false);
+        assert.deepEqual(
+            report.issues.map((issue) => issue.code),
+            ['hierarchy/port-without-label', 'hierarchy/label-without-port'],
+        );
+        assert.equal(fs.readFileSync(parent, 'utf8'), before);
+        await opened.close();
+
+        const unsaved = await eda.create();
+        await assert.rejects(
+            unsaved.checkHierarchy(),
+            (error: unknown) => error instanceof OpenEDAError && error.code === 'hierarchy/document-path-missing',
+        );
+        await unsaved.close();
+    } finally {
+        await eda.dispose();
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
+});
+
+test('hierarchy check classifies children and stops at cycles', { skip: withoutAddon }, async () => {
+    const eda = new OpenEDA();
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'open-eda-hierarchy-children-'));
+    try {
+        const second = await eda.create();
+        await second.addHierarchy({ name: 'A', file: 'a.oeda' });
+        await second.save({ target: path.join(directory, 'b.oeda'), overwrite: true });
+        await second.close();
+
+        const first = await eda.create();
+        await first.addHierarchy({ name: 'B', file: 'b.oeda' });
+        await first.addHierarchy({ name: 'Text', file: 'notes.txt' });
+        await first.addHierarchy({ name: 'Gone', file: 'missing.oeda' });
+        await first.save({ target: path.join(directory, 'a.oeda'), overwrite: true });
+        await first.close();
+
+        const opened = await eda.open({ path: path.join(directory, 'a.oeda') });
+        const report = await opened.checkHierarchy();
+        assert.equal(report.sheets, 1);
+        assert.deepEqual(
+            report.issues.map((issue) => issue.code),
+            ['hierarchy/cycle', 'hierarchy/child-format-unsupported', 'hierarchy/file-missing'],
+        );
+        assert.equal(report.passed, false);
+        await opened.close();
+    } finally {
+        await eda.dispose();
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
+});
+
+test('hierarchy check command reports a document without changing it', { skip: withoutAddon }, async () => {
+    const eda = new OpenEDA();
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'open-eda-cli-hierarchy-'));
+    const target = path.join(directory, 'parent.oeda');
+    const testDirectory = path.dirname(fileURLToPath(import.meta.url));
+    const cli = fileURLToPath(new URL('../src/cli.js', import.meta.url));
+    const generatedLocales = path.resolve(testDirectory, '../locales');
+    const sourceLocales = path.resolve(testDirectory, '../../locales');
+    const copiedLocales = !fs.existsSync(generatedLocales);
+    if (copiedLocales) {
+        fs.cpSync(sourceLocales, generatedLocales, { recursive: true });
+    }
+    try {
+        const childDesign = await eda.create();
+        await childDesign.addLabel({ text: 'IN', x: 0, y: 0, scope: 'hierarchical' });
+        await childDesign.save({ target: path.join(directory, 'child.oeda'), overwrite: true });
+        await childDesign.close();
+
+        const parentDesign = await eda.create();
+        await parentDesign.addHierarchy({ name: 'Child', file: 'child.oeda' });
+        await parentDesign.addHierarchyPort({ sheet: 'Child', name: 'IN', direction: 'input' });
+        await parentDesign.save({ target, overwrite: true });
+        await parentDesign.close();
+
+        const before = fs.readFileSync(target, 'utf8');
+        const result = spawnSync(process.execPath, [cli, 'hierarchy', 'check', target], { encoding: 'utf8' });
+        assert.equal(result.status, 0, result.stderr);
+        assert.match(result.stdout, /hierarchy sheets=1 issues=0 passed=true/);
+        assert.equal(fs.readFileSync(target, 'utf8'), before);
+    } finally {
+        if (copiedLocales) {
+            fs.rmSync(generatedLocales, { recursive: true, force: true });
+        }
+        await eda.dispose();
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
+});

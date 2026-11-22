@@ -2445,6 +2445,23 @@ hierarchyCommand
     });
 
 hierarchyCommand
+    .command('check', 'cli.cmd.hierarchy-check')
+    .actionCtx(async (options, _args, ctx) => {
+        const file = input(options);
+        if (file === undefined) {
+            ctx.fail('open-eda.cli.file-required', { message: 'a design document is required' });
+            return 2;
+        }
+        const report = await withDesign(file, async (design) => design.checkHierarchy());
+        const lines = [`hierarchy sheets=${report.sheets} issues=${report.issues.length} passed=${report.passed}`];
+        for (const issue of report.issues) {
+            lines.push(`  ${issue.severity} ${issue.code} ${issue.sheet}: ${issue.detail}`);
+        }
+        ctx.emitResult(report, lines.join('\n'));
+        return report.passed ? 0 : 1;
+    });
+
+hierarchyCommand
     .command('remove', 'cli.cmd.hierarchy-remove')
     .option('--id <sheet>', 'cli.opt.sheet-id')
     .actionCtx(async (options, _args, ctx) => {

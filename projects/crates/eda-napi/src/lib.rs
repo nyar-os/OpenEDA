@@ -603,6 +603,14 @@ fn design_list_hierarchy(ctx: CallContext) -> Result<JsValue> {
     respond(&ctx, &report)
 }
 
+/// Checks the declared hierarchy against the child `.oeda` documents.
+#[function]
+fn design_check_hierarchy(ctx: CallContext) -> Result<JsValue> {
+    let handle = handle(&ctx, 0)?;
+    let report = open_eda_model::check_hierarchy(handle).map_err(fail)?;
+    respond(&ctx, &report)
+}
+
 /// Removes one hierarchical sheet symbol by id or name.
 #[function]
 fn design_remove_hierarchy(ctx: CallContext) -> Result<JsValue> {
@@ -1709,6 +1717,7 @@ register_module![
     design_delete_sheet,
     design_add_hierarchy,
     design_list_hierarchy,
+    design_check_hierarchy,
     design_remove_hierarchy,
     design_add_hierarchy_port,
     design_remove_hierarchy_port,

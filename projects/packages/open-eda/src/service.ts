@@ -41,6 +41,7 @@ import type {
     ExportReport,
     ExportTarget,
     HistoryResult,
+    HierarchyCheckReport,
     HierarchyListResult,
     HierarchyPortResult,
     HierarchyResult,
@@ -832,6 +833,11 @@ export function addHierarchy(handle: number, input: AddHierarchyInput): Hierarch
 /** Lists the hierarchical sheet symbols of one design. */
 export function listHierarchy(handle: number): HierarchyListResult {
     return decode<HierarchyListResult>(() => binding('design.listHierarchy').design_list_hierarchy(handle));
+}
+
+/** Checks the declared hierarchy against the child `.oeda` documents on disk. */
+export function checkHierarchy(handle: number): HierarchyCheckReport {
+    return decode<HierarchyCheckReport>(() => binding('design.checkHierarchy').design_check_hierarchy(handle));
 }
 
 /** Removes one hierarchical sheet symbol by id or name. */
