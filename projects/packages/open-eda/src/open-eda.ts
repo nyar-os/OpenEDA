@@ -40,6 +40,7 @@ import type {
     DesignObjects,
     DesignPropertiesInput,
     DesignPropertiesResult,
+    DesignStats,
     DesignSummary,
     DeriveNetsResult,
     DisconnectNetInput,
@@ -53,19 +54,26 @@ import type {
     InspectReport,
     Junction,
     JunctionInput,
+    JunctionListResult,
     KicadImportOptions,
     KicadImportResult,
     KicadNetImportResult,
     KicadSymbolImportResult,
+    LabelInput,
+    LabelListResult,
+    LabelUpdateInput,
+    LabelUpdateResult,
     MergeNetsInput,
     MergeNetsResult,
     MoveComponentInput,
     Net,
     NetClass,
     NetClassInput,
+    NetLabel,
     NetlistDiffReport,
     NoConnect,
     NoConnectInput,
+    NoConnectListResult,
     OpenEDAOptions,
     PinType,
     ReferencePrefixInput,
@@ -81,6 +89,7 @@ import type {
     SetPinTypeInput,
     SetPinTypeResult,
     Sheet,
+    SheetListResult,
     SplitWireInput,
     SplitWireResult,
     SymbolLibraryResult,
@@ -702,6 +711,31 @@ function attach(opened: service.DesignHandle, options: AttachOptions): Design {
             const result = await mutate(() => service.updateText(handle, input));
             current = result.design;
             return result;
+        },
+        async listLabels(listOptions?: { readonly sheet?: string }): Promise<LabelListResult> {
+            return service.listLabels(handle, listOptions?.sheet);
+        },
+        async updateLabel(input: LabelUpdateInput): Promise<LabelUpdateResult> {
+            assertUpdateLabelInput(input);
+            const result = await mutate(() => service.updateLabel(handle, input));
+            current = result.design;
+            return result;
+        },
+        async removeLabel(id: string, removeOptions?: { readonly sheet?: string }): Promise<void> {
+            const result = await mutate(() => service.removeLabel(handle, id, removeOptions?.sheet));
+            current = result.design;
+        },
+        async listJunctions(listOptions?: { readonly sheet?: string }): Promise<JunctionListResult> {
+            return service.listJunctions(handle, listOptions?.sheet);
+        },
+        async listNoConnects(listOptions?: { readonly sheet?: string }): Promise<NoConnectListResult> {
+            return service.listNoConnects(handle, listOptions?.sheet);
+        },
+        async listSheets(): Promise<SheetListResult> {
+            return service.listSheets(handle);
+        },
+        async stats(): Promise<DesignStats> {
+            return service.stats(handle);
         },
         async moveText(
             index: number,

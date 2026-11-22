@@ -547,6 +547,26 @@ cli.command('connectivity', 'cli.cmd.connectivity').actionCtx(async (options, _a
     return 0;
 });
 
+cli.command('stats', 'cli.cmd.stats').actionCtx(async (options, _args, ctx) => {
+    const file = input(options);
+    if (file === undefined) {
+        ctx.fail('open-eda.cli.file-required', { message: 'a design document is required' });
+        return 2;
+    }
+    const report = await withDesign(file, (design) => design.stats());
+    const totals = report.totals;
+    const lines = [
+        `stats revision=${report.revision} sheets=${totals.sheets} components=${totals.components} nets=${totals.nets} wires=${totals.wires} junctions=${totals.junctions} labels=${totals.labels} noConnects=${totals.noConnects} texts=${totals.texts} buses=${totals.buses} bomRows=${totals.bomRows}`,
+    ];
+    for (const sheet of report.sheets) {
+        lines.push(
+            `  [${sheet.id}] ${sheet.name}: components=${sheet.components} nets=${sheet.nets} wires=${sheet.wires} junctions=${sheet.junctions} labels=${sheet.labels} noConnects=${sheet.noConnects} texts=${sheet.texts}`,
+        );
+    }
+    ctx.emitResult(report, lines.join('\n'));
+    return 0;
+});
+
 const designCommand = cli.command('design', 'cli.cmd.design');
 designCommand
     .command('set', 'cli.cmd.design-set')
@@ -1759,6 +1779,27 @@ junctionCommand
     });
 
 junctionCommand
+    .command('list', 'cli.cmd.junction-list')
+    .option('--sheet <sheet>', 'cli.opt.sheet')
+    .actionCtx(async (options, _args, ctx) => {
+        const file = input(options);
+        if (file === undefined) {
+            ctx.fail('open-eda.cli.file-required', { message: 'a design document is required' });
+            return 2;
+        }
+        const report = await withDesign(file, async (design) => {
+            const sheet = text(options, 'sheet');
+            return design.listJunctions(sheet === undefined ? undefined : { sheet });
+        });
+        const lines = [`junctions sheet=${report.sheetId} revision=${report.revision} count=${report.junctions.length}`];
+        for (const entry of report.junctions) {
+            lines.push(`  ${entry.index} (${entry.x}, ${entry.y})`);
+        }
+        ctx.emitResult(report, lines.join('\n'));
+        return 0;
+    });
+
+junctionCommand
     .command('delete', 'cli.cmd.junction-delete')
     .option('--index <number>', 'cli.opt.index')
     .option('--sheet <sheet>', 'cli.opt.sheet')
@@ -1861,6 +1902,30 @@ noConnectCommand
             { ...saved, revision: saved.revision, noConnect },
             `added no-connect at (${x}, ${y}) in ${file} revision=${saved.revision}`,
         );
+        return 0;
+    });
+
+noConnectCommand
+    .command('list', 'cli.cmd.no-connect-list')
+    .option('--sheet <sheet>', 'cli.opt.sheet')
+    .actionCtx(async (options, _args, ctx) => {
+        const file = input(options);
+        if (file === undefined) {
+            ctx.fail('open-eda.cli.file-required', { message: 'a design document is required' });
+            return 2;
+        }
+        const report = await withDesign(file, async (design) => {
+            const sheet = text(options, 'sheet');
+            return design.listNoConnects(sheet === undefined ? undefined : { sheet });
+        });
+        const lines = [
+            `no-connects sheet=${report.sheetId} revision=${report.revision} count=${report.noConnects.length}`,
+        ];
+        for (const entry of report.noConnects) {
+            const node = entry.node === undefined ? '' : ` ${entry.node.ref}.${entry.node.pin}`;
+            lines.push(`  ${entry.index} (${entry.x}, ${entry.y})${node}`);
+        }
+        ctx.emitResult(report, lines.join('\n'));
         return 0;
     });
 
@@ -2245,6 +2310,25 @@ sheetCommand
             { ...saved, revision: saved.revision, sheet },
             `added sheet ${sheet.id} in ${file} revision=${saved.revision}`,
         );
+        return 0;
+    });
+
+sheetCommand
+    .command('list', 'cli.cmd.sheet-list')
+    .actionCtx(async (options, _args, ctx) => {
+        const file = input(options);
+        if (file === undefined) {
+            ctx.fail('open-eda.cli.file-required', { message: 'a design document is required' });
+            return 2;
+        }
+        const report = await withDesign(file, (design) => design.listSheets());
+        const lines = [`sheets revision=${report.revision} count=${report.sheets.length}`];
+        for (const sheet of report.sheets) {
+            lines.push(
+                `  [${sheet.id}] ${sheet.name}: components=${sheet.components} nets=${sheet.nets} wires=${sheet.wires} junctions=${sheet.junctions} labels=${sheet.labels} noConnects=${sheet.noConnects} texts=${sheet.texts}`,
+            );
+        }
+        ctx.emitResult(report, lines.join('\n'));
         return 0;
     });
 

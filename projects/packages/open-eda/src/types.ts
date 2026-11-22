@@ -382,6 +382,73 @@ export interface NoConnect {
     readonly node?: NetNode;
 }
 
+/** One junction with its 0-based position on the sheet. */
+export interface JunctionEntry {
+    readonly index: number;
+    readonly x: number;
+    readonly y: number;
+}
+
+/** Result of `design.listJunctions()`. */
+export interface JunctionListResult {
+    readonly revision: number;
+    readonly sheetId: SheetId;
+    readonly junctions: readonly JunctionEntry[];
+}
+
+/** One no-connect flag with its 0-based position on the sheet. */
+export interface NoConnectEntry extends NoConnect {
+    readonly index: number;
+}
+
+/** Result of `design.listNoConnects()`. */
+export interface NoConnectListResult {
+    readonly revision: number;
+    readonly sheetId: SheetId;
+    readonly noConnects: readonly NoConnectEntry[];
+}
+
+/** Deterministic object counts of one sheet. */
+export interface SheetStats {
+    readonly id: SheetId;
+    readonly name: string;
+    readonly components: number;
+    readonly nets: number;
+    readonly wires: number;
+    readonly junctions: number;
+    readonly labels: number;
+    readonly noConnects: number;
+    readonly texts: number;
+}
+
+/** Result of `design.stats()`, tagged `open-eda-stats`. */
+export interface DesignStats {
+    readonly format: 'open-eda-stats';
+    readonly version: number;
+    readonly revision: number;
+    readonly sheets: readonly SheetStats[];
+    readonly totals: {
+        readonly sheets: number;
+        readonly components: number;
+        readonly nets: number;
+        readonly wires: number;
+        readonly junctions: number;
+        readonly labels: number;
+        readonly noConnects: number;
+        readonly texts: number;
+        /** Design-level bus declarations. */
+        readonly buses: number;
+        /** BOM rows using the default population. */
+        readonly bomRows: number;
+    };
+}
+
+/** Result of `design.listSheets()`. */
+export interface SheetListResult {
+    readonly revision: number;
+    readonly sheets: readonly SheetStats[];
+}
+
 /** One free text annotation drawn on a sheet. */
 export interface TextLabel {
     readonly text: string;
@@ -1536,6 +1603,22 @@ export interface Design {
     listTexts(options?: { readonly sheet?: SheetId }): Promise<TextListResult>;
     /** Updates the content or placement of the text annotation at a 0-based index. */
     updateText(input: TextUpdateInput): Promise<TextUpdateResult>;
+    /** Adds one net label; scope defaults to `local` and never changes the declared nets. */
+    addLabel(input: LabelInput): Promise<NetLabel>;
+    /** Lists the net labels of one sheet in document order. */
+    listLabels(options?: { readonly sheet?: SheetId }): Promise<LabelListResult>;
+    /** Updates one net label by identity; omitted fields keep their current value. */
+    updateLabel(input: LabelUpdateInput): Promise<LabelUpdateResult>;
+    /** Deletes one net label by identity. */
+    removeLabel(id: ObjectId, options?: { readonly sheet?: SheetId }): Promise<void>;
+    /** Lists the junctions of one sheet with 0-based positions. */
+    listJunctions(options?: { readonly sheet?: SheetId }): Promise<JunctionListResult>;
+    /** Lists the no-connect flags of one sheet with 0-based positions. */
+    listNoConnects(options?: { readonly sheet?: SheetId }): Promise<NoConnectListResult>;
+    /** Lists every sheet with its identity, name and deterministic object counts. */
+    listSheets(): Promise<SheetListResult>;
+    /** Reports deterministic per-sheet and design-wide object counts. */
+    stats(): Promise<DesignStats>;
     /** Adds an empty sheet and returns it. */
     addSheet(name?: string): Promise<Sheet>;
     /** Renames one sheet. */

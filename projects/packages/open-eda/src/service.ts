@@ -34,6 +34,7 @@ import type {
     DesignObjects,
     DesignPropertiesInput,
     DesignPropertiesResult,
+    DesignStats,
     DesignSummary,
     DeriveNetsResult,
     DisconnectNetInput,
@@ -47,9 +48,15 @@ import type {
     InspectReport,
     Junction,
     JunctionInput,
+    JunctionListResult,
     KicadImportResult,
     KicadNetImportResult,
     KicadSymbolImportResult,
+    LabelDeleteResult,
+    LabelInput,
+    LabelListResult,
+    LabelUpdateInput,
+    LabelUpdateResult,
     MergeNetsInput,
     MergeNetsResult,
     MoveComponentInput,
@@ -59,6 +66,7 @@ import type {
     NetClassResult,
     NetlistDiffReport,
     NoConnect,
+    NoConnectListResult,
     NoConnectInput,
     ReferencePrefixInput,
     ReferencePrefixListResult,
@@ -73,6 +81,7 @@ import type {
     SetPinTypeInput,
     SetPinTypeResult,
     Sheet,
+    SheetListResult,
     SplitWireInput,
     SplitWireResult,
     SymbolLibraryResult,
@@ -550,6 +559,82 @@ export function addText(handle: number, input: TextInput): TextResult {
             JSON.stringify({ sheet: input.sheet, text: input.text, x: input.x, y: input.y }),
         ),
     );
+}
+
+/** Adds one net label to a sheet. */
+export function addLabel(handle: number, input: LabelInput): LabelUpdateResult {
+    return decode<LabelUpdateResult>(() =>
+        binding('design.addLabel').design_add_label(
+            handle,
+            JSON.stringify({
+                sheet: input.sheet,
+                text: input.text,
+                x: input.x,
+                y: input.y,
+                scope: input.scope,
+                rotation: input.rotation,
+                justify: input.justify,
+            }),
+        ),
+    );
+}
+
+/** Lists the net labels of one sheet. */
+export function listLabels(handle: number, sheet?: string): LabelListResult {
+    const native = binding('design.listLabels');
+    return decode<LabelListResult>(() =>
+        sheet === undefined ? native.design_list_labels(handle) : native.design_list_labels(handle, sheet),
+    );
+}
+
+/** Updates one net label by identity. */
+export function updateLabel(handle: number, input: LabelUpdateInput): LabelUpdateResult {
+    return decode<LabelUpdateResult>(() =>
+        binding('design.updateLabel').design_update_label(
+            handle,
+            JSON.stringify({
+                sheet: input.sheet,
+                id: input.id,
+                text: input.text,
+                x: input.x,
+                y: input.y,
+                scope: input.scope,
+                rotation: input.rotation,
+                justify: input.justify,
+            }),
+        ),
+    );
+}
+
+/** Deletes one net label by identity. */
+export function removeLabel(handle: number, id: string, sheet?: string): LabelDeleteResult {
+    return decode<LabelDeleteResult>(() => binding('design.removeLabel').design_delete_label(handle, id, sheet));
+}
+
+/** Lists the junctions of one sheet. */
+export function listJunctions(handle: number, sheet?: string): JunctionListResult {
+    const native = binding('design.listJunctions');
+    return decode<JunctionListResult>(() =>
+        sheet === undefined ? native.design_list_junctions(handle) : native.design_list_junctions(handle, sheet),
+    );
+}
+
+/** Lists the no-connect flags of one sheet. */
+export function listNoConnects(handle: number, sheet?: string): NoConnectListResult {
+    const native = binding('design.listNoConnects');
+    return decode<NoConnectListResult>(() =>
+        sheet === undefined ? native.design_list_no_connects(handle) : native.design_list_no_connects(handle, sheet),
+    );
+}
+
+/** Lists every sheet with its identity, name and object counts. */
+export function listSheets(handle: number): SheetListResult {
+    return decode<SheetListResult>(() => binding('design.listSheets').design_list_sheets(handle));
+}
+
+/** Reports deterministic per-sheet and design-wide object counts. */
+export function stats(handle: number): DesignStats {
+    return decode<DesignStats>(() => binding('design.stats').design_stats(handle));
 }
 
 /** Copies one placed component under a new reference designator. */

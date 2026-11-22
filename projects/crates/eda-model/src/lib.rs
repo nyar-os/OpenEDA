@@ -105,9 +105,13 @@ const CONNECTIVITY_REPORT_VERSION: u64 = 1;
 
 /// Tag written into the deterministic JSON BOM projection.
 const BOM_PROJECTION_FORMAT: &str = "open-eda-bom";
-
 /// Version written into the deterministic JSON BOM projection.
 const BOM_PROJECTION_VERSION: u64 = 1;
+
+/// Tag written into the deterministic statistics report.
+const STATS_FORMAT: &str = "open-eda-stats";
+/// Version written into the deterministic statistics report.
+const STATS_VERSION: u64 = 1;
 
 /// Loss code reported when a SPICE element pin has no net and gets an NC node.
 const SPICE_OPEN_PIN: &str = "spice/open-pin";
@@ -5396,6 +5400,71 @@ fn connectivity_report_of(design: &Design) -> Value {
             "unassignedWireGroups": unassigned_total,
             "conflictingWireGroups": conflict_total,
             "floatingJunctions": floating_junction_total,
+            "labels": label_total,
+        },
+    })
+}
+
+/// Reports deterministic per-sheet and design-wide object counts.
+///
+/// The counts come from the model arrays themselves, so the report can never
+/// disagree with `list` or the JSON projection. BOM rows are counted with the
+/// default population, and the bus count is the number of design-level bus
+/// declarations.
+pub fn stats(handle: u64) -> Result<Value, ServiceError> {
+    with_session(handle, |session| Ok(stats_of(&session.design)))
+}
+
+fn stats_of(design: &Design) -> Value {
+    let mut components_total = 0usize;
+    let mut nets_total = 0usize;
+    let mut wires_total = 0usize;
+    let mut junctions_total = 0usize;
+    let mut labels_total = 0usize;
+    let mut no_connects_total = 0usize;
+    let mut texts_total = 0usize;
+
+    let sheets = design
+        .sheets
+        .iter()
+        .map(|sheet| {
+            components_total += sheet.components.len();
+            nets_total += sheet.nets.len();
+            wires_total += sheet.wires.len();
+            junctions_total += sheet.junctions.len();
+            labels_total += sheet.labels.len();
+            no_connects_total += sheet.no_connects.len();
+            texts_total += sheet.texts.len();
+            json!({
+                "id": sheet.id,
+                "name": sheet.name,
+                "components": sheet.components.len(),
+                "nets": sheet.nets.len(),
+                "wires": sheet.wires.len(),
+                "junctions": sheet.junctions.len(),
+                "labels": sheet.labels.len(),
+                "noConnects": sheet.no_connects.len(),
+                "texts": sheet.texts.len(),
+            })
+        })
+        .collect::<Vec<_>>();
+
+    json!({
+        "format": STATS_FORMAT,
+        "version": STATS_VERSION,
+        "revision": design.revision,
+        "sheets": sheets,
+        "totals": {
+            "sheets": design.sheets.len(),
+            "components": components_total,
+            "nets": nets_total,
+            "wires": wires_total,
+            "junctions": junctions_total,
+            "labels": labels_total,
+            "noConnects": no_connects_total,
+            "texts": texts_total,
+            "buses": design.buses.len(),
+            "bomRows": bom_rows(design, None).len(),
         },
     })
 }

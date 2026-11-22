@@ -802,6 +802,77 @@ fn design_update_text(ctx: CallContext) -> Result<JsValue> {
     respond(&ctx, &report)
 }
 
+/// Adds one net label to a sheet.
+#[function]
+fn design_add_label(ctx: CallContext) -> Result<JsValue> {
+    let handle = handle(&ctx, 0)?;
+    let request: AddLabelRequest = decode(serde_json::from_str(&text(&ctx, 1)?))?;
+    let report = open_eda_model::add_label(handle, request).map_err(fail)?;
+    respond(&ctx, &report)
+}
+
+/// Lists the net labels of one sheet.
+#[function]
+fn design_list_labels(ctx: CallContext) -> Result<JsValue> {
+    let handle = handle(&ctx, 0)?;
+    let sheet = optional_text(&ctx, 1)?;
+    let report = open_eda_model::list_labels(handle, sheet.as_deref()).map_err(fail)?;
+    respond(&ctx, &report)
+}
+
+/// Updates the text, placement, scope or style of one net label.
+#[function]
+fn design_update_label(ctx: CallContext) -> Result<JsValue> {
+    let handle = handle(&ctx, 0)?;
+    let request: UpdateLabelRequest = decode(serde_json::from_str(&text(&ctx, 1)?))?;
+    let report = open_eda_model::update_label(handle, request).map_err(fail)?;
+    respond(&ctx, &report)
+}
+
+/// Deletes one net label by identity.
+#[function]
+fn design_delete_label(ctx: CallContext) -> Result<JsValue> {
+    let handle = handle(&ctx, 0)?;
+    let id = text(&ctx, 1)?;
+    let sheet = optional_text(&ctx, 2)?;
+    let report = open_eda_model::delete_label(handle, &id, sheet.as_deref()).map_err(fail)?;
+    respond(&ctx, &report)
+}
+
+/// Lists the junctions of one sheet.
+#[function]
+fn design_list_junctions(ctx: CallContext) -> Result<JsValue> {
+    let handle = handle(&ctx, 0)?;
+    let sheet = optional_text(&ctx, 1)?;
+    let report = open_eda_model::list_junctions(handle, sheet.as_deref()).map_err(fail)?;
+    respond(&ctx, &report)
+}
+
+/// Lists the no-connect flags of one sheet.
+#[function]
+fn design_list_no_connects(ctx: CallContext) -> Result<JsValue> {
+    let handle = handle(&ctx, 0)?;
+    let sheet = optional_text(&ctx, 1)?;
+    let report = open_eda_model::list_no_connects(handle, sheet.as_deref()).map_err(fail)?;
+    respond(&ctx, &report)
+}
+
+/// Lists every sheet with its identity, name and object counts.
+#[function]
+fn design_list_sheets(ctx: CallContext) -> Result<JsValue> {
+    let handle = handle(&ctx, 0)?;
+    let report = open_eda_model::list_sheets(handle).map_err(fail)?;
+    respond(&ctx, &report)
+}
+
+/// Reports deterministic per-sheet and design-wide object counts.
+#[function]
+fn design_stats(ctx: CallContext) -> Result<JsValue> {
+    let handle = handle(&ctx, 0)?;
+    let report = open_eda_model::stats(handle).map_err(fail)?;
+    respond(&ctx, &report)
+}
+
 /// Copies one placed component under a new reference designator.
 #[function]
 fn design_copy_component(ctx: CallContext) -> Result<JsValue> {
@@ -1659,6 +1730,14 @@ register_module![
     design_move_text,
     design_list_texts,
     design_update_text,
+    design_add_label,
+    design_list_labels,
+    design_update_label,
+    design_delete_label,
+    design_list_junctions,
+    design_list_no_connects,
+    design_list_sheets,
+    design_stats,
     design_copy_component,
     open_gui,
     pump_events,

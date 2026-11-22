@@ -762,3 +762,67 @@ test('text list and update edit in place across undo', { skip: withoutAddon }, a
         await eda.dispose();
     }
 });
+
+test('net labels carry scope and stats report deterministic counts', { skip: withoutAddon }, async () => {
+    const eda = new OpenEDA();
+    try {
+        const design = await eda.create();
+        const local = await design.addLabel({ text: 'VCC', x: 10, y: 20 });
+        assert.equal(local.id, 'label-1');
+        assert.equal(local.scope, 'local');
+        assert.equal(local.rotation, 0);
+        assert.equal(local.justify, 'left');
+        await design.addLabel({ text: 'GND', x: 30, y: 40, scope: 'global', rotation: 90, justify: 'right' });
+
+        let listed = await design.listLabels();
+        assert.equal(listed.sheetId, 'sheet-1');
+        assert.deepEqual(
+            listed.labels.map((label) => `${label.id}:${label.text}:${label.scope}`),
+            ['label-1:VCC:local', 'label-2:GND:global'],
+        );
+
+        const updated = await design.updateLabel({ id: 'label-1', text: 'VDD', scope: 'hierarchical', x: 11 });
+        assert.equal(updated.label.text, 'VDD');
+        assert.equal(updated.label.scope, 'hierarchical');
+        assert.equal(updated.label.x, 11);
+        assert.equal(updated.label.y, 20);
+
+        await assert.rejects(
+            design.addLabel({ text: '  ', x: 0, y: 0 }),
+            (error: unknown) => error instanceof OpenEDAError && error.code === 'session/argument-invalid',
+        );
+        await assert.rejects(
+            design.updateLabel({ id: 'label-9', text: 'X' }),
+            (error: unknown) => error instanceof OpenEDAError && error.code === 'object/not-found',
+        );
+
+        await design.addJunction({ x: 1, y: 2 });
+        await design.addNoConnect({ x: 3, y: 4 });
+        const junctions = await design.listJunctions();
+        assert.deepEqual(junctions.junctions, [{ index: 0, x: 1, y: 2 }]);
+        const noConnects = await design.listNoConnects();
+        assert.deepEqual(noConnects.noConnects, [{ index: 0, x: 3, y: 4 }]);
+        const sheets = await design.listSheets();
+        assert.equal(sheets.sheets[0]?.labels, 2);
+
+        const stats = await design.stats();
+        assert.equal(stats.format, 'open-eda-stats');
+        assert.equal(stats.totals.sheets, 1);
+        assert.equal(stats.totals.labels, 2);
+        assert.equal(stats.totals.junctions, 1);
+        assert.equal(stats.totals.noConnects, 1);
+        assert.equal(stats.totals.buses, 0);
+        assert.equal(stats.totals.bomRows, 0);
+
+        await design.removeLabel('label-2');
+        listed = await design.listLabels();
+        assert.equal(listed.labels.length, 1);
+        assert.equal(listed.labels[0]?.id, 'label-1');
+
+        await design.undo();
+        assert.equal((await design.listLabels()).labels.length, 2);
+        await design.close();
+    } finally {
+        await eda.dispose();
+    }
+});

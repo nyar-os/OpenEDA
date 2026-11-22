@@ -90,6 +90,14 @@ export interface NativeBinding {
     design_move_text(handle: number, index: number, sheet: string | undefined, x: number, y: number): string;
     design_list_texts(handle: number, sheet?: string): string;
     design_update_text(handle: number, requestJson: string): string;
+    design_add_label(handle: number, requestJson: string): string;
+    design_list_labels(handle: number, sheet?: string): string;
+    design_update_label(handle: number, requestJson: string): string;
+    design_delete_label(handle: number, id: string, sheet?: string): string;
+    design_list_junctions(handle: number, sheet?: string): string;
+    design_list_no_connects(handle: number, sheet?: string): string;
+    design_list_sheets(handle: number): string;
+    design_stats(handle: number): string;
     openGui(options?: { title?: string; contentDir?: string; width?: number; height?: number }): string;
     pumpEvents(): string;
     closeGui(): string;
