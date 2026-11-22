@@ -641,6 +641,26 @@ pub struct AddWireRequest {
     pub to: [f64; 2],
 }
 
+/// Request of [`update_wire`].
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateWireRequest {
+    /// Target sheet id or name; the first sheet is used when omitted.
+    #[serde(default)]
+    pub sheet: Option<String>,
+    /// Stable wire identity, for example `wire-1`.
+    pub id: String,
+    /// New declared net name. An empty string clears the assignment.
+    #[serde(default)]
+    pub net: Option<String>,
+    /// Replacement start point.
+    #[serde(default)]
+    pub from: Option<[f64; 2]>,
+    /// Replacement end point.
+    #[serde(default)]
+    pub to: Option<[f64; 2]>,
+}
+
 /// Request of [`add_junction`].
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -2455,6 +2475,62 @@ pub fn add_wire(handle: u64, request: AddWireRequest) -> Result<Value, ServiceEr
         let mut payload = Map::new();
         payload.insert("wire".to_string(), json!(wire));
         Ok(payload)
+    })
+}
+
+/// Updates the endpoints or net assignment of one wire segment.
+///
+/// An omitted field keeps its current value, so a request only carries what it
+/// changes. An empty `net` clears the assignment; a non-empty name is stored
+/// verbatim, matching [`add_wire`], which does not require the net to exist.
+/// A request that changes nothing is rejected instead of adding a revision.
+pub fn update_wire(handle: u64, request: UpdateWireRequest) -> Result<Value, ServiceError> {
+    for point in request.from.iter().chain(request.to.iter()) {
+        if !point.iter().all(|value| value.is_finite()) {
+            return Err(ServiceError::new("session/argument-invalid", "wire coordinates must be finite numbers"));
+        }
+    }
+    if request.net.is_none() && request.from.is_none() && request.to.is_none() {
+        return Err(ServiceError::new("session/argument-invalid", "a wire update needs `net`, `from` or `to`"));
+    }
+    mutate(handle, |design| {
+        let index = sheet_index(design, request.sheet.as_deref())?;
+        let sheet = &mut design.sheets[index];
+        let wire = sheet
+            .wires
+            .iter_mut()
+            .find(|candidate| candidate.id == request.id)
+            .ok_or_else(|| not_found(format!("no wire `{}` is drawn on this sheet", request.id)))?;
+        if let Some(net) = request.net {
+            let trimmed = net.trim();
+            wire.net = if trimmed.is_empty() { None } else { Some(trimmed.to_string()) };
+        }
+        if let Some(from) = request.from {
+            wire.from = from;
+        }
+        if let Some(to) = request.to {
+            wire.to = to;
+        }
+        let updated = wire.clone();
+        design.revision += 1;
+        let mut payload = Map::new();
+        payload.insert("wire".to_string(), json!(updated));
+        Ok(payload)
+    })
+}
+
+/// Lists the wires drawn on one sheet.
+pub fn list_wires(handle: u64, sheet: Option<&str>) -> Result<Value, ServiceError> {
+    with_session(handle, |session| {
+        let design = &session.design;
+        let index = sheet_index(design, sheet)?;
+        let target = &design.sheets[index];
+        Ok(json!({
+            "revision": design.revision,
+            "design": summary_of(session),
+            "sheetId": target.id,
+            "wires": target.wires,
+        }))
     })
 }
 
@@ -6177,6 +6253,66 @@ mod tests {
         assert_eq!(list(handle).expect("list")["nets"], json!([]));
         assert_eq!(list(handle).expect("list")["wires"][0]["net"], Value::Null);
         save(handle, &dir.join("deep.oeda"), false).expect("the detached wire stays valid");
+        close(handle).expect("close");
+    }
+
+    #[test]
+    fn wires_can_be_listed_and_updated_in_place() {
+        let created = create(CreateRequest::default()).expect("create");
+        let handle = created["handle"].as_u64().expect("handle");
+        add_wire(handle, AddWireRequest { sheet: None, net: Some("VCC".to_string()), from: [0.0, 0.0], to: [10.0, 0.0] })
+            .expect("add wire");
+
+        let listed = list_wires(handle, None).expect("list wires");
+        assert_eq!(listed["sheetId"], "sheet-1");
+        assert_eq!(listed["wires"].as_array().expect("wires").len(), 1);
+        assert_eq!(listed["wires"][0]["id"], "wire-1");
+
+        let updated = update_wire(
+            handle,
+            UpdateWireRequest {
+                sheet: None,
+                id: "wire-1".to_string(),
+                net: Some("GND".to_string()),
+                from: Some([1.0, 2.0]),
+                to: None,
+            },
+        )
+        .expect("update wire");
+        assert_eq!(updated["wire"]["net"], "GND");
+        assert_eq!(updated["wire"]["from"], json!([1.0, 2.0]));
+        assert_eq!(updated["wire"]["to"], json!([10.0, 0.0]));
+
+        let cleared = update_wire(
+            handle,
+            UpdateWireRequest {
+                sheet: None,
+                id: "wire-1".to_string(),
+                net: Some(String::new()),
+                from: None,
+                to: Some([11.0, 0.0]),
+            },
+        )
+        .expect("clear net");
+        assert_eq!(cleared["wire"]["net"], Value::Null);
+        assert_eq!(cleared["wire"]["to"], json!([11.0, 0.0]));
+
+        let no_change =
+            update_wire(handle, UpdateWireRequest { sheet: None, id: "wire-1".to_string(), net: None, from: None, to: None })
+                .expect_err("nothing to update");
+        assert_eq!(no_change.code, "session/argument-invalid");
+        let missing = update_wire(
+            handle,
+            UpdateWireRequest { sheet: None, id: "wire-9".to_string(), net: Some("GND".to_string()), from: None, to: None },
+        )
+        .expect_err("unknown wire");
+        assert_eq!(missing.code, "object/not-found");
+        let infinite = update_wire(
+            handle,
+            UpdateWireRequest { sheet: None, id: "wire-1".to_string(), net: None, from: Some([f64::INFINITY, 0.0]), to: None },
+        )
+        .expect_err("non-finite point");
+        assert_eq!(infinite.code, "session/argument-invalid");
         close(handle).expect("close");
     }
 

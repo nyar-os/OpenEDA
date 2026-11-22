@@ -619,6 +619,16 @@ export interface WireInput {
     readonly to: readonly [number, number];
 }
 
+/** Input of `design.updateWire()`. An empty `net` clears the assignment. */
+export interface UpdateWireInput {
+    readonly sheet?: SheetId;
+    /** Stable wire identity, for example `wire-1`. */
+    readonly id: ObjectId;
+    readonly net?: string;
+    readonly from?: readonly [number, number];
+    readonly to?: readonly [number, number];
+}
+
 /** Input of `design.addJunction()`. */
 export interface JunctionInput {
     readonly sheet?: SheetId;
@@ -1111,6 +1121,10 @@ export interface Design {
     connectNet(input: ConnectNetInput): Promise<Net>;
     /** Adds one wire segment. */
     addWire(input: WireInput): Promise<Wire>;
+    /** Updates the endpoints or net of one wire segment. */
+    updateWire(input: UpdateWireInput): Promise<Wire>;
+    /** Lists the wires drawn on a sheet. */
+    listWires(options?: { readonly sheet?: SheetId }): Promise<readonly Wire[]>;
     /** Adds one junction (connection dot). */
     addJunction(input: JunctionInput): Promise<Junction>;
     /** Adds one free text annotation. */

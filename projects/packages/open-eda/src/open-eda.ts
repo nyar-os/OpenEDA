@@ -71,6 +71,7 @@ import type {
     TextInput,
     TextLabel,
     UpdateComponentInput,
+    UpdateWireInput,
     Variant,
     VariantInput,
     VariantResult,
@@ -470,6 +471,14 @@ function attach(opened: service.DesignHandle, options: AttachOptions): Design {
             const result = await mutate(() => service.addWire(handle, input));
             current = result.design;
             return result.wire;
+        },
+        async updateWire(input: UpdateWireInput): Promise<Wire> {
+            const result = await mutate(() => service.updateWire(handle, input));
+            current = result.design;
+            return result.wire;
+        },
+        async listWires(listOptions?: { readonly sheet?: string }): Promise<readonly Wire[]> {
+            return service.listWires(handle, listOptions?.sheet).wires;
         },
         async addJunction(input: JunctionInput): Promise<Junction> {
             const result = await mutate(() => service.addJunction(handle, input));

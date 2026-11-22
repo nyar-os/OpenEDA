@@ -25,7 +25,7 @@ use open_eda_model::{
     AddBusRequest, AddComponentRequest, AddJunctionRequest, AddNoConnectRequest, AddTextRequest, AddWireRequest,
     ComponentClassRequest, ConnectNetRequest, CreateRequest, DeleteNetRequest, DisconnectNetRequest, InspectOptions,
     MoveComponentRequest, NetClassRequest, ReferencePrefixRequest, RenameNetRequest, ServiceError, SetFootprintRequest,
-    SetPinTypeRequest, UpdateComponentRequest, UpdateDesignRequest,
+    SetPinTypeRequest, UpdateComponentRequest, UpdateDesignRequest, UpdateWireRequest,
 };
 use serde_json::{Value, json};
 use wae::{
@@ -309,6 +309,24 @@ fn design_add_wire(ctx: CallContext) -> Result<JsValue> {
     let handle = handle(&ctx, 0)?;
     let request: AddWireRequest = decode(serde_json::from_str(&text(&ctx, 1)?))?;
     let report = open_eda_model::add_wire(handle, request).map_err(fail)?;
+    respond(&ctx, &report)
+}
+
+/// Updates the endpoints or net of one wire segment.
+#[function]
+fn design_update_wire(ctx: CallContext) -> Result<JsValue> {
+    let handle = handle(&ctx, 0)?;
+    let request: UpdateWireRequest = decode(serde_json::from_str(&text(&ctx, 1)?))?;
+    let report = open_eda_model::update_wire(handle, request).map_err(fail)?;
+    respond(&ctx, &report)
+}
+
+/// Lists the wires drawn on one sheet.
+#[function]
+fn design_list_wires(ctx: CallContext) -> Result<JsValue> {
+    let handle = handle(&ctx, 0)?;
+    let sheet = optional_text(&ctx, 1)?;
+    let report = open_eda_model::list_wires(handle, sheet.as_deref()).map_err(fail)?;
     respond(&ctx, &report)
 }
 
@@ -1460,6 +1478,8 @@ register_module![
     design_delete_component,
     design_connect_net,
     design_add_wire,
+    design_update_wire,
+    design_list_wires,
     design_add_junction,
     design_add_text,
     design_add_no_connect,

@@ -63,6 +63,7 @@ import type {
     TextInput,
     TextLabel,
     UpdateComponentInput,
+    UpdateWireInput,
     Variant,
     VariantInput,
     VariantListResult,
@@ -107,6 +108,12 @@ export interface NetResult extends EditResult, HistoryFlags {
 /** Result of {@link addWire}. */
 export interface WireResult extends EditResult, HistoryFlags {
     readonly wire: Wire;
+}
+
+/** Result of {@link listWires}. */
+export interface WireListResult extends EditResult {
+    readonly sheetId: string;
+    readonly wires: readonly Wire[];
 }
 
 /** Result of {@link addJunction}. */
@@ -442,6 +449,30 @@ export function addWire(handle: number, input: WireInput): WireResult {
                 to: [input.to[0], input.to[1]],
             }),
         ),
+    );
+}
+
+/** Updates the endpoints or net of one wire segment. */
+export function updateWire(handle: number, input: UpdateWireInput): WireResult {
+    return decode<WireResult>(() =>
+        binding('design.updateWire').design_update_wire(
+            handle,
+            JSON.stringify({
+                sheet: input.sheet,
+                id: input.id,
+                net: input.net,
+                from: input.from === undefined ? undefined : [input.from[0], input.from[1]],
+                to: input.to === undefined ? undefined : [input.to[0], input.to[1]],
+            }),
+        ),
+    );
+}
+
+/** Lists the wires drawn on one sheet. */
+export function listWires(handle: number, sheet?: string): WireListResult {
+    const native = binding('design.listWires');
+    return decode<WireListResult>(() =>
+        sheet === undefined ? native.design_list_wires(handle) : native.design_list_wires(handle, sheet),
     );
 }
 

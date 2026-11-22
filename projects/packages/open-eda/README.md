@@ -11,7 +11,7 @@ crate. `new OpenEDA(options?)` creates a session synchronously, and the returned
 `Design` handle supports:
 
 - `addComponent`, `moveComponent`, `updateComponent`, `setFootprint`, `deleteComponent`
-- `connectNet`, `renameNet`, `addWire`, `deleteWire`
+- `connectNet`, `renameNet`, `addWire`, `updateWire`, `listWires`, `deleteWire`
 - `addJunction`, `addText`
 - `addSheet`, `renameSheet`, `deleteSheet`
 - `undo`, `redo`, with `canUndo`/`canRedo` and a bounded 32-step history

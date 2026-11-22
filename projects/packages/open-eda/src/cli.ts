@@ -223,6 +223,14 @@ function parseVariantValues(raw: string): Parsed<Record<string, string>> {
     return { ok: true, value: values };
 }
 
+function parsePoint(raw: string | undefined): readonly [number, number] | undefined {
+    if (raw === undefined) {
+        return undefined;
+    }
+    const parts = raw.split(',').map((item) => Number(item.trim()));
+    return parts.length === 2 && parts.every((value) => Number.isFinite(value)) ? [parts[0], parts[1]] : undefined;
+}
+
 function describeObjects(objects: DesignObjects): string {
     const lines = [describeDesign(objects.design), `components: ${objects.components.length}`];
     for (const component of objects.components) {
@@ -1276,6 +1284,106 @@ variantCommand
     });
 
 const wireCommand = cli.command('wire', 'cli.cmd.wire');
+wireCommand
+    .command('add', 'cli.cmd.wire-add')
+    .option('--from <x,y>', 'cli.opt.from')
+    .option('--to <x,y>', 'cli.opt.to')
+    .option('--net <net>', 'cli.opt.net')
+    .option('--sheet <sheet>', 'cli.opt.sheet')
+    .actionCtx(async (options, _args, ctx) => {
+        const file = input(options);
+        if (file === undefined) {
+            ctx.fail('open-eda.cli.file-required', { message: 'a design document is required' });
+            return 2;
+        }
+        const from = parsePoint(text(options, 'from'));
+        const to = parsePoint(text(options, 'to'));
+        if (from === undefined || to === undefined) {
+            ctx.fail('open-eda.cli.arguments-invalid', {
+                message: '`--from x,y` and `--to x,y` are required; coordinates must be finite numbers',
+            });
+            return 2;
+        }
+        const { wire, saved } = await withDesign(file, async (design) => {
+            const wire = await design.addWire({ sheet: text(options, 'sheet'), net: text(options, 'net'), from, to });
+            return { wire, saved: await savedReport(design) };
+        });
+        ctx.emitResult(
+            { ...saved, revision: saved.revision, wire },
+            `added ${wire.id} to ${file} revision=${saved.revision}`,
+        );
+        return 0;
+    });
+
+wireCommand
+    .command('update', 'cli.cmd.wire-update')
+    .option('--id <wire>', 'cli.opt.wire')
+    .option('--from <x,y>', 'cli.opt.from')
+    .option('--to <x,y>', 'cli.opt.to')
+    .option('--net <net>', 'cli.opt.net')
+    .option('--sheet <sheet>', 'cli.opt.sheet')
+    .actionCtx(async (options, _args, ctx) => {
+        const file = input(options);
+        if (file === undefined) {
+            ctx.fail('open-eda.cli.file-required', { message: 'a design document is required' });
+            return 2;
+        }
+        const id = text(options, 'id');
+        if (id === undefined || id.trim().length === 0) {
+            ctx.fail('open-eda.cli.arguments-invalid', { message: '`--id` is required' });
+            return 2;
+        }
+        const rawFrom = text(options, 'from');
+        const rawTo = text(options, 'to');
+        const from = parsePoint(rawFrom);
+        const to = parsePoint(rawTo);
+        if ((rawFrom !== undefined && from === undefined) || (rawTo !== undefined && to === undefined)) {
+            ctx.fail('open-eda.cli.arguments-invalid', { message: '`--from` and `--to` must be `x,y` pairs' });
+            return 2;
+        }
+        const net = text(options, 'net');
+        if (from === undefined && to === undefined && net === undefined) {
+            ctx.fail('open-eda.cli.arguments-invalid', { message: 'a wire update needs `--from`, `--to` or `--net`' });
+            return 2;
+        }
+        const { wire, saved } = await withDesign(file, async (design) => {
+            const wire = await design.updateWire({ sheet: text(options, 'sheet'), id, net, from, to });
+            return { wire, saved: await savedReport(design) };
+        });
+        ctx.emitResult(
+            { ...saved, revision: saved.revision, wire },
+            `updated ${wire.id} in ${file} revision=${saved.revision}`,
+        );
+        return 0;
+    });
+
+wireCommand
+    .command('list', 'cli.cmd.wire-list')
+    .option('--sheet <sheet>', 'cli.opt.sheet')
+    .actionCtx(async (options, _args, ctx) => {
+        const file = input(options);
+        if (file === undefined) {
+            ctx.fail('open-eda.cli.file-required', { message: 'a design document is required' });
+            return 2;
+        }
+        const report = await withDesign(file, async (design) => {
+            const sheet = text(options, 'sheet');
+            const wires = await design.listWires(sheet === undefined ? undefined : { sheet });
+            return { wires, summary: design.summary };
+        });
+        const lines = [
+            `wires revision=${report.summary.revision} count=${report.wires.length}`,
+        ];
+        for (const wire of report.wires) {
+            const net = wire.net ?? '(no net)';
+            lines.push(
+                `  ${wire.id} ${net} (${wire.from[0]}, ${wire.from[1]}) -> (${wire.to[0]}, ${wire.to[1]})`,
+            );
+        }
+        ctx.emitResult({ ...report.summary, wires: report.wires }, lines.join('\n'));
+        return 0;
+    });
+
 wireCommand
     .command('delete', 'cli.cmd.wire-delete')
     .option('--id <wire>', 'cli.opt.wire')
