@@ -686,6 +686,32 @@ export interface BusInput {
     readonly aliases?: readonly string[];
 }
 
+/** Input of `design.updateBus()`; only the given fields change. */
+export interface UpdateBusInput {
+    /** Bus id, name or alias that selects the declaration to edit. */
+    readonly id: string;
+    /** New bus name; kept when omitted. */
+    readonly name?: string;
+    /** New number of member nets; at least 1 and kept when omitted. */
+    readonly width?: number;
+    /**
+     * Replacement alias list; the current aliases are kept when omitted and an
+     * empty list clears them. Aliases keep the `addBus` collision rules.
+     */
+    readonly aliases?: readonly string[];
+}
+
+/** Result of `design.updateBus()`. */
+export interface UpdateBusResult {
+    readonly revision: number;
+    readonly design: DesignSummary;
+    readonly canUndo: boolean;
+    readonly canRedo: boolean;
+    readonly bus: Bus;
+    /** `false` when the supplied fields already matched the declaration. */
+    readonly changed: boolean;
+}
+
 /** Input of `design.addComponent()`. */
 export interface ComponentInput {
     /** Target sheet id or name; the first sheet is used when omitted. */
@@ -1770,6 +1796,8 @@ export interface Design {
     mergeNets(input: MergeNetsInput): Promise<MergeNetsResult>;
     /** Declares a design-level bus; a duplicate name is refused. */
     addBus(input: BusInput): Promise<Bus>;
+    /** Renames, resizes or replaces the aliases of one declared bus. */
+    updateBus(input: UpdateBusInput): Promise<UpdateBusResult>;
     /** Removes one declared bus by id or name. */
     removeBus(bus: ObjectId | string): Promise<void>;
     /** Lists the buses declared by the design. */

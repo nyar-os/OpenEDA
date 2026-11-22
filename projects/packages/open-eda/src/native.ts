@@ -55,6 +55,7 @@ export interface NativeBinding {
     design_list_nets(handle: number, sheet?: string): string;
     design_net_show(handle: number, name: string, sheet?: string): string;
     design_add_bus(handle: number, requestJson: string): string;
+    design_update_bus(handle: number, bus: string, requestJson: string): string;
     design_remove_bus(handle: number, bus: string): string;
     design_list_buses(handle: number): string;
     design_add_net_class(handle: number, requestJson: string): string;

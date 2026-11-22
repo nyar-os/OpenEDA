@@ -39,6 +39,7 @@ import type {
     SaveReport,
     SymbolLibraryResult,
     TraceReport,
+    UpdateBusInput,
 } from './types.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -1474,6 +1475,55 @@ busCommand
         ctx.emitResult(
             { ...saved, revision: saved.revision, bus },
             `declared bus ${bus.name}[0..${bus.width - 1}]${aliases.length > 0 ? ` aliased as ${aliases.join(',')}` : ''} in ${file} revision=${saved.revision}`,
+        );
+        return 0;
+    });
+
+busCommand
+    .command('update', 'cli.cmd.bus-update')
+    .option('--id <bus>', 'cli.opt.bus')
+    .option('--name <name>', 'cli.opt.name')
+    .option('--width <number>', 'cli.opt.width')
+    .option('--aliases <names>', 'cli.opt.aliases')
+    .actionCtx(async (options, _args, ctx) => {
+        const file = input(options);
+        if (file === undefined) {
+            ctx.fail('open-eda.cli.file-required', { message: 'a design document is required' });
+            return 2;
+        }
+        const bus = text(options, 'id');
+        if (bus === undefined || bus.trim().length === 0) {
+            ctx.fail('open-eda.cli.arguments-invalid', { message: '`--id` is required' });
+            return 2;
+        }
+        const name = text(options, 'name');
+        const width = integer(options, 'width');
+        if (width !== undefined && (Number.isNaN(width) || width < 1)) {
+            ctx.fail('open-eda.cli.arguments-invalid', { message: '`--width` must be an integer of at least 1' });
+            return 2;
+        }
+        const aliases = text(options, 'aliases') === undefined ? undefined : list(options, 'aliases');
+        if (name === undefined && width === undefined && aliases === undefined) {
+            ctx.fail('open-eda.cli.arguments-invalid', {
+                message: 'at least one of `--name`, `--width` or `--aliases` is required',
+            });
+            return 2;
+        }
+        const update: UpdateBusInput = {
+            id: bus,
+            ...(name === undefined ? {} : { name }),
+            ...(width === undefined ? {} : { width }),
+            ...(aliases === undefined ? {} : { aliases }),
+        };
+        const { bus: updated, changed, saved } = await withDesign(file, async (design) => {
+            const result = await design.updateBus(update);
+            return { bus: result.bus, changed: result.changed, saved: await savedReport(design) };
+        });
+        const aliasesText =
+            updated.aliases !== undefined && updated.aliases.length > 0 ? ` aliased as ${updated.aliases.join(',')}` : '';
+        ctx.emitResult(
+            { ...saved, revision: saved.revision, changed, bus: updated },
+            `${changed ? 'updated' : 'unchanged'} bus ${updated.name}[0..${updated.width - 1}]${aliasesText} in ${file} revision=${saved.revision}`,
         );
         return 0;
     });

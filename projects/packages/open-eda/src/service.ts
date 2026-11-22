@@ -99,6 +99,8 @@ import type {
     TraceReport,
     TranslateInput,
     TranslateResult,
+    UpdateBusInput,
+    UpdateBusResult,
     UpdateComponentInput,
     UpdateWireInput,
     Variant,
@@ -989,6 +991,21 @@ export function addBus(handle: number, input: BusInput): BusResult {
         binding('design.addBus').design_add_bus(
             handle,
             JSON.stringify({ name: input.name, width: input.width, aliases: input.aliases }),
+        ),
+    );
+}
+
+/** Renames, resizes or replaces the aliases of one declared bus. */
+export function updateBus(handle: number, input: UpdateBusInput): UpdateBusResult {
+    return decode<UpdateBusResult>(() =>
+        binding('design.updateBus').design_update_bus(
+            handle,
+            input.id,
+            JSON.stringify({
+                name: input.name,
+                width: input.width,
+                aliases: input.aliases === undefined ? undefined : [...input.aliases],
+            }),
         ),
     );
 }

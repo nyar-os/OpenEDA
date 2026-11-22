@@ -87,6 +87,7 @@ Pin roles: `input`, `output`, `bidirectional`, `tri_state`, `passive`,
 | `open-eda net list <file> [--sheet <id>]` | List nets and nodes |
 | `open-eda net delete <file> --net <name> [--sheet <id>]` | Delete a net |
 | `open-eda bus add <file> --name <name> --width <n> [--aliases <list>]` | Declare a bus |
+| `open-eda bus update <file> --id <name> [--name <new>] [--width <n>] [--aliases <list>]` | Rename, resize or replace the aliases of a bus; `--aliases ""` clears aliases and an unchanged request reports `changed: false` |
 | `open-eda bus list <file>` | List buses, widths and aliases |
 | `open-eda bus remove <file> --id <name>` | Remove a bus |
 | `open-eda net-class add <file> --name <name> --width <n> [--clearance <n>] [--via <n>] [--nets <list>] [--buses <list>]` | Declare a net class; an existing name is replaced as a whole |

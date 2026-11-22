@@ -452,6 +452,16 @@ fn design_add_bus(ctx: CallContext) -> Result<JsValue> {
     respond(&ctx, &report)
 }
 
+/// Updates one design-level bus selected by id, name or alias.
+#[function]
+fn design_update_bus(ctx: CallContext) -> Result<JsValue> {
+    let handle = handle(&ctx, 0)?;
+    let bus = text(&ctx, 1)?;
+    let request: open_eda_model::UpdateBusRequest = decode(serde_json::from_str(&text(&ctx, 2)?))?;
+    let report = open_eda_model::update_bus(handle, &bus, request).map_err(fail)?;
+    respond(&ctx, &report)
+}
+
 /// Removes one design-level bus by id or name.
 #[function]
 fn design_remove_bus(ctx: CallContext) -> Result<JsValue> {
@@ -1756,6 +1766,7 @@ register_module![
     design_list_nets,
     design_net_show,
     design_add_bus,
+    design_update_bus,
     design_remove_bus,
     design_list_buses,
     design_add_net_class,

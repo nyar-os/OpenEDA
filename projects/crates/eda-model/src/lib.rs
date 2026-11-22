@@ -1202,6 +1202,27 @@ pub struct AddBusRequest {
     pub aliases: Vec<String>,
 }
 
+/// Request of [`update_bus`].
+///
+/// Every field is optional and only the fields a request carries change, so one
+/// call can rename a bus, change its width, replace its aliases or do all three
+/// without touching the rest. Supplying `aliases` replaces the whole list, and an
+/// empty list clears every alias.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateBusRequest {
+    /// New bus name; the current name is kept when omitted.
+    #[serde(default)]
+    pub name: Option<String>,
+    /// New member count; must be at least 1 and keeps the current width when omitted.
+    #[serde(default)]
+    pub width: Option<u64>,
+    /// Replacement alias list; the current aliases are kept when omitted and an
+    /// empty list clears them.
+    #[serde(default)]
+    pub aliases: Option<Vec<String>>,
+}
+
 /// Request of [`add_variant`].
 ///
 /// A variant with an existing name is replaced, so one request always describes
@@ -1968,6 +1989,112 @@ pub fn add_bus(handle: u64, request: AddBusRequest) -> Result<Value, ServiceErro
         design.revision += 1;
         let mut payload = Map::new();
         payload.insert("bus".to_string(), json!(bus));
+        Ok(payload)
+    })
+}
+
+/// Updates one declared bus selected by id, name or alias.
+///
+/// A request carries only what it changes and needs at least one of `name`,
+/// `width` or `aliases`; every field it does not name keeps its current value.
+/// The name follows the same rules as [`add_bus`]: it is trimmed, must not be
+/// empty and must not collide with another bus's name, aliases or member names
+/// (`object/duplicate`). The width must be at least 1
+/// (`session/argument-invalid`). Supplying `aliases` replaces the whole list, so
+/// an empty list clears every alias; each alias follows the same legality,
+/// uniqueness and collision rules as [`add_bus`]. A rename changes only the
+/// declaration: nets, net nodes and net-class assignments are not rewritten.
+/// Changing the width changes only the derived member names. A request that
+/// leaves the declaration unchanged reports `changed: false` and adds no
+/// revision.
+pub fn update_bus(handle: u64, id: &str, request: UpdateBusRequest) -> Result<Value, ServiceError> {
+    let width = request.width;
+    if request.name.is_none() && width.is_none() && request.aliases.is_none() {
+        return Err(ServiceError::new("session/argument-invalid", "a bus update needs `name`, `width` or `aliases`"));
+    }
+    let name = match request.name.as_deref() {
+        Some(raw) => {
+            let trimmed = raw.trim();
+            if trimmed.is_empty() {
+                return Err(ServiceError::new("session/argument-invalid", "a bus name must not be empty"));
+            }
+            Some(trimmed.to_string())
+        }
+        None => None,
+    };
+    if width == Some(0) {
+        return Err(ServiceError::new("session/argument-invalid", "a bus width must be at least 1"));
+    }
+    let aliases = match request.aliases {
+        Some(raw_aliases) => {
+            let mut cleaned = Vec::new();
+            for raw in raw_aliases {
+                let alias = raw.trim().to_string();
+                if alias.is_empty() {
+                    return Err(ServiceError::new("session/argument-invalid", "a bus alias must not be empty"));
+                }
+                if breaks_net_grammar(&alias) {
+                    return Err(ServiceError::new(
+                        "session/argument-invalid",
+                        format!("bus alias `{alias}` contains whitespace or a control character"),
+                    ));
+                }
+                if cleaned.contains(&alias) {
+                    return Err(ServiceError::new(
+                        "session/argument-invalid",
+                        format!("bus alias `{alias}` is declared more than once"),
+                    ));
+                }
+                cleaned.push(alias);
+            }
+            Some(cleaned)
+        }
+        None => None,
+    };
+    mutate(handle, |design| {
+        let position = design
+            .buses
+            .iter()
+            .position(|entry| entry.id == id || entry.name == id || entry.aliases.iter().any(|alias| alias == id))
+            .ok_or_else(|| not_found(format!("no bus `{id}` is declared")))?;
+        let current = design.buses[position].clone();
+        let next_name = name.clone().unwrap_or_else(|| current.name.clone());
+        let next_width = width.unwrap_or(current.width);
+        let next_aliases = aliases.clone().unwrap_or_else(|| current.aliases.clone());
+        let declared = |candidate: &str| {
+            design.buses.iter().enumerate().any(|(index, bus)| {
+                index != position
+                    && (bus.name == candidate
+                        || bus.aliases.iter().any(|alias| alias == candidate)
+                        || (0..bus.width).any(|member| format!("{}{member}", bus.name) == candidate))
+            })
+        };
+        if declared(&next_name) {
+            return Err(duplicate(format!("bus name `{next_name}` already exists")));
+        }
+        for alias in &next_aliases {
+            if alias == &next_name {
+                return Err(ServiceError::new("session/argument-invalid", "a bus alias must differ from its bus name"));
+            }
+            if declared(alias) {
+                return Err(duplicate(format!("bus alias `{alias}` already resolves to a declared bus")));
+            }
+            if (0..next_width).any(|index| format!("{next_name}{index}") == *alias) {
+                return Err(duplicate(format!("bus alias `{alias}` is already a member name of bus `{next_name}`")));
+            }
+        }
+        let changed = next_name != current.name || next_width != current.width || next_aliases != current.aliases;
+        if changed {
+            let bus = &mut design.buses[position];
+            bus.name = next_name;
+            bus.width = next_width;
+            bus.aliases = next_aliases;
+            design.revision += 1;
+        }
+        let bus = design.buses[position].clone();
+        let mut payload = Map::new();
+        payload.insert("bus".to_string(), json!(bus));
+        payload.insert("changed".to_string(), json!(changed));
         Ok(payload)
     })
 }

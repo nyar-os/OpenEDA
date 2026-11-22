@@ -107,6 +107,8 @@ import type {
     TraceReport,
     TranslateInput,
     TranslateResult,
+    UpdateBusInput,
+    UpdateBusResult,
     UpdateComponentInput,
     UpdateWireInput,
     Variant,
@@ -645,6 +647,11 @@ function attach(opened: service.DesignHandle, options: AttachOptions): Design {
             const result = await mutate(() => service.addBus(handle, input));
             current = result.design;
             return result.bus;
+        },
+        async updateBus(input: UpdateBusInput): Promise<UpdateBusResult> {
+            const result = await mutate(() => service.updateBus(handle, input));
+            current = result.design;
+            return result;
         },
         async removeBus(bus: string): Promise<void> {
             const result = await mutate(() => service.removeBus(handle, bus));

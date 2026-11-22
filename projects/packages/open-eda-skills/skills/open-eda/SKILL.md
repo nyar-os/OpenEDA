@@ -72,6 +72,7 @@ open-eda net delete <file.oeda> --net <name> [--sheet <sheet>]
 open-eda net rename <file.oeda> --id <net> --name <new-name> [--sheet <sheet>]
 open-eda net merge <file.oeda> --target <net> --source <net> [--sheet <sheet>]
 open-eda bus add <file.oeda> --name <name> --width <n> [--aliases D,E]
+open-eda bus update <file.oeda> --id <bus> [--name <new>] [--width <n>] [--aliases D,E]
 open-eda bus list <file.oeda>
 open-eda bus remove <file.oeda> --id <bus>
 open-eda net-class add <file.oeda> --name <name> --width <n> [--clearance <n>] [--via <n>] [--nets VCC,GND] [--buses DATA]

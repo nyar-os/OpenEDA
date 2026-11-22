@@ -22,6 +22,7 @@ answer about the document, such as a pin-to-pin path.
 | reference annotation `annotate` | supported | renumbers per leading-letter prefix by sheet, then `y` and `x`; a reference without a prefix is skipped and reported under `skipped`; net nodes, no-connect attachments and BOM variants follow; one revision, none when unchanged |
 | BOM variants and DNP | supported | named DNP designator lists and value overrides applied to `bom`, `bom_json` and `bom_html` |
 | net classes | supported | name, width, clearance, via and net/bus assignment lists |
+| bus update `bus update` | supported | partial edit of one declared bus by id, name or alias: rename, width change and whole alias-list replacement (an empty list clears aliases); a rename never rewrites nets, net nodes or net-class assignments, and a width change only changes derived member names; a request that leaves the declaration unchanged reports `changed: false` and adds no revision |
 | component custom properties | supported | trimmed unique keys, verbatim values; stored in `.oeda`, the JSON projection and KiCad symbol properties |
 | checks `erc`, `electrical`, `bus`, `nets`, `connectivity`, `footprints`, `power`, `references`, `clearance` | supported | `drc` is unsupported; `bus` validates design-level bus declarations; `clearance` compares schematic component bodies; `erc` reports one `erc/duplicate-reference` per reference shared by more than one component; `hierarchy` is a separate read-only entry, not an `inspect --checks` value |
 | design `stats` | supported | deterministic per-sheet and design-wide counts; tagged `open-eda-stats` |
@@ -105,7 +106,10 @@ is `session/argument-invalid` and leaves the revision unchanged.
   bus `DATA` with width 4 expands into `DATA0`..`DATA3` (name plus 0-based index,
   no separator). A declared net with the bus name repeats its nodes into every
   member; a bus without such a net still lists members without nodes. Aliases
-  may not collide with a bus name, a member name or another alias.
+  may not collide with a bus name, a member name or another alias. `bus update`
+  changes the declaration only: a rename leaves nets, net nodes and net-class
+  assignments as they are, and a width change only changes the derived member
+  names.
 - A hierarchical sheet symbol is a parent declaration: name, child file,
   placement, size and ports (`input`, `output`, `bidirectional`, `tri_state`,
   `passive`). Editing never reads or rewrites the child file.
@@ -317,7 +321,8 @@ Every file is written through a temporary file and a rename.
 - `projects/crates/eda-model/tests/unit/diff.rs` — structural comparison.
 - `projects/crates/eda-model/tests/unit/connectivity.rs` — net and pin analysis.
 - `projects/crates/eda-model/tests/unit/bus.rs` — duplicate bus names, missing
-  members, a net shared by two buses, zero-width buses and a valid bus.
+  members, a net shared by two buses, zero-width buses, a valid bus and `bus
+  update` rename, width, alias replacement and validation.
 - `projects/crates/eda-model/tests/unit/clearance.rs` — component-body overlap
   pairs, edge contact, rotation, sheets, severity and waivers.
 - `projects/crates/eda-model/tests/unit/pins.rs` — pin add, remove and rename

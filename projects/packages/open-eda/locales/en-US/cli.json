@@ -52,6 +52,7 @@
             "net-delete": "Delete a net and detach the wires that named it",
             "bus": "Edit design-level buses",
             "bus-add": "Declare a bus the netlist expands into member nets",
+            "bus-update": "Rename a bus, change its width or replace its aliases",
             "bus-list": "List the buses a design document declares",
             "bus-remove": "Remove a declared bus by id, name or alias",
             "net-class": "Manage net classes and their routing attributes",
