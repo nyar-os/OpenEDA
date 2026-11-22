@@ -27,6 +27,7 @@ answer about the document, such as a pin-to-pin path.
 | design `stats` | supported | deterministic per-sheet and design-wide counts; tagged `open-eda-stats` |
 | pin trace `trace` | supported | read-only shortest hop path between two `REF.PIN` pins; tagged `open-eda-trace`; reported as `queries.trace`, not as an `inspect --checks` check |
 | component detail `component show` | supported | read-only detail of one component by reference: placement, value, footprint, custom properties and per-pin nets; tagged `open-eda-component`; pins keep declaration order and net names keep document order |
+| component update `component update` | supported | partial edit of one placed component by reference: only the fields the request names change; one revision per call; `capabilities()` reports `edits.components` |
 | read-only listings `component list`, `net list`, `bus list`, `net-class list`, `wire list`, `label list`, `text list`, `sheet list` | supported | document order with 0-based indices where the model edits by index |
 | junction and no-connect editing | supported | add a junction by coordinate and remove it by 0-based index; add a no-connect flag with or without a `REF.PIN` node and remove it by index; a duplicate junction coordinate is refused (`junction/duplicate`) and so is a second flag on one pin (`no-connect/duplicate`); `capabilities()` reports `edits.junctions` and `edits.noConnects` |
 | component pin editing | supported | add, remove and rename pins after placement; an empty or `REF.PIN`-breaking name is `session/argument-invalid`, a repeated name `pin/duplicate`, a missing pin `pin/not-found` and a removal that a net node or no-connect flag still uses `pin/in-use`; a rename follows every net node, no-connect node and electrical role; `capabilities()` reports `edits.pins` |
@@ -76,6 +77,21 @@ every `from`/`to` pair in deterministic order, and `count`, `changed` and
 `annotated` all hold the number of designators that moved. An already annotated
 design reports zero, adds no revision and records no history step. A call that
 does move designators adds exactly one revision and one history entry.
+
+### Component updates
+
+`component update` (`design.updateComponent()` in the SDK,
+`open-eda component update <file> <ref>`) edits one placed component in place.
+A request carries only the fields it changes — `value`, `footprint`, `x`, `y`,
+`rotation` — and needs at least one of them; every field it does not name keeps
+its current value, and pins, pin roles and custom properties are never
+rewritten. The footprint is trimmed and an empty footprint clears the
+assignment, while the value is stored verbatim. Coordinates and rotation must
+be finite numbers (`session/argument-invalid` otherwise), and rotation is
+stored in degrees exactly as passed without wrapping, so `450` stays `450`. A
+reference no sheet places fails with `object/not-found`. One successful call
+adds exactly one revision and one history entry; a request that names no field
+is `session/argument-invalid` and leaves the revision unchanged.
 
 ### Labels, buses and hierarchy
 
@@ -294,8 +310,8 @@ Every file is written through a temporary file and a rename.
 ## Tests
 
 - `projects/crates/eda-model/tests/unit/lib.rs` — create, edit, inspect, save
-  and reopen, writers, statistics, annotation, labels, variants, properties and
-  KiCad round-trips.
+  and reopen, writers, statistics, annotation, labels, variants, properties,
+  partial component updates, determinism and KiCad round-trips.
 - `projects/crates/eda-model/tests/unit/kicad.rs` — parser and writer subset.
 - `projects/crates/eda-model/tests/unit/diff.rs` — structural comparison.
 - `projects/crates/eda-model/tests/unit/connectivity.rs` — net and pin analysis.

@@ -71,6 +71,7 @@ fn capability_matrix_reports_only_the_implemented_entries() {
     assert_eq!(matrix["exportTargets"]["kicad_sym"], "supported");
     assert_eq!(matrix["exportTargets"]["kicad_pcb"], "unsupported");
     assert_eq!(matrix["exportTargets"]["gbr"], "unsupported");
+    assert_eq!(matrix["edits"]["components"], "supported");
     assert_eq!(matrix["edits"]["junctions"], "supported");
     assert_eq!(matrix["edits"]["noConnects"], "supported");
     assert_eq!(matrix["edits"]["pins"], "supported");
@@ -328,8 +329,19 @@ fn diff_documents_reads_two_files_and_reports_changes() {
     .expect("add R1");
     save(handle, &left, false).expect("save left");
 
-    update_component(handle, UpdateComponentRequest { sheet: None, reference: "R1".to_string(), value: "22k".to_string() })
-        .expect("update R1");
+    update_component(
+        handle,
+        UpdateComponentRequest {
+            sheet: None,
+            reference: "R1".to_string(),
+            value: Some("22k".to_string()),
+            footprint: None,
+            x: None,
+            y: None,
+            rotation: None,
+        },
+    )
+    .expect("update R1");
     add_component(
         handle,
         AddComponentRequest {
@@ -900,9 +912,19 @@ fn deep_edits_keep_nets_and_wires_referentially_sound() {
         "object/not-found"
     );
 
-    let updated =
-        update_component(handle, UpdateComponentRequest { sheet: None, reference: "R1".to_string(), value: "22k".to_string() })
-            .expect("update");
+    let updated = update_component(
+        handle,
+        UpdateComponentRequest {
+            sheet: None,
+            reference: "R1".to_string(),
+            value: Some("22k".to_string()),
+            footprint: None,
+            x: None,
+            y: None,
+            rotation: None,
+        },
+    )
+    .expect("update");
     assert_eq!(updated["component"]["value"], "22k");
 
     let renamed = rename_net(handle, RenameNetRequest { sheet: None, net: "VCC".to_string(), name: "VIN".to_string() })
@@ -928,6 +950,147 @@ fn deep_edits_keep_nets_and_wires_referentially_sound() {
     assert_eq!(list(handle).expect("list")["nets"], json!([]));
     assert_eq!(list(handle).expect("list")["wires"][0]["net"], Value::Null);
     save(handle, &dir.join("deep.oeda"), false).expect("the detached wire stays valid");
+    close(handle).expect("close");
+}
+
+#[test]
+fn component_update_changes_only_the_named_fields() {
+    let created = create(CreateRequest::default()).expect("create");
+    let handle = created["handle"].as_u64().expect("handle");
+    add_component(
+        handle,
+        AddComponentRequest {
+            sheet: None,
+            reference: "R1".to_string(),
+            value: "10k".to_string(),
+            x: 10.0,
+            y: 20.0,
+            rotation: 0.0,
+            pins: vec!["1".to_string(), "2".to_string()],
+        },
+    )
+    .expect("add R1");
+    set_component_footprint(
+        handle,
+        SetFootprintRequest { sheet: None, reference: "R1".to_string(), footprint: "0603".to_string() },
+    )
+    .expect("assign footprint");
+    set_component_property(
+        handle,
+        SetComponentPropertyRequest {
+            sheet: None,
+            reference: "R1".to_string(),
+            key: "MPN".to_string(),
+            value: "ABC-123".to_string(),
+        },
+    )
+    .expect("assign property");
+    let before = summary(handle).expect("summary")["revision"].as_u64().expect("revision");
+
+    let value_only = update_component(
+        handle,
+        UpdateComponentRequest {
+            sheet: None,
+            reference: "R1".to_string(),
+            value: Some("22k".to_string()),
+            footprint: None,
+            x: None,
+            y: None,
+            rotation: None,
+        },
+    )
+    .expect("update value");
+    assert_eq!(value_only["component"]["value"], "22k");
+    assert_eq!(value_only["component"]["footprint"], "0603", "an unlisted footprint keeps its text");
+    assert_eq!(value_only["component"]["x"], 10.0);
+    assert_eq!(value_only["component"]["y"], 20.0);
+    assert_eq!(value_only["component"]["rotation"], 0.0);
+    assert_eq!(value_only["revision"].as_u64(), Some(before + 1));
+
+    let multi = update_component(
+        handle,
+        UpdateComponentRequest {
+            sheet: None,
+            reference: "R1".to_string(),
+            value: None,
+            footprint: Some("  R_0805_2012Metric  ".to_string()),
+            x: Some(50.0),
+            y: Some(60.0),
+            rotation: Some(450.0),
+        },
+    )
+    .expect("update placement");
+    assert_eq!(multi["component"]["value"], "22k", "an unlisted value keeps its text");
+    assert_eq!(multi["component"]["footprint"], "R_0805_2012Metric", "the footprint is trimmed");
+    assert_eq!(multi["component"]["x"], 50.0);
+    assert_eq!(multi["component"]["y"], 60.0);
+    assert_eq!(multi["component"]["rotation"], 450.0, "rotation is stored as passed without wrapping");
+    assert_eq!(multi["component"]["properties"]["MPN"], "ABC-123", "properties are never rewritten");
+    assert_eq!(multi["revision"].as_u64(), Some(before + 2), "one update adds one revision");
+
+    let repeated = update_component(
+        handle,
+        UpdateComponentRequest {
+            sheet: None,
+            reference: "R1".to_string(),
+            value: None,
+            footprint: Some("  R_0805_2012Metric  ".to_string()),
+            x: Some(50.0),
+            y: Some(60.0),
+            rotation: Some(450.0),
+        },
+    )
+    .expect("repeat update");
+    assert_eq!(repeated["component"], multi["component"], "the same request yields the same component");
+    assert_eq!(repeated["revision"].as_u64(), Some(before + 3));
+
+    let missing = update_component(
+        handle,
+        UpdateComponentRequest {
+            sheet: None,
+            reference: "R9".to_string(),
+            value: Some("22k".to_string()),
+            footprint: None,
+            x: None,
+            y: None,
+            rotation: None,
+        },
+    )
+    .expect_err("unknown reference");
+    assert_eq!(missing.code, "object/not-found");
+    assert_eq!(summary(handle).expect("summary")["revision"].as_u64(), Some(before + 3));
+
+    for request in [
+        UpdateComponentRequest {
+            sheet: None,
+            reference: "R1".to_string(),
+            value: None,
+            footprint: None,
+            x: Some(f64::INFINITY),
+            y: None,
+            rotation: None,
+        },
+        UpdateComponentRequest {
+            sheet: None,
+            reference: "R1".to_string(),
+            value: None,
+            footprint: None,
+            x: None,
+            y: None,
+            rotation: Some(f64::NAN),
+        },
+        UpdateComponentRequest {
+            sheet: None,
+            reference: "R1".to_string(),
+            value: None,
+            footprint: None,
+            x: None,
+            y: None,
+            rotation: None,
+        },
+    ] {
+        assert_eq!(update_component(handle, request).expect_err("invalid request").code, "session/argument-invalid");
+    }
     close(handle).expect("close");
 }
 
@@ -3869,8 +4032,19 @@ fn kicad_netlist_import_reports_losses_and_netlist_conflicts() {
     let created = create(CreateRequest::default()).expect("create");
     let handle = created["handle"].as_u64().expect("handle");
     declared_netlist_design(handle);
-    update_component(handle, UpdateComponentRequest { sheet: None, reference: "R1".to_string(), value: "12k".to_string() })
-        .expect("change value");
+    update_component(
+        handle,
+        UpdateComponentRequest {
+            sheet: None,
+            reference: "R1".to_string(),
+            value: Some("12k".to_string()),
+            footprint: None,
+            x: None,
+            y: None,
+            rotation: None,
+        },
+    )
+    .expect("change value");
     disconnect_net(handle, DisconnectNetRequest { sheet: None, net: "VCC".to_string(), nodes: vec!["C1.1".to_string()] })
         .expect("drop a node");
     connect_net(handle, ConnectNetRequest { sheet: None, net: "SIG".to_string(), nodes: vec!["R1.2".to_string()] })

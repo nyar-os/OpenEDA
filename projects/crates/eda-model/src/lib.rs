@@ -927,6 +927,10 @@ pub struct MoveComponentRequest {
 }
 
 /// Request of [`update_component`].
+///
+/// Every field besides the identity is optional and only the fields a request
+/// carries change, so one call can update the value, the footprint and the
+/// placement without touching the rest.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateComponentRequest {
@@ -935,8 +939,22 @@ pub struct UpdateComponentRequest {
     pub sheet: Option<String>,
     /// Reference designator of the placed component.
     pub reference: String,
-    /// New value text.
-    pub value: String,
+    /// New value text; kept when omitted.
+    #[serde(default)]
+    pub value: Option<String>,
+    /// New footprint text; the current assignment is kept when omitted and an
+    /// empty string clears it.
+    #[serde(default)]
+    pub footprint: Option<String>,
+    /// New placement X coordinate; kept when omitted.
+    #[serde(default)]
+    pub x: Option<f64>,
+    /// New placement Y coordinate; kept when omitted.
+    #[serde(default)]
+    pub y: Option<f64>,
+    /// New rotation in degrees; kept when omitted.
+    #[serde(default)]
+    pub rotation: Option<f64>,
 }
 
 /// Request of [`copy_component`].
@@ -1360,6 +1378,7 @@ pub fn capabilities() -> Value {
     }
 
     let edits = json!({
+        "components": level("edit.components".to_string()),
         "junctions": level("edit.junctions".to_string()),
         "noConnects": level("edit.noConnects".to_string()),
         "pins": level("edit.pins".to_string()),
@@ -1406,6 +1425,7 @@ fn capability_matrix() -> CapabilityMatrix {
     for &target in EXPORT_TARGETS {
         matrix.insert(Capability::new(format!("export.{target}"), "export", support_of(SUPPORTED_EXPORTS.contains(&target))));
     }
+    matrix.insert(Capability::new("edit.components", "edit", Support::Supported));
     matrix.insert(Capability::new("edit.junctions", "edit", Support::Supported));
     matrix.insert(Capability::new("edit.noConnects", "edit", Support::Supported));
     matrix.insert(Capability::new("edit.pins", "edit", Support::Supported));
@@ -2401,8 +2421,32 @@ pub fn move_component(handle: u64, request: MoveComponentRequest) -> Result<Valu
     })
 }
 
-/// Updates the value text of one placed component.
+/// Updates the editable fields of one placed component.
+///
+/// A request carries only what it changes and needs at least one of `value`,
+/// `footprint`, `x`, `y` or `rotation`; every field it does not name keeps its
+/// current value. A footprint is trimmed and an empty footprint clears the
+/// assignment, while the value is stored verbatim. Coordinates and rotation
+/// must be finite, and rotation is stored in degrees exactly as passed without
+/// wrapping (`450` stays `450`). The reference must be placed on the sheet
+/// (`object/not-found`). One call adds one revision.
 pub fn update_component(handle: u64, request: UpdateComponentRequest) -> Result<Value, ServiceError> {
+    for coordinate in request.x.iter().chain(request.y.iter()).chain(request.rotation.iter()) {
+        if !coordinate.is_finite() {
+            return Err(ServiceError::new("session/argument-invalid", "component coordinates must be finite numbers"));
+        }
+    }
+    if request.value.is_none()
+        && request.footprint.is_none()
+        && request.x.is_none()
+        && request.y.is_none()
+        && request.rotation.is_none()
+    {
+        return Err(ServiceError::new(
+            "session/argument-invalid",
+            "a component update needs `value`, `footprint`, `x`, `y` or `rotation`",
+        ));
+    }
     mutate(handle, |design| {
         let index = sheet_index(design, request.sheet.as_deref())?;
         let sheet = &mut design.sheets[index];
@@ -2410,7 +2454,21 @@ pub fn update_component(handle: u64, request: UpdateComponentRequest) -> Result<
             sheet.components.iter_mut().find(|component| component.reference == request.reference).ok_or_else(|| {
                 not_found(format!("no component with reference `{}` is placed on this sheet", request.reference))
             })?;
-        component.value = request.value;
+        if let Some(value) = request.value {
+            component.value = value;
+        }
+        if let Some(footprint) = request.footprint {
+            component.footprint = footprint.trim().to_string();
+        }
+        if let Some(x) = request.x {
+            component.x = x;
+        }
+        if let Some(y) = request.y {
+            component.y = y;
+        }
+        if let Some(rotation) = request.rotation {
+            component.rotation = rotation;
+        }
         let component = component.clone();
         design.revision += 1;
         let mut payload = Map::new();

@@ -764,12 +764,20 @@ export function moveComponent(handle: number, input: MoveComponentInput): Compon
     );
 }
 
-/** Replaces the value text of one component. */
+/** Updates the editable fields of one component. */
 export function updateComponent(handle: number, input: UpdateComponentInput): ComponentResult {
     return decode<ComponentResult>(() =>
         binding('design.updateComponent').design_update_component(
             handle,
-            JSON.stringify({ sheet: input.sheet, reference: input.reference, value: input.value }),
+            JSON.stringify({
+                sheet: input.sheet,
+                reference: input.reference,
+                value: input.value,
+                footprint: input.footprint,
+                x: input.x,
+                y: input.y,
+                rotation: input.rotation,
+            }),
         ),
     );
 }

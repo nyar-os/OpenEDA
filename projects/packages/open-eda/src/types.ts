@@ -1083,11 +1083,20 @@ export interface MoveComponentInput {
     readonly rotation?: number;
 }
 
-/** Input of `design.updateComponent()`; only the value changes. */
+/** Input of `design.updateComponent()`; only the given fields change. */
 export interface UpdateComponentInput {
     readonly sheet?: SheetId;
     readonly reference: string;
-    readonly value: string;
+    /** New value text; kept when omitted. */
+    readonly value?: string;
+    /** New footprint text; kept when omitted, and an empty string clears it. */
+    readonly footprint?: string;
+    /** New placement X coordinate; kept when omitted. */
+    readonly x?: number;
+    /** New placement Y coordinate; kept when omitted. */
+    readonly y?: number;
+    /** New rotation in degrees; kept when omitted. */
+    readonly rotation?: number;
 }
 
 /** Input of `design.setFootprint()`; an empty footprint clears the assignment. */

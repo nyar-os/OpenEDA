@@ -856,19 +856,38 @@ componentCommand
 
 componentCommand
     .command('update', 'cli.cmd.component-update')
-    .option('--ref <ref>', 'cli.opt.ref')
     .option('--value <value>', 'cli.opt.value')
+    .option('--footprint <name>', 'cli.opt.footprint')
+    .option('--x <number>', 'cli.opt.x')
+    .option('--y <number>', 'cli.opt.y')
+    .option('--rotation <degrees>', 'cli.opt.rotation')
     .option('--sheet <sheet>', 'cli.opt.sheet')
     .actionCtx(async (options, _args, ctx) => {
         const file = input(options);
+        const reference = options._?.[1];
         if (file === undefined) {
             ctx.fail('open-eda.cli.file-required', { message: 'a design document is required' });
             return 2;
         }
-        const reference = text(options, 'ref');
+        if (reference === undefined || reference.trim().length === 0) {
+            ctx.fail('open-eda.cli.arguments-invalid', { message: 'a `<ref>` argument is required' });
+            return 2;
+        }
         const value = text(options, 'value');
-        if (reference === undefined || reference.trim().length === 0 || value === undefined) {
-            ctx.fail('open-eda.cli.arguments-invalid', { message: '`--ref` and `--value` are required' });
+        const footprint = text(options, 'footprint');
+        const x = number(options, 'x');
+        const y = number(options, 'y');
+        const rotation = number(options, 'rotation');
+        if (value === undefined && footprint === undefined && x === undefined && y === undefined && rotation === undefined) {
+            ctx.fail('open-eda.cli.arguments-invalid', {
+                message: 'at least one of `--value`, `--footprint`, `--x`, `--y` or `--rotation` is required',
+            });
+            return 2;
+        }
+        if ([x, y, rotation].some((coordinate) => coordinate !== undefined && Number.isNaN(coordinate))) {
+            ctx.fail('open-eda.cli.arguments-invalid', {
+                message: '`--x`, `--y` and `--rotation` must be finite numbers',
+            });
             return 2;
         }
         const { component, saved } = await withDesign(file, async (design) => {
@@ -876,12 +895,23 @@ componentCommand
                 sheet: text(options, 'sheet'),
                 reference,
                 value,
+                footprint,
+                x,
+                y,
+                rotation,
             });
             return { component, saved: await savedReport(design) };
         });
+        const changed = [
+            value === undefined ? undefined : `value=${value.length > 0 ? value : '(empty)'}`,
+            footprint === undefined ? undefined : `footprint=${footprint.length > 0 ? footprint : '(cleared)'}`,
+            x === undefined ? undefined : `x=${x}`,
+            y === undefined ? undefined : `y=${y}`,
+            rotation === undefined ? undefined : `rotation=${rotation}`,
+        ].filter((entry): entry is string => entry !== undefined);
         ctx.emitResult(
             { ...saved, revision: saved.revision, component },
-            `updated ${reference} to ${value} in ${file} revision=${saved.revision}`,
+            `updated ${reference} (${changed.join(', ')}) in ${file} revision=${saved.revision}`,
         );
         return 0;
     });

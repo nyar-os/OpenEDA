@@ -59,7 +59,7 @@ open-eda component show <file.oeda> <ref>
 open-eda component add <file.oeda> --ref <ref> --value <value> --x <n> --y <n> [--rotation <deg>] [--pins 1,2] [--sheet <sheet>]
 open-eda component copy <file.oeda> --ref <ref> --as <new-ref> [--dx <n>] [--dy <n>] [--sheet <sheet>]
 open-eda component move <file.oeda> --ref <ref> --x <n> --y <n> [--rotation <deg>] [--sheet <sheet>]
-open-eda component update <file.oeda> --ref <ref> --value <value> [--sheet <sheet>]
+open-eda component update <file.oeda> <ref> [--value <value>] [--footprint <footprint>] [--x <n>] [--y <n>] [--rotation <deg>] [--sheet <sheet>]
 open-eda component footprint <file.oeda> --ref <ref> [--footprint <footprint>] [--sheet <sheet>]
 open-eda component pin-type <file.oeda> <ref> <pin> [type] [--clear] [--sheet <sheet>]
 open-eda component delete <file.oeda> --ref <ref> [--sheet <sheet>]
@@ -321,6 +321,15 @@ library symbol per derived library id with the pins the schematic declares, and
 adds no body, value or footprint.
 
 ## Component copy and text annotations
+
+`open-eda component update <file> <ref> [--value <value>] [--footprint <text>]
+[--x <n>] [--y <n>] [--rotation <deg>]` changes only the fields it names and
+needs at least one of them. Pins, pin roles, custom properties and every
+unnamed field keep their current value; the footprint is trimmed and an empty
+footprint clears it, while the value is stored verbatim. Coordinates and
+rotation must be finite (`session/argument-invalid`), rotation is stored as
+passed without wrapping, and an unknown reference is `object/not-found`. One
+call is one revision and one undo step.
 
 `open-eda component copy --ref <ref> --as <new-ref>` duplicates one placed
 component on the same sheet under a new designator. The copy keeps the source

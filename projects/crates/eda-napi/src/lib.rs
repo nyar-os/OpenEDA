@@ -694,7 +694,7 @@ fn design_move_component(ctx: CallContext) -> Result<JsValue> {
     respond(&ctx, &report)
 }
 
-/// Updates the value text of one placed component.
+/// Updates the editable fields of one placed component.
 #[function]
 fn design_update_component(ctx: CallContext) -> Result<JsValue> {
     let handle = handle(&ctx, 0)?;

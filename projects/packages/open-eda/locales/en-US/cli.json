@@ -30,7 +30,7 @@
             "component-add": "Add a component to a design document in place",
             "component-copy": "Copy a placed component under a new reference in place",
             "component-move": "Move a placed component in place",
-            "component-update": "Replace the value text of a placed component in place",
+            "component-update": "Update the value, footprint or placement of a placed component in place",
             "component-footprint": "Assign or clear the footprint of a placed component in place",
             "component-property-set": "Assign or replace one custom key/value property of a placed component in place",
             "component-property-remove": "Remove one custom property from a placed component in place",

@@ -60,7 +60,7 @@ the document and never opens a child document.
 | `open-eda component add <file> --ref <ref> [--value <text>] --x <n> --y <n> [--rotation <deg>] [--pins <list>] [--footprint <text>] [--sheet <id>]` | Place a component |
 | `open-eda component copy <file> --ref <ref> --as <new-ref> [--dx <n>] [--dy <n>] [--sheet <id>]` | Copy placement and metadata without net nodes |
 | `open-eda component move <file> --ref <ref> --x <n> --y <n> [--rotation <deg>] [--sheet <id>]` | Move or rotate a component |
-| `open-eda component update <file> --ref <ref> [--value <text>] [--sheet <id>]` | Update the value |
+| `open-eda component update <file> <ref> [--value <text>] [--footprint <text>] [--x <n>] [--y <n>] [--rotation <deg>] [--sheet <id>]` | Update only the given fields of a component |
 | `open-eda component footprint <file> --ref <ref> --footprint <text> [--sheet <id>]` | Assign or clear the footprint |
 | `open-eda component pin-type <file> <ref> <pin> <role>` | Type a pin role; add `--clear` to remove it |
 | `open-eda component pin add <file> --ref <ref> --pin <pin> [--sheet <id>]` | Add a pin to a placed component |
