@@ -1,4 +1,3 @@
-
 use super::*;
 use crate::{Junction, Sheet};
 
