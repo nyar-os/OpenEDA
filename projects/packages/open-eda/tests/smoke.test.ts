@@ -13,9 +13,9 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { designFormats, formatFromPath, formatInfo, OpenEDA, OpenEDAError } from './index.js';
-import type { DesignInput } from './index.js';
-import { nativeBinding } from './native.js';
+import { designFormats, formatFromPath, formatInfo, OpenEDA, OpenEDAError } from '../src/index.js';
+import type { DesignInput } from '../src/index.js';
+import { nativeBinding } from '../src/native.js';
 
 const installed = (() => {
     try {
