@@ -63,8 +63,8 @@ pnpm exec open-eda export blinker.oeda --format svg --out blinker.svg
 | Session | `new OpenEDA({ locale?, history? })`, `create`, `open`, `importKicadSch`, `importKicadSymbol`, `importKicadNet`, `inspect`, `diff`, `capabilities`, `dispose` |
 | Components | `addComponent`, `copyComponent`, `moveComponent`, `updateComponent`, `setFootprint`, `deleteComponent`, `setComponentProperty`, `listComponentProperties`, `removeComponentProperty`, `setPinType` |
 | Nets and buses | `connectNet`, `disconnectNet`, `deriveNets`, `renameNet`, `mergeNets`, `deleteNet`, `addBus`, `listBuses`, `removeBus`, `addNetClass`, `listNetClasses`, `removeNetClass` |
-| Wiring | `addWire`, `updateWire`, `splitWire`, `listWires`, `deleteWire`, `translate`, `addJunction`, `listJunctions`, `moveJunction`, `removeJunction` |
-| Annotations | `addLabel`, `listLabels`, `updateLabel`, `removeLabel`, `addText`, `listTexts`, `updateText`, `moveText`, `deleteText`, `addNoConnect`, `listNoConnects`, `removeNoConnect` |
+| Wiring | `addWire`, `updateWire`, `splitWire`, `listWires`, `deleteWire`, `translate`, `addJunction`, `listJunctions`, `moveJunction`, `deleteJunction` |
+| Annotations | `addLabel`, `listLabels`, `updateLabel`, `removeLabel`, `addText`, `listTexts`, `updateText`, `moveText`, `deleteText`, `addNoConnect`, `listNoConnects`, `deleteNoConnect` |
 | Sheets | `addSheet`, `listSheets`, `renameSheet`, `deleteSheet`, `addHierarchy`, `listHierarchy`, `addHierarchyPort`, `removeHierarchyPort`, `removeHierarchy` |
 | Design data | `annotate`, `setProperties`, `addVariant`, `listVariants`, `removeVariant`, `setReferencePrefix`, `removeReferencePrefix`, `listReferencePrefixes`, `setComponentClass`, `listComponentClasses`, `stats`, `compareNetlist` |
 | Reports | `listObjects`, `listComponents`, `listNets`, `listSymbols`, `connectivity`, `inspect` |

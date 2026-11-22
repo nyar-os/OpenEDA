@@ -854,10 +854,10 @@ test('junction and no-connect edits refuse duplicates and track ERC', { skip: wi
             design.addJunction({ sheet: 'missing', x: 1, y: 2 }),
             (error: unknown) => error instanceof OpenEDAError && error.code === 'sheet/not-found',
         );
-        await design.removeJunction(0);
+        await design.deleteJunction(0);
         assert.deepEqual((await design.listJunctions()).junctions, [{ index: 0, x: 30, y: 40 }]);
         await assert.rejects(
-            design.removeJunction(1),
+            design.deleteJunction(1),
             (error: unknown) => error instanceof OpenEDAError && error.code === 'junction/not-found',
         );
 
@@ -883,10 +883,10 @@ test('junction and no-connect edits refuse duplicates and track ERC', { skip: wi
         assert.equal(flags.length, 2);
         assert.deepEqual(flags[0]?.node, { ref: 'R1', pin: '2' });
         assert.equal(flags[1]?.node, undefined);
-        await reopened.removeNoConnect(0);
+        await reopened.deleteNoConnect(0);
         assert.equal((await reopened.listNoConnects()).noConnects.length, 1);
         await assert.rejects(
-            reopened.removeNoConnect(1),
+            reopened.deleteNoConnect(1),
             (error: unknown) => error instanceof OpenEDAError && error.code === 'no-connect/not-found',
         );
         assert.equal(await unconnected(reopened), 1);
@@ -921,9 +921,9 @@ test('junction and no-connect commands edit a document in place', { skip: withou
         assert.equal(result.status, 1);
         assert.match(result.stdout + result.stderr, /a junction already exists at \(55, 30\)/);
 
-        result = run('junction', 'remove', target, '--index', '0');
+        result = run('junction', 'delete', target, '--index', '0');
         assert.equal(result.status, 0, result.stderr);
-        assert.match(result.stdout, /removed junction 0/);
+        assert.match(result.stdout, /deleted junction 0/);
         result = run('junction', 'list', target);
         assert.equal(result.status, 0, result.stderr);
         assert.match(result.stdout, /count=0/);
@@ -937,9 +937,9 @@ test('junction and no-connect commands edit a document in place', { skip: withou
         assert.equal(result.status, 0, result.stderr);
         assert.match(result.stdout, /R1\.2/);
 
-        result = run('no-connect', 'remove', target, '--index', '0');
+        result = run('no-connect', 'delete', target, '--index', '0');
         assert.equal(result.status, 0, result.stderr);
-        assert.match(result.stdout, /removed no-connect 0/);
+        assert.match(result.stdout, /deleted no-connect 0/);
         result = run('no-connect', 'list', target);
         assert.equal(result.status, 0, result.stderr);
         assert.match(result.stdout, /count=0/);

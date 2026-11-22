@@ -87,10 +87,10 @@ Pin roles: `input`, `output`, `bidirectional`, `tri_state`, `passive`,
 | `open-eda junction add <file> --x <n> --y <n> [--sheet <id>]` | Add a junction |
 | `open-eda junction list <file> [--sheet <id>]` | List junctions with 0-based indices |
 | `open-eda junction move <file> --index <n> --x <n> --y <n> [--sheet <id>]` | Move a junction |
-| `open-eda junction remove <file> --index <n> [--sheet <id>]` | Remove a junction |
+| `open-eda junction delete <file> --index <n> [--sheet <id>]` | Delete a junction |
 | `open-eda no-connect add <file> --x <n> --y <n> [--ref <ref> --pin <pin>] [--sheet <id>]` | Add a no-connect flag; with a node it marks the pin deliberately open |
 | `open-eda no-connect list <file> [--sheet <id>]` | List no-connect flags |
-| `open-eda no-connect remove <file> --index <n> [--sheet <id>]` | Remove a no-connect flag |
+| `open-eda no-connect delete <file> --index <n> [--sheet <id>]` | Delete a no-connect flag |
 | `open-eda text add <file> --text <text> --x <n> --y <n> [--sheet <id>]` | Add a text annotation |
 | `open-eda text list <file> [--sheet <id>]` | List text annotations |
 | `open-eda text update <file> --index <n> [--text <text>] [--x <n>] [--y <n>] [--sheet <id>]` | Update a text annotation |

@@ -1529,8 +1529,8 @@ export interface Design {
     addText(input: TextInput): Promise<TextLabel>;
     /** Adds one no-connect flag; a `node` marks that pin as deliberately open. */
     addNoConnect(input: NoConnectInput): Promise<NoConnect>;
-    /** Removes the no-connect flag at a 0-based index on a sheet. */
-    removeNoConnect(index: number, options?: { readonly sheet?: SheetId }): Promise<void>;
+    /** Deletes the no-connect flag at a 0-based index on a sheet. */
+    deleteNoConnect(index: number, options?: { readonly sheet?: SheetId }): Promise<void>;
     /** Moves one component to a new placement and optional rotation. */
     moveComponent(input: MoveComponentInput): Promise<Component>;
     /** Replaces the value text of one component. */
@@ -1593,8 +1593,8 @@ export interface Design {
      * netlist and `removed` entries exist only in the design.
      */
     compareNetlist(source: string): Promise<NetlistDiffReport>;
-    /** Removes the junction at a 0-based index on a sheet. */
-    removeJunction(index: number, options?: { readonly sheet?: SheetId }): Promise<void>;
+    /** Deletes the junction at a 0-based index on a sheet. */
+    deleteJunction(index: number, options?: { readonly sheet?: SheetId }): Promise<void>;
     /** Moves the junction at a 0-based index to a new placement. */
     moveJunction(index: number, x: number, y: number, options?: { readonly sheet?: SheetId }): Promise<Junction>;
     /** Deletes the text annotation at a 0-based index on a sheet. */
