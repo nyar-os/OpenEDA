@@ -44,6 +44,7 @@ fn capability_matrix_reports_only_the_implemented_entries() {
         assert_eq!(matrix["formats"][format]["lossCodes"], expected_losses, "format {format}");
     }
     assert_eq!(matrix["checks"]["erc"], "supported");
+    assert_eq!(matrix["checks"]["bus"], "supported");
     assert_eq!(matrix["checks"]["nets"], "supported");
     assert_eq!(matrix["checks"]["connectivity"], "supported");
     assert_eq!(matrix["checks"]["footprints"], "supported");

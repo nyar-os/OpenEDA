@@ -41,7 +41,7 @@ open-eda open <file.oeda>
 open-eda list <file.oeda>
 open-eda symbols <file.oeda>
 open-eda connectivity <file.oeda>
-open-eda inspect <file.oeda> [--checks erc,electrical,nets,connectivity,footprints,power,references] [--severity code=level,...] [--waive code[@objectId|@sheetId/objectId],...]
+open-eda inspect <file.oeda> [--checks erc,electrical,bus,nets,connectivity,footprints,power,references] [--severity code=level,...] [--waive code[@objectId|@sheetId/objectId],...]
 open-eda diff <left.oeda> <right.oeda>
 open-eda annotate <file.oeda>
 open-eda export <file.oeda> --format net|net_csv|net_hier|spice|spice_subckt|svg|bom|bom_json|bom_html|pdf|report|kicad_sch|kicad_sym --out <file> [--variant <name>]
@@ -150,7 +150,11 @@ characters in a net name. A no-connect flag with `--ref` and `--pin` (or the SDK
 `nets` reports floating wires, wires that name an undeclared net, single-node
 nets and empty sheets. A net named with a bus alias resolves to the same bus as
 the canonical name; `net-bus-alias-collision` reports two nets on one sheet that
-resolve to the same bus. `connectivity` groups wires by coincident endpoints,
+resolve to the same bus. `bus` checks the design-level declarations:
+`bus/duplicate-name` (error) for a repeated bus name, `bus/empty` (warning) for
+width zero, `bus/member-missing` (error) when no net provides a member and
+`bus/shared-net` (error) when one net is claimed by two buses.
+`connectivity` groups wires by coincident endpoints,
 junctions and T-junctions, then reports `wire-net-conflict` (one error per group
 naming two nets), `wire-net-unassigned` (one warning per unlabeled group) and
 `junction-floating`. `footprints` reports components without a value. `power`

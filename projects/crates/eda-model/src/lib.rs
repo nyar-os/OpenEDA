@@ -45,11 +45,11 @@ pub const DESIGN_FORMATS: &[&str] =
 
 /// Rule checks declared by the studio inspector.
 const INSPECT_CHECKS: &[&str] =
-    &["erc", "electrical", "drc", "nets", "connectivity", "footprints", "clearance", "power", "references"];
+    &["erc", "electrical", "bus", "drc", "nets", "connectivity", "footprints", "clearance", "power", "references"];
 
 /// Rule checks this build actually runs.
 const SUPPORTED_CHECKS: &[&str] =
-    &["erc", "electrical", "nets", "connectivity", "footprints", "clearance", "power", "references"];
+    &["erc", "electrical", "bus", "nets", "connectivity", "footprints", "clearance", "power", "references"];
 
 /// Render targets declared for preview surfaces.
 const RENDER_FORMATS: &[&str] = &["svg", "png", "pdf"];
@@ -5079,6 +5079,17 @@ fn component_bodies_overlap(left: &Component, right: &Component) -> bool {
         && (right.y - COMPONENT_HALF_HEIGHT) < (left.y + COMPONENT_HALF_HEIGHT)
 }
 
+/// Whether a bus declaration claims a net name.
+///
+/// A bus claims its own name and every alias, because a net with that name
+/// expands into the members; it also claims each member name it expands to.
+/// Two buses claiming one name would give that net two meanings.
+fn bus_claims_net(bus: &Bus, name: &str) -> bool {
+    bus.name == name
+        || bus.aliases.iter().any(|alias| alias == name)
+        || (0..bus.width).any(|index| format!("{}{index}", bus.name) == name)
+}
+
 fn inspect_design(design: &Design, checks: &[String]) -> Vec<Value> {
     let mut issues = CheckReport::new();
     if checks.iter().any(|check| check == "erc") {
@@ -5486,6 +5497,84 @@ fn inspect_design(design: &Design, checks: &[String]) -> Vec<Value> {
                         format!(
                             "net `{}` resolves to bus `{}` through an alias, but net `{first}` already does the same",
                             net.name, bus.name
+                        ),
+                    ));
+                }
+            }
+        }
+    }
+    if checks.iter().any(|check| check == "bus") {
+        // Buses live on the design, not on a sheet, so their findings carry an
+        // empty `sheetId`; only `bus/shared-net` names the sheet of the net.
+        let mut names: HashSet<&str> = HashSet::new();
+        for bus in &design.buses {
+            if !names.insert(bus.name.as_str()) {
+                issues.push(issue(
+                    "bus/duplicate-name",
+                    "error",
+                    design.revision,
+                    "",
+                    &bus.id,
+                    true,
+                    format!("bus name `{}` is declared more than once", bus.name),
+                ));
+            }
+        }
+        let declared_nets: HashSet<&str> =
+            design.sheets.iter().flat_map(|sheet| sheet.nets.iter()).map(|net| net.name.as_str()).collect();
+        for bus in &design.buses {
+            if bus.width == 0 {
+                issues.push(issue(
+                    "bus/empty",
+                    "warning",
+                    design.revision,
+                    "",
+                    &bus.id,
+                    true,
+                    format!("bus `{}` declares zero member nets", bus.name),
+                ));
+                continue;
+            }
+            // One net named the bus or an alias already provides every member,
+            // so individual member nets are only required when nothing expands.
+            let expands =
+                declared_nets.iter().any(|name| *name == bus.name.as_str() || bus.aliases.iter().any(|alias| alias == *name));
+            let missing: Vec<String> = (0..bus.width)
+                .map(|index| format!("{}{index}", bus.name))
+                .filter(|member| !expands && !declared_nets.contains(member.as_str()))
+                .collect();
+            if !missing.is_empty() {
+                issues.push(issue(
+                    "bus/member-missing",
+                    "error",
+                    design.revision,
+                    "",
+                    &bus.id,
+                    true,
+                    format!(
+                        "bus `{}` declares member net(s) {} that no net in the document provides",
+                        bus.name,
+                        missing.join(", ")
+                    ),
+                ));
+            }
+        }
+        for sheet in &design.sheets {
+            for net in &sheet.nets {
+                let claims: Vec<&str> =
+                    design.buses.iter().filter(|bus| bus_claims_net(bus, &net.name)).map(|bus| bus.name.as_str()).collect();
+                if claims.len() > 1 {
+                    issues.push(issue(
+                        "bus/shared-net",
+                        "error",
+                        design.revision,
+                        &sheet.id,
+                        &net.id,
+                        true,
+                        format!(
+                            "net `{}` is claimed by buses {}; one net may belong to only one bus",
+                            net.name,
+                            claims.iter().map(|name| format!("`{name}`")).collect::<Vec<_>>().join(", ")
                         ),
                     ));
                 }
@@ -7611,3 +7700,7 @@ mod pin_tests;
 #[cfg(test)]
 #[path = "../tests/unit/clearance.rs"]
 mod clearance_tests;
+
+#[cfg(test)]
+#[path = "../tests/unit/bus.rs"]
+mod bus_tests;

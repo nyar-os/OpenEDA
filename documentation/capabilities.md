@@ -23,7 +23,7 @@ answer about the document, such as a pin-to-pin path.
 | BOM variants and DNP | supported | named DNP designator lists and value overrides applied to `bom`, `bom_json` and `bom_html` |
 | net classes | supported | name, width, clearance, via and net/bus assignment lists |
 | component custom properties | supported | trimmed unique keys, verbatim values; stored in `.oeda`, the JSON projection and KiCad symbol properties |
-| checks `erc`, `electrical`, `nets`, `connectivity`, `footprints`, `power`, `references`, `clearance` | supported | `drc` is unsupported; `clearance` compares schematic component bodies; `hierarchy` is a separate read-only entry, not an `inspect --checks` value |
+| checks `erc`, `electrical`, `bus`, `nets`, `connectivity`, `footprints`, `power`, `references`, `clearance` | supported | `drc` is unsupported; `bus` validates design-level bus declarations; `clearance` compares schematic component bodies; `hierarchy` is a separate read-only entry, not an `inspect --checks` value |
 | design `stats` | supported | deterministic per-sheet and design-wide counts; tagged `open-eda-stats` |
 | pin trace `trace` | supported | read-only shortest hop path between two `REF.PIN` pins; tagged `open-eda-trace`; reported as `queries.trace`, not as an `inspect --checks` check |
 | read-only listings `component list`, `net list`, `bus list`, `net-class list`, `wire list`, `label list`, `text list`, `sheet list` | supported | document order with 0-based indices where the model edits by index |
@@ -106,6 +106,18 @@ net with a logic output.
 
 `nets` reports `net-bus-member-collision` and `net-bus-alias-collision` so the
 netlist never writes one `NET` line twice.
+
+`bus` validates the design-level bus declarations. A bus name declared twice is
+`bus/duplicate-name` (error) on the later declaration, and a bus with width zero
+is `bus/empty` (warning) because it expands to no member. A bus whose members
+are neither provided by a declared net named the bus or one of its aliases (the
+expansion rule) nor by a declared net with the member name is
+`bus/member-missing` (error), one finding per bus listing every missing member.
+A net claimed by more than one bus — for example `DATA0` as member 0 of bus
+`DATA` and as the expansion net of bus `DATA0` — is `bus/shared-net` (error) on
+that net. Bus findings are design-level, so `sheetId` is empty and `objectId` is
+the bus id; `bus/shared-net` instead carries the net's sheet and id. The check is
+read-only and deterministic for one document state.
 
 `clearance` treats each component body as the axis-aligned rectangle the SVG
 preview draws: centred on the placement, with `COMPONENT_HALF_WIDTH` and
@@ -246,6 +258,8 @@ Every file is written through a temporary file and a rename.
 - `projects/crates/eda-model/tests/unit/kicad.rs` — parser and writer subset.
 - `projects/crates/eda-model/tests/unit/diff.rs` — structural comparison.
 - `projects/crates/eda-model/tests/unit/connectivity.rs` — net and pin analysis.
+- `projects/crates/eda-model/tests/unit/bus.rs` — duplicate bus names, missing
+  members, a net shared by two buses, zero-width buses and a valid bus.
 - `projects/crates/eda-model/tests/unit/clearance.rs` — component-body overlap
   pairs, edge contact, rotation, sheets, severity and waivers.
 - `projects/crates/eda-model/tests/unit/pins.rs` — pin add, remove and rename

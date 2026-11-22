@@ -70,7 +70,7 @@ pnpm exec open-eda export blinker.oeda --format svg --out blinker.svg
 | Reports | `listObjects`, `listComponents`, `listNets`, `listSymbols`, `connectivity`, `tracePins`, `inspect`, `checkHierarchy` |
 | Output | `save`, `export`, `undo`, `redo`, `close` |
 
-`inspect` runs `erc`, `electrical`, `nets`, `connectivity`, `footprints`,
+`inspect` runs `erc`, `electrical`, `bus`, `nets`, `connectivity`, `footprints`,
 `clearance`, `power` and `references`, with per-code `severity` overrides and
 `waivers`; `checkHierarchy` separately walks the declared hierarchy and reports
 `hierarchy/*` issues.

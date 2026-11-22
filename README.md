@@ -90,9 +90,9 @@ extension may be listed while remaining `unsupported`.
 - **One editable schematic document.** Sheets, components, nets, buses, wires,
   junctions, no-connect flags, text, net labels with local/global/hierarchical
   scope and hierarchical sheet symbols share one revision counter.
-- **Checks that state their result.** ERC, electrical-role, net, connectivity,
-  footprint, component-clearance and power checks return stable finding codes;
-  severities and waivers are part of the report.
+- **Checks that state their result.** ERC, electrical-role, bus, net,
+  connectivity, footprint, component-clearance and power checks return stable
+  finding codes; severities and waivers are part of the report.
 - **Deterministic exchange.** KiCad schematic and symbol import/export,
   netlist/net CSV/hierarchical netlist, SPICE and subcircuits, SVG, BOM
   (CSV/JSON/HTML), PDF, Markdown and JSON projections, with a loss ledger for

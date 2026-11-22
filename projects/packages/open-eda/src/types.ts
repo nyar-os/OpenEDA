@@ -60,6 +60,7 @@ export type SupportLevel = 'supported' | 'partial' | 'unsupported';
 export type InspectCheck =
     | 'erc'
     | 'electrical'
+    | 'bus'
     | 'drc'
     | 'nets'
     | 'connectivity'
