@@ -20,7 +20,8 @@ per open handle, and the CLI mirrors it in a `<file>.history.json` sidecar so
 `undo` and `redo` work across separate command invocations. Sheet
 add/rename/delete, component move, update and delete, deterministic reference
 annotation, BOM variants with do-not-populate lists, no-connect flags that can
-mark a pin as deliberately open, wire add, update, split, list and delete, net derive, disconnect and
+mark a pin as deliberately open, wire add, update, split, list and delete, bulk
+translate of selected components and wires, net derive, disconnect and
 delete, and junction/text move and delete work in place. Design-level net classes
 declare trace width, clearance and via attributes and assign declared nets and
 buses to them. Reference prefix rules declare the expected designator prefix per
@@ -82,6 +83,7 @@ open-eda wire update <file.oeda> --id <wire-id> [--from <x,y>] [--to <x,y>] [--n
 open-eda wire split <file.oeda> --id <wire-id> --x <n> --y <n> [--sheet <sheet>]
 open-eda wire list <file.oeda> [--sheet <sheet>]
 open-eda wire delete <file.oeda> --id <wire-id> [--sheet <sheet>]
+open-eda translate <file.oeda> [--refs R1,C1] [--wires <wire-id>,...] --dx <n> --dy <n> [--sheet <sheet>]
 open-eda junction add <file.oeda> --x <n> --y <n> [--sheet <sheet>]
 open-eda junction move <file.oeda> --index <n> --x <n> --y <n> [--sheet <sheet>]
 open-eda junction delete <file.oeda> --index <n> [--sheet <sheet>]

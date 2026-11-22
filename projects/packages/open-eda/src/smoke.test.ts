@@ -258,6 +258,19 @@ test('history, sheets and deep edits stay referentially sound', { skip: withoutA
         assert.deepEqual(split.second.to, [30, 10]);
         assert.equal(split.second.net, 'VIN');
         assert.equal((await design.listWires()).length, 2);
+        const translated = await design.translate({ references: ['C1'], dx: 5, dy: 0 });
+        assert.equal(translated.components, 1);
+        assert.equal(translated.wires, 0);
+        const c1 = (await design.listComponents()).find((component) => component.ref === 'C1');
+        assert.equal(c1?.x, 35);
+        assert.equal(c1?.y, 10);
+        const movedWires = await design.translate({ wires: ['wire-2'], dx: 0, dy: 5 });
+        assert.equal(movedWires.wires, 1);
+        assert.deepEqual((await design.listWires())[1]?.from, [20, 15]);
+        await assert.rejects(
+            design.translate({ references: ['R9'], dx: 1, dy: 0 }),
+            (error: unknown) => error instanceof OpenEDAError && error.code === 'object/not-found',
+        );
 
         const bus = await design.addBus({ name: 'DATA', width: 4 });
         assert.deepEqual(bus, { id: 'bus-1', name: 'DATA', width: 4 });

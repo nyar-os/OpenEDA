@@ -41,6 +41,7 @@ export type {
     SheetResult,
     SplitWireEditResult,
     TextResult,
+    TranslateEditResult,
     WireResult,
 } from './service.js';
 export type * from './types.js';

@@ -64,6 +64,8 @@ import type {
     SymbolLibraryResult,
     TextInput,
     TextLabel,
+    TranslateInput,
+    TranslateResult,
     UpdateComponentInput,
     UpdateWireInput,
     Variant,
@@ -114,6 +116,9 @@ export interface WireResult extends EditResult, HistoryFlags {
 
 /** Result of {@link splitWire}. */
 export interface SplitWireEditResult extends EditResult, HistoryFlags, SplitWireResult {}
+
+/** Result of {@link translate}. */
+export interface TranslateEditResult extends EditResult, HistoryFlags, TranslateResult {}
 
 /** Result of {@link listWires}. */
 export interface WireListResult extends EditResult {
@@ -479,6 +484,22 @@ export function splitWire(handle: number, input: SplitWireInput): SplitWireEditR
         binding('design.splitWire').design_split_wire(
             handle,
             JSON.stringify({ sheet: input.sheet, id: input.id, x: input.x, y: input.y }),
+        ),
+    );
+}
+
+/** Translates selected components and wires of one sheet by an offset. */
+export function translateObjects(handle: number, input: TranslateInput): TranslateEditResult {
+    return decode<TranslateEditResult>(() =>
+        binding('design.translate').design_translate(
+            handle,
+            JSON.stringify({
+                sheet: input.sheet,
+                references: [...(input.references ?? [])],
+                wires: [...(input.wires ?? [])],
+                dx: input.dx,
+                dy: input.dy,
+            }),
         ),
     );
 }

@@ -431,6 +431,50 @@ cli.command('annotate', 'cli.cmd.annotate').actionCtx(async (options, _args, ctx
     return 0;
 });
 
+cli
+    .command('translate', 'cli.cmd.translate')
+    .option('--refs <list>', 'cli.opt.refs')
+    .option('--wires <list>', 'cli.opt.wires')
+    .option('--dx <number>', 'cli.opt.dx')
+    .option('--dy <number>', 'cli.opt.dy')
+    .option('--sheet <sheet>', 'cli.opt.sheet')
+    .actionCtx(async (options, _args, ctx) => {
+        const file = input(options);
+        if (file === undefined) {
+            ctx.fail('open-eda.cli.file-required', { message: 'a design document is required' });
+            return 2;
+        }
+        const dx = number(options, 'dx');
+        const dy = number(options, 'dy');
+        const references = list(options, 'refs');
+        const wires = list(options, 'wires');
+        if (dx === undefined || Number.isNaN(dx) || dy === undefined || Number.isNaN(dy)) {
+            ctx.fail('open-eda.cli.arguments-invalid', {
+                message: '`--dx` and `--dy` are required; the offset must be finite numbers',
+            });
+            return 2;
+        }
+        if (references.length === 0 && wires.length === 0) {
+            ctx.fail('open-eda.cli.arguments-invalid', {
+                message: '`--refs` or `--wires` must name at least one object to translate',
+            });
+            return 2;
+        }
+        if (dx === 0 && dy === 0) {
+            ctx.fail('open-eda.cli.arguments-invalid', { message: 'the offset must move at least one axis' });
+            return 2;
+        }
+        const { components, wires: movedWires, saved } = await withDesign(file, async (design) => {
+            const moved = await design.translate({ sheet: text(options, 'sheet'), references, wires, dx, dy });
+            return { ...moved, saved: await savedReport(design) };
+        });
+        ctx.emitResult(
+            { ...saved, revision: saved.revision, components, wires: movedWires, dx, dy },
+            `translated ${components} component(s) and ${movedWires} wire(s) by (${dx}, ${dy}) in ${file} revision=${saved.revision}`,
+        );
+        return 0;
+    });
+
 cli.command('open', 'cli.cmd.open').actionCtx(async (options, _args, ctx) => {
     const file = input(options);
     if (file === undefined) {

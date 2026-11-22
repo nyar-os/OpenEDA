@@ -638,6 +638,29 @@ export interface SplitWireInput {
     readonly y: number;
 }
 
+/** Result of `design.translate()`. */
+export interface TranslateResult {
+    /** Components moved in this call. */
+    readonly components: number;
+    /** Wire segments moved in this call. */
+    readonly wires: number;
+    readonly dx: number;
+    readonly dy: number;
+}
+
+/** Input of `design.translate()`; only the listed objects move. */
+export interface TranslateInput {
+    readonly sheet?: SheetId;
+    /** Components to move, by reference designator; an empty list selects none. */
+    readonly references?: readonly string[];
+    /** Wire segments to move, by stable id; an empty list selects none. */
+    readonly wires?: readonly ObjectId[];
+    /** Offset added to every selected X coordinate. */
+    readonly dx: number;
+    /** Offset added to every selected Y coordinate. */
+    readonly dy: number;
+}
+
 /** Input of `design.updateWire()`. An empty `net` clears the assignment. */
 export interface UpdateWireInput {
     readonly sheet?: SheetId;
@@ -1144,6 +1167,8 @@ export interface Design {
     updateWire(input: UpdateWireInput): Promise<Wire>;
     /** Splits one wire segment into two at a point on the segment. */
     splitWire(input: SplitWireInput): Promise<SplitWireResult>;
+    /** Translates selected components and wires of a sheet by an offset. */
+    translate(input: TranslateInput): Promise<TranslateResult>;
     /** Lists the wires drawn on a sheet. */
     listWires(options?: { readonly sheet?: SheetId }): Promise<readonly Wire[]>;
     /** Adds one junction (connection dot). */

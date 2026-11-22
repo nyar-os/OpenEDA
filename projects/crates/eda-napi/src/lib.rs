@@ -25,7 +25,7 @@ use open_eda_model::{
     AddBusRequest, AddComponentRequest, AddJunctionRequest, AddNoConnectRequest, AddTextRequest, AddWireRequest,
     ComponentClassRequest, ConnectNetRequest, CreateRequest, DeleteNetRequest, DisconnectNetRequest, InspectOptions,
     MoveComponentRequest, NetClassRequest, ReferencePrefixRequest, RenameNetRequest, ServiceError, SetFootprintRequest,
-    SetPinTypeRequest, SplitWireRequest, UpdateComponentRequest, UpdateDesignRequest, UpdateWireRequest,
+    SetPinTypeRequest, SplitWireRequest, TranslateRequest, UpdateComponentRequest, UpdateDesignRequest, UpdateWireRequest,
 };
 use serde_json::{Value, json};
 use wae::{
@@ -327,6 +327,15 @@ fn design_split_wire(ctx: CallContext) -> Result<JsValue> {
     let handle = handle(&ctx, 0)?;
     let request: SplitWireRequest = decode(serde_json::from_str(&text(&ctx, 1)?))?;
     let report = open_eda_model::split_wire(handle, request).map_err(fail)?;
+    respond(&ctx, &report)
+}
+
+/// Translates the selected components and wires of one sheet by an offset.
+#[function]
+fn design_translate(ctx: CallContext) -> Result<JsValue> {
+    let handle = handle(&ctx, 0)?;
+    let request: TranslateRequest = decode(serde_json::from_str(&text(&ctx, 1)?))?;
+    let report = open_eda_model::translate_objects(handle, request).map_err(fail)?;
     respond(&ctx, &report)
 }
 
@@ -1489,6 +1498,7 @@ register_module![
     design_add_wire,
     design_update_wire,
     design_split_wire,
+    design_translate,
     design_list_wires,
     design_add_junction,
     design_add_text,

@@ -676,6 +676,25 @@ pub struct SplitWireRequest {
     pub y: f64,
 }
 
+/// Request of [`translate_objects`].
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TranslateRequest {
+    /// Target sheet id or name; the first sheet is used when omitted.
+    #[serde(default)]
+    pub sheet: Option<String>,
+    /// Components to move, by reference designator.
+    #[serde(default)]
+    pub references: Vec<String>,
+    /// Wire segments to move, by stable id.
+    #[serde(default)]
+    pub wires: Vec<String>,
+    /// Offset added to every selected X coordinate.
+    pub dx: f64,
+    /// Offset added to every selected Y coordinate.
+    pub dy: f64,
+}
+
 /// Request of [`add_junction`].
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -2584,6 +2603,68 @@ pub fn split_wire(handle: u64, request: SplitWireRequest) -> Result<Value, Servi
         let mut payload = Map::new();
         payload.insert("first".to_string(), json!(first));
         payload.insert("second".to_string(), json!(second));
+        Ok(payload)
+    })
+}
+
+/// Translates the selected components and wires of one sheet by an offset.
+///
+/// Only the listed objects move; unlisted components, wires, junctions, text
+/// and no-connect flags keep their placement, and a component keeps its
+/// reference, value, rotation and pins. Every reference and wire id must exist
+/// on the sheet before anything moves, so a request is all-or-nothing. A request
+/// that names neither kind, or whose offset is zero on both axes, is rejected
+/// instead of adding a revision.
+pub fn translate_objects(handle: u64, request: TranslateRequest) -> Result<Value, ServiceError> {
+    if !request.dx.is_finite() || !request.dy.is_finite() {
+        return Err(ServiceError::new("session/argument-invalid", "the translate offset must be finite numbers"));
+    }
+    if request.references.is_empty() && request.wires.is_empty() {
+        return Err(ServiceError::new(
+            "session/argument-invalid",
+            "a translate request needs at least one component reference or wire id",
+        ));
+    }
+    if request.dx == 0.0 && request.dy == 0.0 {
+        return Err(ServiceError::new("session/argument-invalid", "the translate offset must move at least one axis"));
+    }
+    mutate(handle, |design| {
+        let index = sheet_index(design, request.sheet.as_deref())?;
+        let sheet = &mut design.sheets[index];
+        let mut components = BTreeSet::new();
+        for reference in &request.references {
+            let position = sheet
+                .components
+                .iter()
+                .position(|component| component.reference == *reference)
+                .ok_or_else(|| not_found(format!("no component with reference `{reference}` is placed on this sheet")))?;
+            components.insert(position);
+        }
+        let mut wires = BTreeSet::new();
+        for wire in &request.wires {
+            let position = sheet
+                .wires
+                .iter()
+                .position(|candidate| candidate.id == *wire)
+                .ok_or_else(|| not_found(format!("no wire `{wire}` is drawn on this sheet")))?;
+            wires.insert(position);
+        }
+        for position in &components {
+            sheet.components[*position].x += request.dx;
+            sheet.components[*position].y += request.dy;
+        }
+        for position in &wires {
+            sheet.wires[*position].from[0] += request.dx;
+            sheet.wires[*position].from[1] += request.dy;
+            sheet.wires[*position].to[0] += request.dx;
+            sheet.wires[*position].to[1] += request.dy;
+        }
+        design.revision += 1;
+        let mut payload = Map::new();
+        payload.insert("components".to_string(), json!(components.len()));
+        payload.insert("wires".to_string(), json!(wires.len()));
+        payload.insert("dx".to_string(), json!(request.dx));
+        payload.insert("dy".to_string(), json!(request.dy));
         Ok(payload)
     })
 }
@@ -6423,6 +6504,88 @@ mod tests {
             .expect("split the second segment");
         assert_eq!(second_split["second"]["id"], "wire-3");
         assert_eq!(list_wires(handle, None).expect("list")["wires"].as_array().expect("wires").len(), 3);
+        close(handle).expect("close");
+    }
+
+    #[test]
+    fn selected_components_and_wires_translate_all_or_nothing() {
+        let created = create(CreateRequest::default()).expect("create");
+        let handle = created["handle"].as_u64().expect("handle");
+        for (reference, x) in [("R1", 10.0), ("C1", 20.0)] {
+            add_component(
+                handle,
+                AddComponentRequest {
+                    sheet: None,
+                    reference: reference.to_string(),
+                    value: "10k".to_string(),
+                    x,
+                    y: 10.0,
+                    rotation: 90.0,
+                    pins: vec!["1".to_string(), "2".to_string()],
+                },
+            )
+            .expect("add component");
+        }
+        let wire = add_wire(handle, AddWireRequest { sheet: None, net: None, from: [10.0, 10.0], to: [20.0, 10.0] })
+            .expect("add wire");
+        let wire_id = wire["wire"]["id"].as_str().expect("wire id").to_string();
+
+        let translated = translate_objects(
+            handle,
+            TranslateRequest {
+                sheet: None,
+                references: vec!["R1".to_string(), "R1".to_string()],
+                wires: vec![wire_id.clone()],
+                dx: 5.0,
+                dy: -2.0,
+            },
+        )
+        .expect("translate");
+        assert_eq!(translated["components"], 1);
+        assert_eq!(translated["wires"], 1);
+        assert_eq!(translated["dx"], 5.0);
+        let listed = list_components(handle, None).expect("list components");
+        assert_eq!(listed["components"][0]["x"], 15.0);
+        assert_eq!(listed["components"][0]["y"], 8.0);
+        assert_eq!(listed["components"][0]["rotation"], 90.0);
+        assert_eq!(listed["components"][1]["x"], 20.0);
+        assert_eq!(listed["components"][1]["y"], 10.0);
+        let listed_wires = list_wires(handle, None).expect("list wires");
+        assert_eq!(listed_wires["wires"][0]["from"], json!([15.0, 8.0]));
+        assert_eq!(listed_wires["wires"][0]["to"], json!([25.0, 8.0]));
+
+        let missing = translate_objects(
+            handle,
+            TranslateRequest {
+                sheet: None,
+                references: vec!["R1".to_string(), "R9".to_string()],
+                wires: Vec::new(),
+                dx: 1.0,
+                dy: 0.0,
+            },
+        )
+        .expect_err("missing reference");
+        assert_eq!(missing.code, "object/not-found");
+        assert_eq!(list_components(handle, None).expect("unchanged")["components"][0]["x"], 15.0);
+
+        let empty = translate_objects(
+            handle,
+            TranslateRequest { sheet: None, references: Vec::new(), wires: Vec::new(), dx: 1.0, dy: 0.0 },
+        )
+        .expect_err("nothing selected");
+        assert_eq!(empty.code, "session/argument-invalid");
+        let still = translate_objects(
+            handle,
+            TranslateRequest { sheet: None, references: vec!["R1".to_string()], wires: Vec::new(), dx: 0.0, dy: 0.0 },
+        )
+        .expect_err("zero offset");
+        assert_eq!(still.code, "session/argument-invalid");
+        let infinite = translate_objects(
+            handle,
+            TranslateRequest { sheet: None, references: vec!["R1".to_string()], wires: Vec::new(), dx: f64::INFINITY, dy: 0.0 },
+        )
+        .expect_err("non-finite offset");
+        assert_eq!(infinite.code, "session/argument-invalid");
         close(handle).expect("close");
     }
 

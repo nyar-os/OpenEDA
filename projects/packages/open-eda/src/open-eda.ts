@@ -72,6 +72,8 @@ import type {
     SymbolLibraryResult,
     TextInput,
     TextLabel,
+    TranslateInput,
+    TranslateResult,
     UpdateComponentInput,
     UpdateWireInput,
     Variant,
@@ -483,6 +485,11 @@ function attach(opened: service.DesignHandle, options: AttachOptions): Design {
             const result = await mutate(() => service.splitWire(handle, input));
             current = result.design;
             return { first: result.first, second: result.second };
+        },
+        async translate(input: TranslateInput): Promise<TranslateResult> {
+            const result = await mutate(() => service.translateObjects(handle, input));
+            current = result.design;
+            return { components: result.components, wires: result.wires, dx: result.dx, dy: result.dy };
         },
         async listWires(listOptions?: { readonly sheet?: string }): Promise<readonly Wire[]> {
             return service.listWires(handle, listOptions?.sheet).wires;
