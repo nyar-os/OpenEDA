@@ -418,6 +418,130 @@ fn duplicate_references_are_an_inspection_finding() {
     assert!(issues.iter().any(|issue| issue["code"] == "duplicate-reference"));
 }
 
+fn inspection_component(id: &str, reference: &str, x: f64, y: f64) -> Component {
+    Component {
+        id: id.to_string(),
+        reference: reference.to_string(),
+        value: "1k".to_string(),
+        footprint: String::new(),
+        x,
+        y,
+        rotation: 0.0,
+        pins: vec!["1".to_string()],
+        pin_types: BTreeMap::new(),
+        properties: BTreeMap::new(),
+    }
+}
+
+fn inspection_sheet(id: &str, components: Vec<Component>) -> Sheet {
+    Sheet {
+        id: id.to_string(),
+        name: id.to_string(),
+        components,
+        nets: Vec::new(),
+        wires: Vec::new(),
+        junctions: Vec::new(),
+        no_connects: Vec::new(),
+        texts: Vec::new(),
+        labels: Vec::new(),
+    }
+}
+
+fn inspection_design(sheets: Vec<Sheet>, revision: u64) -> Design {
+    Design {
+        id: "design-1".to_string(),
+        title: None,
+        rev: String::new(),
+        company: String::new(),
+        date: String::new(),
+        revision,
+        units: "mm".to_string(),
+        sheets,
+        buses: Vec::new(),
+        variants: Vec::new(),
+        rules: DesignRules::default(),
+        hierarchy: Vec::new(),
+        next_component: 1,
+        next_net: 1,
+        next_wire: 1,
+    }
+}
+
+#[test]
+fn duplicate_references_across_sheets_report_one_grouped_finding() {
+    let design = inspection_design(
+        vec![
+            inspection_sheet("sheet-1", vec![inspection_component("component-1", "R1", 10.0, 20.0)]),
+            inspection_sheet("sheet-2", vec![inspection_component("component-2", "R1", 30.0, 40.0)]),
+        ],
+        7,
+    );
+
+    let issues = inspect_design(&design, &["erc".to_string()]);
+    let grouped: Vec<&Value> = issues.iter().filter(|issue| issue["code"] == "erc/duplicate-reference").collect();
+    assert_eq!(grouped.len(), 1);
+    assert_eq!(grouped[0]["severity"], "error");
+    assert_eq!(grouped[0]["revision"], 7);
+    assert_eq!(grouped[0]["sheetId"], "sheet-1");
+    assert_eq!(grouped[0]["objectId"], "component-1");
+    let message = grouped[0]["message"].as_str().expect("message");
+    assert!(message.contains("shared by 2 components"), "{message}");
+    assert!(message.contains("`component-1`, `component-2`"), "{message}");
+    assert_eq!(design.revision, 7, "inspection must not advance the revision");
+}
+
+#[test]
+fn unique_references_report_no_duplicate_reference() {
+    let design = inspection_design(
+        vec![inspection_sheet(
+            "sheet-1",
+            vec![inspection_component("component-1", "R1", 0.0, 0.0), inspection_component("component-2", "R2", 10.0, 0.0)],
+        )],
+        1,
+    );
+
+    let issues = inspect_design(&design, &["erc".to_string()]);
+    assert!(issues.iter().all(|issue| issue["code"] != "erc/duplicate-reference"));
+}
+
+#[test]
+fn duplicate_reference_groups_report_once_in_deterministic_order() {
+    let design = inspection_design(
+        vec![
+            inspection_sheet(
+                "sheet-1",
+                vec![inspection_component("component-1", "Z1", 0.0, 0.0), inspection_component("component-2", "A1", 10.0, 0.0)],
+            ),
+            inspection_sheet(
+                "sheet-2",
+                vec![
+                    inspection_component("component-3", "Z1", 0.0, 0.0),
+                    inspection_component("component-4", "Z1", 10.0, 0.0),
+                    inspection_component("component-5", "A1", 20.0, 0.0),
+                ],
+            ),
+        ],
+        2,
+    );
+
+    let issues = inspect_design(&design, &["erc".to_string()]);
+    let grouped: Vec<&Value> = issues.iter().filter(|issue| issue["code"] == "erc/duplicate-reference").collect();
+    assert_eq!(grouped.len(), 2, "one finding per shared reference");
+
+    let messages: Vec<&str> = grouped.iter().map(|issue| issue["message"].as_str().unwrap_or("")).collect();
+    assert_eq!(
+        messages,
+        vec![
+            "reference `A1` is shared by 2 components: `component-2`, `component-5`",
+            "reference `Z1` is shared by 3 components: `component-1`, `component-3`, `component-4`",
+        ]
+    );
+    assert_eq!(grouped[0]["objectId"], "component-2");
+
+    let repeated = inspect_design(&design, &["erc".to_string()]);
+    assert_eq!(issues, repeated, "the grouped findings are deterministic");
+}
+
 #[test]
 fn duplicate_net_names_are_an_inspection_finding() {
     let design = Design {

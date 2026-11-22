@@ -23,7 +23,7 @@ answer about the document, such as a pin-to-pin path.
 | BOM variants and DNP | supported | named DNP designator lists and value overrides applied to `bom`, `bom_json` and `bom_html` |
 | net classes | supported | name, width, clearance, via and net/bus assignment lists |
 | component custom properties | supported | trimmed unique keys, verbatim values; stored in `.oeda`, the JSON projection and KiCad symbol properties |
-| checks `erc`, `electrical`, `bus`, `nets`, `connectivity`, `footprints`, `power`, `references`, `clearance` | supported | `drc` is unsupported; `bus` validates design-level bus declarations; `clearance` compares schematic component bodies; `hierarchy` is a separate read-only entry, not an `inspect --checks` value |
+| checks `erc`, `electrical`, `bus`, `nets`, `connectivity`, `footprints`, `power`, `references`, `clearance` | supported | `drc` is unsupported; `bus` validates design-level bus declarations; `clearance` compares schematic component bodies; `erc` reports one `erc/duplicate-reference` per reference shared by more than one component; `hierarchy` is a separate read-only entry, not an `inspect --checks` value |
 | design `stats` | supported | deterministic per-sheet and design-wide counts; tagged `open-eda-stats` |
 | pin trace `trace` | supported | read-only shortest hop path between two `REF.PIN` pins; tagged `open-eda-trace`; reported as `queries.trace`, not as an `inspect --checks` check |
 | component detail `component show` | supported | read-only detail of one component by reference: placement, value, footprint, custom properties and per-pin nets; tagged `open-eda-component`; pins keep declaration order and net names keep document order |
@@ -116,9 +116,16 @@ does move designators adds exactly one revision and one history entry.
 
 ### Checks
 
-`erc` reports `erc/duplicate-pin`, `erc/dangling-net`, `erc/duplicate-net-name`,
-`erc/single-node-net`, `erc/unconnected-pin`, `erc/floating-wire` and
-`erc/unconnected-hierarchical-port`. A no-connect flag may carry a `ref`/`pin`
+`erc` reports `erc/duplicate-pin`, `erc/duplicate-reference`,
+`erc/dangling-net`, `erc/duplicate-net-name`, `erc/single-node-net`,
+`erc/unconnected-pin`, `erc/floating-wire` and
+`erc/unconnected-hierarchical-port`. A reference is design-wide, so components
+sharing one reference are grouped across every sheet in document order and a
+group with more than one member reports one `erc/duplicate-reference` error at
+its first component, listing every component id in that order. The comparison
+is exact and case-sensitive, like the other reference lookups. An empty
+reference is `component-empty-reference` and is never counted as a shared
+designator. A no-connect flag may carry a `ref`/`pin`
 node; then the `erc` check and the connectivity report treat that pin as
 intentionally open. A flag without a node is a coordinate-only marker and
 suppresses nothing. Removing the pin flag restores the finding, so the flag is

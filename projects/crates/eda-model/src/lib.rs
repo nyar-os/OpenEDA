@@ -1301,10 +1301,10 @@ pub struct Waiver {
 /// check is reported as unsupported. Design-level buses are edited through
 /// `add_bus`, `remove_bus` and `list_buses`; a bus carries a width and optional
 /// aliases that resolve to the same expansion. ERC reports the stable codes
-/// `erc/duplicate-net-name`, `erc/duplicate-pin`, `erc/single-node-net`,
-/// `erc/dangling-net`, `erc/unconnected-pin`, `erc/floating-wire`,
-/// `erc/reference-illegal`, `erc/pin-name-illegal`, `erc/net-name-illegal` and
-/// `erc/unconnected-hierarchical-port`
+/// `erc/duplicate-net-name`, `erc/duplicate-pin`, `erc/duplicate-reference`,
+/// `erc/single-node-net`, `erc/dangling-net`, `erc/unconnected-pin`,
+/// `erc/floating-wire`, `erc/reference-illegal`, `erc/pin-name-illegal`,
+/// `erc/net-name-illegal` and `erc/unconnected-hierarchical-port`
 /// next to the legacy codes. A no-connect flag that names a component pin
 /// removes `erc/unconnected-pin` and `unreferenced-pin` for that pin, because
 /// the open pin is deliberate. The `nets` check also reports `net-bus-member-collision` when a
@@ -5348,6 +5348,38 @@ fn inspect_design(design: &Design, checks: &[String]) -> Vec<Value> {
                     ));
                 }
             }
+        }
+        // One reference designates one component, so two placed components that
+        // share it make every `REF.PIN` node naming that reference ambiguous.
+        // Components are grouped by the exact stored reference across the whole
+        // design, because a reference is design-wide. An empty reference is not
+        // a shared designator and is already reported above. Each group with more
+        // than one member reports once, at its first component in document order,
+        // and lists every component id in the same order.
+        let mut shared: BTreeMap<&str, Vec<(&str, &str)>> = BTreeMap::new();
+        for sheet in &design.sheets {
+            for component in &sheet.components {
+                if component.reference.trim().is_empty() {
+                    continue;
+                }
+                shared.entry(component.reference.as_str()).or_default().push((&sheet.id, &component.id));
+            }
+        }
+        for (reference, members) in shared {
+            if members.len() < 2 {
+                continue;
+            }
+            let (sheet_id, object_id) = members[0];
+            let ids = members.iter().map(|(_, id)| format!("`{id}`")).collect::<Vec<_>>().join(", ");
+            issues.push(issue(
+                "erc/duplicate-reference",
+                "error",
+                design.revision,
+                sheet_id,
+                object_id,
+                true,
+                format!("reference `{reference}` is shared by {} components: {ids}", members.len()),
+            ));
         }
         // A hierarchical port is a declaration on the parent symbol; the model
         // does not store the wires drawn on that pin. The only connectivity
