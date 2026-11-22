@@ -3,8 +3,7 @@
 use std::path::Path;
 
 use open_eda_model::{
-    AddComponentRequest, AddJunctionRequest, AddTextRequest, AddWireRequest, CreateRequest, add_component, add_junction,
-    add_text, add_wire, create, export,
+    AddComponentRequest, AddTextRequest, AddWireRequest, CreateRequest, add_component, add_text, add_wire, create, export,
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -35,22 +34,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let wires = [
-        ([36.0, 34.0], [24.0, 34.0], Some("VCC")),
-        ([36.0, 40.0], [24.0, 40.0], Some("GND")),
-        ([48.0, 34.0], [70.0, 34.0], Some("IO1")),
-        ([48.0, 46.0], [70.0, 46.0], Some("IO2")),
-        ([24.0, 34.0], [24.0, 52.0], Some("VCC")),
-        ([24.0, 40.0], [24.0, 60.0], Some("GND")),
-        ([70.0, 34.0], [78.0, 34.0], Some("IO1")),
-        ([78.0, 34.0], [78.0, 62.0], Some("IO1")),
+        ([20.0, 48.38], [20.0, 36.0], Some("VCC")),
+        ([20.0, 36.0], [27.3, 36.0], Some("VCC")),
+        ([20.0, 63.62], [20.0, 70.0], Some("GND")),
+        ([20.0, 70.0], [46.0, 70.0], Some("GND")),
+        ([46.0, 70.0], [46.0, 47.62], Some("GND")),
+        ([52.7, 36.0], [54.0, 36.0], Some("IO1")),
+        ([54.0, 36.0], [54.0, 24.0], Some("IO1")),
+        ([54.0, 24.0], [57.3, 24.0], Some("IO1")),
+        ([52.7, 44.0], [54.0, 44.0], Some("IO2")),
+        ([54.0, 44.0], [54.0, 56.0], Some("IO2")),
+        ([54.0, 56.0], [57.3, 56.0], Some("IO2")),
     ];
     for (from, to, net) in wires {
         add_wire(handle, AddWireRequest { sheet: None, net: net.map(str::to_string), from, to })?;
     }
-    for (x, y) in [(24.0, 34.0), (24.0, 40.0), (70.0, 34.0)] {
-        add_junction(handle, AddJunctionRequest { sheet: None, x, y })?;
-    }
-    add_text(handle, AddTextRequest { sheet: None, text: "Demo schematic".into(), x: 18.0, y: 76.0 })?;
+    add_text(handle, AddTextRequest { sheet: None, text: "Demo schematic".into(), x: 8.0, y: 78.0 })?;
 
     for format in ["svg", "pdf"] {
         let target = out.join(format!("demo-schematic.{format}"));

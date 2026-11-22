@@ -21,44 +21,55 @@
                     </Link>
                 </div>
             </div>
-            <div class="studio" aria-hidden="true">
-                <div class="studio__titlebar">
-                    <span class="studio__dots"><i></i><i></i><i></i></span>
-                    <span class="studio__mark">E</span>
-                    <span class="studio__name">OpenEDA Studio</span>
-                    <span class="studio__doc">no design open</span>
-                    <span class="studio__rev">unsaved</span>
+            <div class="sheet" aria-hidden="true">
+                <div class="sheet__head">
+                    <span class="sheet__no">SHEET 01 / 01</span>
+                    <span class="sheet__file">demo-schematic.svg</span>
+                    <span class="sheet__rev">EXPORT</span>
                 </div>
-                <div class="studio__toolbar">
-                    <span class="studio__group"><b>File</b><i></i><i></i><i></i><i></i></span>
-                    <span class="studio__group"><b>Document</b><i></i></span>
-                    <span class="studio__group"><b>View</b><i></i><i></i><i></i></span>
-                    <span class="studio__pill">Preview</span>
+                <div class="sheet__draw">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="-2.70 6.38 95.40 81.62" role="img" aria-label="Exported OpenEDA schematic">
+                        <rect x="-2.70" y="6.38" width="95.40" height="81.62" fill="#ffffff" stroke="#1f2933" stroke-width="0.4"></rect>
+                        <g data-sheet="sheet-1">
+                            <line x1="20.00" y1="48.38" x2="20.00" y2="36.00" stroke="#0f766e" stroke-width="0.5"></line>
+                            <line x1="20.00" y1="36.00" x2="27.30" y2="36.00" stroke="#0f766e" stroke-width="0.5"></line>
+                            <line x1="20.00" y1="63.62" x2="20.00" y2="70.00" stroke="#0f766e" stroke-width="0.5"></line>
+                            <line x1="20.00" y1="70.00" x2="46.00" y2="70.00" stroke="#0f766e" stroke-width="0.5"></line>
+                            <line x1="46.00" y1="70.00" x2="46.00" y2="47.62" stroke="#0f766e" stroke-width="0.5"></line>
+                            <line x1="52.70" y1="36.00" x2="54.00" y2="36.00" stroke="#0f766e" stroke-width="0.5"></line>
+                            <line x1="54.00" y1="36.00" x2="54.00" y2="24.00" stroke="#0f766e" stroke-width="0.5"></line>
+                            <line x1="54.00" y1="24.00" x2="57.30" y2="24.00" stroke="#0f766e" stroke-width="0.5"></line>
+                            <line x1="52.70" y1="44.00" x2="54.00" y2="44.00" stroke="#0f766e" stroke-width="0.5"></line>
+                            <line x1="54.00" y1="44.00" x2="54.00" y2="56.00" stroke="#0f766e" stroke-width="0.5"></line>
+                            <line x1="54.00" y1="56.00" x2="57.30" y2="56.00" stroke="#0f766e" stroke-width="0.5"></line>
+                            <text x="8.00" y="78.00" font-family="monospace" font-size="3.2" text-anchor="start">Demo schematic</text>
+                            <g transform="rotate(0.00 40.00 40.00)" data-ref="U1">
+                                <rect x="27.30" y="32.38" width="25.40" height="15.24" fill="#f6faff" stroke="#1f6feb" stroke-width="0.5"></rect>
+                                <text x="40.00" y="39.40" font-family="monospace" font-size="3.2" text-anchor="middle">U1</text>
+                                <text x="40.00" y="43.00" font-family="monospace" font-size="2.6" text-anchor="middle">MCU</text>
+                            </g>
+                            <g transform="rotate(0.00 70.00 24.00)" data-ref="R1">
+                                <rect x="57.30" y="16.38" width="25.40" height="15.24" fill="#f6faff" stroke="#1f6feb" stroke-width="0.5"></rect>
+                                <text x="70.00" y="23.40" font-family="monospace" font-size="3.2" text-anchor="middle">R1</text>
+                                <text x="70.00" y="27.00" font-family="monospace" font-size="2.6" text-anchor="middle">10k</text>
+                            </g>
+                            <g transform="rotate(0.00 70.00 56.00)" data-ref="R2">
+                                <rect x="57.30" y="48.38" width="25.40" height="15.24" fill="#f6faff" stroke="#1f6feb" stroke-width="0.5"></rect>
+                                <text x="70.00" y="55.40" font-family="monospace" font-size="3.2" text-anchor="middle">R2</text>
+                                <text x="70.00" y="59.00" font-family="monospace" font-size="2.6" text-anchor="middle">330</text>
+                            </g>
+                            <g transform="rotate(0.00 20.00 56.00)" data-ref="C1">
+                                <rect x="7.30" y="48.38" width="25.40" height="15.24" fill="#f6faff" stroke="#1f6feb" stroke-width="0.5"></rect>
+                                <text x="20.00" y="55.40" font-family="monospace" font-size="3.2" text-anchor="middle">C1</text>
+                                <text x="20.00" y="59.00" font-family="monospace" font-size="2.6" text-anchor="middle">100n</text>
+                            </g>
+                        </g>
+                    </svg>
                 </div>
-                <div class="studio__body">
-                    <div class="studio__rail">
-                        <span class="studio__rail-label">Sheets</span>
-                        <i></i>
-                        <i></i>
-                        <i></i>
-                        <span class="studio__rail-label">Targets</span>
-                        <i></i>
-                        <i></i>
-                    </div>
-                    <div class="studio__canvas">
-                        <div class="studio__ruler studio__ruler--h"></div>
-                        <div class="studio__ruler studio__ruler--v"></div>
-                        <div class="studio__grid">
-                            <span class="studio__empty">No design open</span>
-                        </div>
-                    </div>
+                <div class="sheet__foot">
+                    <span>open-eda export demo.oeda --format svg</span>
+                    <span>4 symbols · 11 wires · 2965 B</span>
                 </div>
-                <div class="studio__statusbar">
-                    <span>Native host is not attached</span>
-                    <span class="studio__spacer"></span>
-                    <span>zoom 100%</span>
-                </div>
-                <div class="studio__chip">net · svg · bom · pdf</div>
             </div>
         </section>
 
@@ -238,10 +249,14 @@
 <style>
 .hero {
     display: grid;
-    grid-template-columns: 1.05fr 0.95fr;
+    grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
     gap: 48px;
     align-items: center;
     padding: 40px 0 8px;
+}
+
+.hero > * {
+    min-width: 0;
 }
 
 .hero h1 {
@@ -262,221 +277,78 @@
     gap: 12px;
 }
 
-.studio {
-    position: relative;
-    margin-bottom: 12px;
+.sheet {
+    min-width: 0;
     border: 1px solid var(--oed-line);
     border-radius: calc(var(--oed-radius) + 2px);
     background: var(--oed-surface);
     box-shadow: 0 20px 44px rgba(20, 33, 43, 0.12);
+    overflow: hidden;
 }
 
-.studio__titlebar {
+.sheet__head {
     display: flex;
     align-items: center;
-    gap: 7px;
-    padding: 8px 10px;
+    gap: 10px;
+    padding: 7px 11px;
     border-bottom: 1px solid var(--oed-line);
-}
-
-.studio__dots {
-    display: inline-flex;
-    gap: 4px;
-    margin-right: 2px;
-}
-
-.studio__dots i {
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    background: var(--oed-line);
-}
-
-.studio__mark {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 19px;
-    height: 19px;
-    border-radius: 5px;
-    background: var(--oed-accent);
-    color: #f6faff;
+    background: var(--oed-surface-2);
+    color: var(--oed-muted);
+    font-family: "Cascadia Code", "Consolas", monospace;
     font-size: 10px;
-    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
 }
 
-.studio__name {
+.sheet__no {
     color: var(--oed-ink);
-    font-size: 11px;
     font-weight: 600;
 }
 
-.studio__doc {
+.sheet__file {
     overflow: hidden;
-    color: var(--oed-muted);
-    font-size: 10.5px;
     text-overflow: ellipsis;
     white-space: nowrap;
+    letter-spacing: 0.02em;
+    text-transform: none;
 }
 
-.studio__rev {
+.sheet__rev {
     margin-left: auto;
     padding: 1px 7px;
     border: 1px solid var(--oed-line);
     border-radius: 999px;
-    color: var(--oed-muted);
-    font-family: "Cascadia Code", "Consolas", monospace;
-    font-size: 9px;
+    background: var(--oed-surface);
+    color: var(--oed-ink);
+    white-space: nowrap;
 }
 
-.studio__toolbar {
+.sheet__draw {
+    padding: 12px;
+    background: #fff;
+}
+
+.sheet__draw svg {
+    display: block;
+    width: 100%;
+    height: auto;
+}
+
+.sheet__foot {
     display: flex;
-    align-items: flex-end;
+    align-items: center;
+    justify-content: space-between;
     gap: 12px;
-    padding: 6px 10px 8px;
-    border-bottom: 1px solid var(--oed-line);
-    background: var(--oed-surface);
-}
-
-.studio__group {
-    display: flex;
-    align-items: center;
-    gap: 3px;
-}
-
-.studio__group b {
-    margin-right: 2px;
-    color: var(--oed-muted);
-    font-size: 8px;
-    font-weight: 600;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-}
-
-.studio__group i {
-    display: block;
-    width: 22px;
-    height: 14px;
-    border: 1px solid var(--oed-line);
-    border-radius: 4px;
-    background: var(--oed-surface);
-}
-
-.studio__pill {
-    margin-left: auto;
-    padding: 2px 8px;
-    border: 1px solid var(--oed-line);
-    border-radius: 999px;
-    color: var(--oed-muted);
-    font-size: 9px;
-}
-
-.studio__body {
-    display: grid;
-    grid-template-columns: 74px minmax(0, 1fr);
-    height: 224px;
-}
-
-.studio__rail {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    padding: 9px;
-    border-right: 1px solid var(--oed-line);
-    background: var(--oed-surface-2);
-}
-
-.studio__rail-label {
-    color: var(--oed-muted);
-    font-size: 8px;
-    letter-spacing: 0.07em;
-    text-transform: uppercase;
-}
-
-.studio__rail i {
-    display: block;
-    height: 18px;
-    border: 1px solid var(--oed-line);
-    border-radius: 4px;
-    background: var(--oed-surface);
-}
-
-.studio__canvas {
-    position: relative;
-    min-width: 0;
-    padding: 18px 0 0 18px;
-    background: var(--oed-bg);
-}
-
-.studio__ruler--h {
-    position: absolute;
-    top: 0;
-    right: 0;
-    left: 18px;
-    height: 18px;
-    border-bottom: 1px solid var(--oed-line);
-    background:
-        repeating-linear-gradient(90deg, var(--oed-line) 0 1px, transparent 1px 28px),
-        var(--oed-surface-2);
-}
-
-.studio__ruler--v {
-    position: absolute;
-    top: 18px;
-    bottom: 0;
-    left: 0;
-    width: 18px;
-    border-right: 1px solid var(--oed-line);
-    background:
-        repeating-linear-gradient(180deg, var(--oed-line) 0 1px, transparent 1px 28px),
-        var(--oed-surface-2);
-}
-
-.studio__grid {
-    display: grid;
-    place-items: center;
-    height: 100%;
-    background:
-        linear-gradient(rgba(20, 33, 43, 0.05) 1px, transparent 1px) 0 0 / 18px 18px,
-        linear-gradient(90deg, rgba(20, 33, 43, 0.05) 1px, transparent 1px) 0 0 / 18px 18px;
-}
-
-.studio__empty {
-    padding: 6px 13px;
-    border: 1px solid var(--oed-line);
-    border-radius: 999px;
-    background: var(--oed-surface);
-    color: var(--oed-muted);
-    font-size: 11px;
-}
-
-.studio__statusbar {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 4px 10px;
+    padding: 6px 11px;
     border-top: 1px solid var(--oed-line);
+    background: var(--oed-surface-2);
     color: var(--oed-muted);
-    font-size: 9.5px;
-    font-variant-numeric: tabular-nums;
-}
-
-.studio__spacer {
-    flex: 1;
-}
-
-.studio__chip {
-    position: absolute;
-    right: 14px;
-    bottom: -11px;
-    padding: 3px 10px;
-    border: 1px solid var(--oed-line);
-    border-radius: 999px;
-    background: var(--oed-surface);
-    color: var(--oed-steel);
     font-family: "Cascadia Code", "Consolas", monospace;
     font-size: 9.5px;
-    box-shadow: 0 4px 10px rgba(20, 33, 43, 0.08);
+}
+
+.sheet__foot span:last-child {
+    white-space: nowrap;
 }
 
 .works-section {
@@ -639,10 +511,6 @@
     .steps {
         grid-template-columns: repeat(2, 1fr);
     }
-
-    .studio__body {
-        height: 200px;
-    }
 }
 
 @media (max-width: 620px) {
@@ -662,21 +530,16 @@
         grid-template-columns: 1fr;
     }
 
-    .studio__body {
-        grid-template-columns: 58px minmax(0, 1fr);
-        height: 176px;
-    }
-
-    .studio__doc {
-        display: none;
-    }
-
     .cta-band {
         padding: 22px 18px;
     }
 
     .cta-band h2 {
         font-size: 21px;
+    }
+
+    .sheet__foot span:last-child {
+        display: none;
     }
 }
 </style>
