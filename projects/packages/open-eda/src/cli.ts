@@ -33,6 +33,7 @@ import type {
     InspectWaiver,
     KicadSymbolImportResult,
     PinType,
+    PortDirection,
     SaveReport,
     SymbolLibraryResult,
 } from './types.js';
@@ -82,6 +83,9 @@ const list = (options: ParsedOptions, key: string): string[] =>
         .filter((item) => item.length > 0) ?? [];
 
 const input = (options: ParsedOptions): string | undefined => options._?.[0];
+
+/** Directions accepted by `hierarchy port-add`. */
+const PORT_DIRECTIONS: readonly PortDirection[] = ['input', 'output', 'bidirectional', 'tri_state', 'passive'];
 
 /** Opens one document for the duration of a command and always releases it. */
 async function withDesign<T>(file: string, run: (design: Design) => Promise<T>): Promise<T> {
@@ -2015,6 +2019,153 @@ sheetCommand
         ctx.emitResult(
             { ...saved, revision: saved.revision, sheet: removed },
             `deleted sheet ${sheet} from ${file} revision=${saved.revision}`,
+        );
+        return 0;
+    });
+
+const hierarchyCommand = cli.command('hierarchy', 'cli.cmd.hierarchy');
+hierarchyCommand
+    .command('add', 'cli.cmd.hierarchy-add')
+    .option('--name <name>', 'cli.opt.name')
+    .option('--file <file>', 'cli.opt.hierarchy-file')
+    .option('--x <x>', 'cli.opt.x')
+    .option('--y <y>', 'cli.opt.y')
+    .option('--width <width>', 'cli.opt.hierarchy-width')
+    .option('--height <height>', 'cli.opt.hierarchy-height')
+    .actionCtx(async (options, _args, ctx) => {
+        const file = input(options);
+        if (file === undefined) {
+            ctx.fail('open-eda.cli.file-required', { message: 'a design document is required' });
+            return 2;
+        }
+        const name = text(options, 'name');
+        const child = text(options, 'file');
+        if (name === undefined || name.trim().length === 0 || child === undefined || child.trim().length === 0) {
+            ctx.fail('open-eda.cli.arguments-invalid', { message: '`--name` and `--file` are required' });
+            return 2;
+        }
+        const { hierarchy, saved } = await withDesign(file, async (design) => {
+            const hierarchy = await design.addHierarchy({
+                name,
+                file: child,
+                x: number(options, 'x'),
+                y: number(options, 'y'),
+                width: number(options, 'width'),
+                height: number(options, 'height'),
+            });
+            return { hierarchy, saved: await savedReport(design) };
+        });
+        ctx.emitResult(
+            { ...saved, revision: saved.revision, hierarchy: hierarchy.hierarchy },
+            `added hierarchical sheet ${name} in ${file} revision=${saved.revision}`,
+        );
+        return 0;
+    });
+
+hierarchyCommand
+    .command('list', 'cli.cmd.hierarchy-list')
+    .actionCtx(async (options, _args, ctx) => {
+        const file = input(options);
+        if (file === undefined) {
+            ctx.fail('open-eda.cli.file-required', { message: 'a design document is required' });
+            return 2;
+        }
+        const report = await withDesign(file, async (design) => design.listHierarchy());
+        ctx.emitResult(report, `hierarchy=${report.count} revision=${report.revision}`);
+        return 0;
+    });
+
+hierarchyCommand
+    .command('remove', 'cli.cmd.hierarchy-remove')
+    .option('--id <sheet>', 'cli.opt.sheet-id')
+    .actionCtx(async (options, _args, ctx) => {
+        const file = input(options);
+        if (file === undefined) {
+            ctx.fail('open-eda.cli.file-required', { message: 'a design document is required' });
+            return 2;
+        }
+        const sheet = text(options, 'id');
+        if (sheet === undefined || sheet.trim().length === 0) {
+            ctx.fail('open-eda.cli.arguments-invalid', { message: '`--id` is required' });
+            return 2;
+        }
+        const { saved } = await withDesign(file, async (design) => {
+            const removed = await design.removeHierarchy(sheet);
+            return { removed, saved: await savedReport(design) };
+        });
+        ctx.emitResult(
+            { ...saved, revision: saved.revision, removed: sheet },
+            `removed hierarchical sheet ${sheet} from ${file} revision=${saved.revision}`,
+        );
+        return 0;
+    });
+
+hierarchyCommand
+    .command('port-add', 'cli.cmd.hierarchy-port-add')
+    .option('--id <sheet>', 'cli.opt.sheet-id')
+    .option('--name <name>', 'cli.opt.port-name')
+    .option('--direction <direction>', 'cli.opt.direction')
+    .option('--x <x>', 'cli.opt.x')
+    .option('--y <y>', 'cli.opt.y')
+    .actionCtx(async (options, _args, ctx) => {
+        const file = input(options);
+        if (file === undefined) {
+            ctx.fail('open-eda.cli.file-required', { message: 'a design document is required' });
+            return 2;
+        }
+        const sheet = text(options, 'id');
+        const name = text(options, 'name');
+        if (sheet === undefined || sheet.trim().length === 0 || name === undefined || name.trim().length === 0) {
+            ctx.fail('open-eda.cli.arguments-invalid', { message: '`--id` and `--name` are required' });
+            return 2;
+        }
+        const direction = (text(options, 'direction') ?? 'passive') as PortDirection;
+        if (!PORT_DIRECTIONS.includes(direction)) {
+            ctx.fail('open-eda.cli.arguments-invalid', {
+                message: '`--direction` must be input, output, bidirectional, tri_state or passive',
+            });
+            return 2;
+        }
+        const { result, saved } = await withDesign(file, async (design) => {
+            const result = await design.addHierarchyPort({
+                sheet,
+                name,
+                direction,
+                x: number(options, 'x'),
+                y: number(options, 'y'),
+            });
+            return { result, saved: await savedReport(design) };
+        });
+        ctx.emitResult(
+            { ...saved, revision: saved.revision, port: result.port },
+            `added port ${name} to ${sheet} in ${file} revision=${saved.revision}`,
+        );
+        return 0;
+    });
+
+hierarchyCommand
+    .command('port-remove', 'cli.cmd.hierarchy-port-remove')
+    .option('--id <sheet>', 'cli.opt.sheet-id')
+    .option('--name <name>', 'cli.opt.port-name')
+    .actionCtx(async (options, _args, ctx) => {
+        const file = input(options);
+        if (file === undefined) {
+            ctx.fail('open-eda.cli.file-required', { message: 'a design document is required' });
+            return 2;
+        }
+        const sheet = text(options, 'id');
+        const name = text(options, 'name');
+        if (sheet === undefined || sheet.trim().length === 0 || name === undefined || name.trim().length === 0) {
+            ctx.fail('open-eda.cli.arguments-invalid', { message: '`--id` and `--name` are required' });
+            return 2;
+        }
+        const { saved } = await withDesign(file, async (design) => {
+            const result = await design.removeHierarchyPort({ sheet, name });
+            return { result, saved: await savedReport(design) };
+        });
+        ctx.emitResult(
+            { ...saved, revision: saved.revision, removed: name },
+            `removed port ${name} from ${sheet} in ${file} revision=${saved.revision}`,
         );
         return 0;
     });

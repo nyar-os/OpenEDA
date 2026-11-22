@@ -456,6 +456,58 @@ test('component custom properties persist and stay addressable', { skip: without
     }
 });
 
+test('hierarchical sheet symbols and ports persist', { skip: withoutAddon }, async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'open-eda-hierarchy-'));
+    const document = path.join(directory, 'hierarchy.oeda');
+    const eda = new OpenEDA();
+    try {
+        const design = await eda.create({ title: 'Hierarchy' });
+        const added = await design.addHierarchy({ name: 'Power', file: 'power.kicad_sch', x: 10, y: 20 });
+        assert.equal(added.hierarchy.id, 'hierarchy-1');
+        assert.equal(added.hierarchy.width, 60);
+        assert.deepEqual(added.hierarchy.ports ?? [], []);
+        await assert.rejects(
+            design.addHierarchy({ name: 'Power', file: 'other.kicad_sch' }),
+            (error: unknown) => error instanceof OpenEDAError && error.code === 'object/duplicate',
+        );
+        const port = await design.addHierarchyPort({
+            sheet: 'Power',
+            name: 'VIN',
+            direction: 'input',
+            x: 10,
+            y: 24,
+        });
+        assert.equal(port.port.direction, 'input');
+        await assert.rejects(
+            design.addHierarchyPort({ sheet: 'Power', name: 'VIN' }),
+            (error: unknown) => error instanceof OpenEDAError && error.code === 'object/duplicate',
+        );
+        await assert.rejects(
+            design.addHierarchyPort({ sheet: 'Missing', name: 'GND' }),
+            (error: unknown) => error instanceof OpenEDAError && error.code === 'object/not-found',
+        );
+        await design.save({ target: document, overwrite: true });
+        await design.close();
+
+        const reopened = await eda.open({ path: document });
+        const listed = await reopened.listHierarchy();
+        assert.equal(listed.count, 1);
+        assert.equal(listed.hierarchy[0]?.ports?.[0]?.name, 'VIN');
+        const removedPort = await reopened.removeHierarchyPort({ sheet: 'hierarchy-1', name: 'VIN' });
+        assert.equal(removedPort.removed, 'VIN');
+        await reopened.removeHierarchy('Power');
+        assert.equal((await reopened.listHierarchy()).count, 0);
+        await assert.rejects(
+            reopened.removeHierarchy('Power'),
+            (error: unknown) => error instanceof OpenEDAError && error.code === 'object/not-found',
+        );
+        await reopened.close();
+    } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+        await eda.dispose();
+    }
+});
+
 test('drawing properties update, persist and reach the KiCad title block', { skip: withoutAddon }, async () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'open-eda-properties-'));
     const document = path.join(directory, 'title.oeda');

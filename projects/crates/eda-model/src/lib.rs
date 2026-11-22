@@ -823,6 +823,69 @@ pub struct RemoveComponentPropertyRequest {
     pub key: String,
 }
 
+/// Request of [`add_hierarchy`].
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AddHierarchyRequest {
+    /// Sheet name shown on the parent symbol; unique in the design.
+    pub name: String,
+    /// Child schematic file name, for example `power.kicad_sch`.
+    pub file: String,
+    /// Symbol top-left X coordinate; defaults to 0.
+    #[serde(default)]
+    pub x: f64,
+    /// Symbol top-left Y coordinate; defaults to 0.
+    #[serde(default)]
+    pub y: f64,
+    /// Symbol width; defaults to 60.
+    #[serde(default = "default_hierarchy_width")]
+    pub width: f64,
+    /// Symbol height; defaults to 40.
+    #[serde(default = "default_hierarchy_height")]
+    pub height: f64,
+}
+
+/// Request of [`add_hierarchy_port`].
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AddHierarchyPortRequest {
+    /// Hierarchical sheet id or name.
+    pub sheet: String,
+    /// Port name, unique inside the symbol.
+    pub name: String,
+    /// Electrical direction; defaults to `passive`.
+    #[serde(default = "default_port_direction")]
+    pub direction: PortDirection,
+    /// Port placement X coordinate; defaults to 0.
+    #[serde(default)]
+    pub x: f64,
+    /// Port placement Y coordinate; defaults to 0.
+    #[serde(default)]
+    pub y: f64,
+}
+
+/// Request of [`remove_hierarchy_port`].
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoveHierarchyPortRequest {
+    /// Hierarchical sheet id or name.
+    pub sheet: String,
+    /// Port name to remove.
+    pub name: String,
+}
+
+const fn default_hierarchy_width() -> f64 {
+    60.0
+}
+
+const fn default_hierarchy_height() -> f64 {
+    40.0
+}
+
+const fn default_port_direction() -> PortDirection {
+    PortDirection::Passive
+}
+
 /// Request of [`set_pin_type`].
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -2934,6 +2997,138 @@ pub fn add_text(handle: u64, request: AddTextRequest) -> Result<Value, ServiceEr
     })
 }
 
+/// Adds one hierarchical sheet symbol to the parent schematic.
+///
+/// The name and the child file are trimmed and must not be empty, and the name
+/// must be unique across the design. The size defaults to 60 by 40 design units
+/// and must be positive and finite, so the document stays valid right after the
+/// edit. The referenced child file is never opened or modified.
+pub fn add_hierarchy(handle: u64, request: AddHierarchyRequest) -> Result<Value, ServiceError> {
+    let name = request.name.trim().to_string();
+    if name.is_empty() {
+        return Err(ServiceError::new("session/argument-invalid", "a hierarchical sheet needs a name"));
+    }
+    let file = request.file.trim().to_string();
+    if file.is_empty() {
+        return Err(ServiceError::new("session/argument-invalid", "a hierarchical sheet needs a child file name"));
+    }
+    if !request.x.is_finite() || !request.y.is_finite() || !request.width.is_finite() || !request.height.is_finite() {
+        return Err(ServiceError::new("session/argument-invalid", "hierarchical sheet geometry must be finite"));
+    }
+    if request.width <= 0.0 || request.height <= 0.0 {
+        return Err(ServiceError::new("session/argument-invalid", "a hierarchical sheet needs a positive size"));
+    }
+    mutate(handle, |design| {
+        if design.hierarchy.iter().any(|sheet| sheet.name == name) {
+            return Err(duplicate(format!("hierarchical sheet name `{name}` already exists")));
+        }
+        let symbol = HierarchicalSheet {
+            id: free_hierarchy_id(design),
+            name,
+            file,
+            x: request.x,
+            y: request.y,
+            width: request.width,
+            height: request.height,
+            ports: Vec::new(),
+        };
+        design.hierarchy.push(symbol.clone());
+        design.revision += 1;
+        let mut payload = Map::new();
+        payload.insert("hierarchy".to_string(), json!(symbol));
+        Ok(payload)
+    })
+}
+
+/// Lists the hierarchical sheet symbols declared by one open design.
+pub fn list_hierarchy(handle: u64) -> Result<Value, ServiceError> {
+    with_session(handle, |session| {
+        let design = &session.design;
+        Ok(json!({
+            "revision": design.revision,
+            "design": summary_of(session),
+            "count": design.hierarchy.len(),
+            "hierarchy": design.hierarchy,
+        }))
+    })
+}
+
+/// Removes one hierarchical sheet symbol by id or name.
+///
+/// The child file is not touched; only the parent declaration is removed.
+pub fn remove_hierarchy(handle: u64, sheet: &str) -> Result<Value, ServiceError> {
+    mutate(handle, |design| {
+        let index = design
+            .hierarchy
+            .iter()
+            .position(|entry| entry.id == sheet || entry.name == sheet)
+            .ok_or_else(|| not_found(format!("no hierarchical sheet with id or name `{sheet}` is declared")))?;
+        let removed = design.hierarchy.remove(index);
+        design.revision += 1;
+        let mut payload = Map::new();
+        payload.insert("removed".to_string(), json!(removed.id));
+        Ok(payload)
+    })
+}
+
+/// Adds one port to a hierarchical sheet symbol.
+///
+/// The port name is trimmed, must not be empty, and must be unique inside the
+/// symbol. Coordinates must be finite. The child file is never opened.
+pub fn add_hierarchy_port(handle: u64, request: AddHierarchyPortRequest) -> Result<Value, ServiceError> {
+    let name = request.name.trim().to_string();
+    if name.is_empty() {
+        return Err(ServiceError::new("session/argument-invalid", "a hierarchical port needs a name"));
+    }
+    if !request.x.is_finite() || !request.y.is_finite() {
+        return Err(ServiceError::new("session/argument-invalid", "hierarchical port coordinates must be finite"));
+    }
+    mutate(handle, |design| {
+        let index = design
+            .hierarchy
+            .iter()
+            .position(|entry| entry.id == request.sheet || entry.name == request.sheet)
+            .ok_or_else(|| not_found(format!("no hierarchical sheet with id or name `{}` is declared", request.sheet)))?;
+        if design.hierarchy[index].ports.iter().any(|port| port.name == name) {
+            return Err(duplicate(format!(
+                "hierarchical sheet `{}` already declares port `{name}`",
+                design.hierarchy[index].name
+            )));
+        }
+        let port = SheetPort { name, direction: request.direction, x: request.x, y: request.y };
+        design.hierarchy[index].ports.push(port.clone());
+        design.revision += 1;
+        let mut payload = Map::new();
+        payload.insert("hierarchy".to_string(), json!(design.hierarchy[index]));
+        payload.insert("port".to_string(), json!(port));
+        Ok(payload)
+    })
+}
+
+/// Removes one port from a hierarchical sheet symbol.
+pub fn remove_hierarchy_port(handle: u64, request: RemoveHierarchyPortRequest) -> Result<Value, ServiceError> {
+    let name = request.name.trim().to_string();
+    if name.is_empty() {
+        return Err(ServiceError::new("session/argument-invalid", "a hierarchical port needs a name"));
+    }
+    mutate(handle, |design| {
+        let index = design
+            .hierarchy
+            .iter()
+            .position(|entry| entry.id == request.sheet || entry.name == request.sheet)
+            .ok_or_else(|| not_found(format!("no hierarchical sheet with id or name `{}` is declared", request.sheet)))?;
+        let port_index = design.hierarchy[index].ports.iter().position(|port| port.name == name).ok_or_else(|| {
+            not_found(format!("hierarchical sheet `{}` declares no port `{name}`", design.hierarchy[index].name))
+        })?;
+        let removed = design.hierarchy[index].ports.remove(port_index);
+        design.revision += 1;
+        let mut payload = Map::new();
+        payload.insert("hierarchy".to_string(), json!(design.hierarchy[index]));
+        payload.insert("removed".to_string(), json!(removed.name));
+        Ok(payload)
+    })
+}
+
 /// Adds an empty sheet and returns it.
 pub fn add_sheet(handle: u64, name: Option<&str>) -> Result<Value, ServiceError> {
     mutate(handle, |design| {
@@ -3467,6 +3662,19 @@ fn free_sheet_id(design: &Design) -> String {
     let mut counter = design.sheets.len() + 1;
     loop {
         let candidate = format!("sheet-{counter}");
+        if !used.contains(candidate.as_str()) {
+            return candidate;
+        }
+        counter += 1;
+    }
+}
+
+/// Picks a free `hierarchy-N` identity without adding a document counter field.
+fn free_hierarchy_id(design: &Design) -> String {
+    let used: HashSet<&str> = design.hierarchy.iter().map(|sheet| sheet.id.as_str()).collect();
+    let mut counter = design.hierarchy.len() + 1;
+    loop {
+        let candidate = format!("hierarchy-{counter}");
         if !used.contains(candidate.as_str()) {
             return candidate;
         }
@@ -9726,6 +9934,138 @@ mod tests {
         );
         let listed = list_component_properties(reopened, "R1", None).expect("list after remove");
         assert_eq!(listed["properties"], json!([{ "key": "MPN", "value": "ABC-123" }]));
+        close(reopened).expect("close reopened");
+        close(handle).expect("close");
+    }
+
+    #[test]
+    fn hierarchical_sheets_and_ports_are_edited_listed_and_persisted() {
+        let dir = TempDir::new("hierarchy");
+        let document = dir.join("hierarchy.oeda");
+        let created = create(CreateRequest::default()).expect("create");
+        let handle = created["handle"].as_u64().expect("handle");
+        let added = add_hierarchy(
+            handle,
+            AddHierarchyRequest {
+                name: "Power".to_string(),
+                file: "power.kicad_sch".to_string(),
+                x: 10.0,
+                y: 20.0,
+                width: 60.0,
+                height: 40.0,
+            },
+        )
+        .expect("add hierarchy");
+        assert_eq!(added["hierarchy"]["id"], "hierarchy-1");
+        assert_eq!(added["hierarchy"]["file"], "power.kicad_sch");
+        assert_eq!(added["hierarchy"].get("ports"), None);
+        assert_eq!(
+            add_hierarchy(
+                handle,
+                AddHierarchyRequest {
+                    name: "Power".to_string(),
+                    file: "other.kicad_sch".to_string(),
+                    x: 0.0,
+                    y: 0.0,
+                    width: 60.0,
+                    height: 40.0,
+                },
+            )
+            .unwrap_err()
+            .code,
+            "object/duplicate"
+        );
+        assert_eq!(
+            add_hierarchy(
+                handle,
+                AddHierarchyRequest {
+                    name: "Bad".to_string(),
+                    file: "bad.kicad_sch".to_string(),
+                    x: 0.0,
+                    y: 0.0,
+                    width: 0.0,
+                    height: 40.0,
+                },
+            )
+            .unwrap_err()
+            .code,
+            "session/argument-invalid"
+        );
+
+        let port = add_hierarchy_port(
+            handle,
+            AddHierarchyPortRequest {
+                sheet: "Power".to_string(),
+                name: "VIN".to_string(),
+                direction: PortDirection::Input,
+                x: 10.0,
+                y: 24.0,
+            },
+        )
+        .expect("add port");
+        assert_eq!(port["port"]["name"], "VIN");
+        assert_eq!(port["port"]["direction"], "input");
+        assert_eq!(port["hierarchy"]["ports"].as_array().map(Vec::len), Some(1));
+        assert_eq!(
+            add_hierarchy_port(
+                handle,
+                AddHierarchyPortRequest {
+                    sheet: "Power".to_string(),
+                    name: "VIN".to_string(),
+                    direction: PortDirection::Output,
+                    x: 0.0,
+                    y: 0.0,
+                },
+            )
+            .unwrap_err()
+            .code,
+            "object/duplicate"
+        );
+        assert_eq!(
+            add_hierarchy_port(
+                handle,
+                AddHierarchyPortRequest {
+                    sheet: "Missing".to_string(),
+                    name: "GND".to_string(),
+                    direction: PortDirection::Passive,
+                    x: 0.0,
+                    y: 0.0,
+                },
+            )
+            .unwrap_err()
+            .code,
+            "object/not-found"
+        );
+
+        let listed = list_hierarchy(handle).expect("list hierarchy");
+        assert_eq!(listed["count"], 1);
+        assert_eq!(listed["hierarchy"][0]["name"], "Power");
+        assert_eq!(listed["hierarchy"][0]["ports"][0]["name"], "VIN");
+
+        save(handle, &document, true).expect("save");
+        let opened = open(&document).expect("open");
+        let reopened = opened["handle"].as_u64().expect("handle");
+        let persisted = list_hierarchy(reopened).expect("list reopened");
+        assert_eq!(persisted["hierarchy"][0]["ports"][0]["direction"], "input");
+        let removed_port = remove_hierarchy_port(
+            reopened,
+            RemoveHierarchyPortRequest { sheet: "hierarchy-1".to_string(), name: "VIN".to_string() },
+        )
+        .expect("remove port");
+        assert_eq!(removed_port["removed"], "VIN");
+        assert_eq!(
+            remove_hierarchy_port(
+                reopened,
+                RemoveHierarchyPortRequest { sheet: "Power".to_string(), name: "VIN".to_string() },
+            )
+            .unwrap_err()
+            .code,
+            "object/not-found"
+        );
+        let removed = remove_hierarchy(reopened, "Power").expect("remove hierarchy");
+        assert_eq!(removed["removed"], "hierarchy-1");
+        assert_eq!(list_hierarchy(reopened).expect("list after remove")["count"], 0);
+        assert_eq!(remove_hierarchy(reopened, "Power").unwrap_err().code, "object/not-found");
         close(reopened).expect("close reopened");
         close(handle).expect("close");
     }

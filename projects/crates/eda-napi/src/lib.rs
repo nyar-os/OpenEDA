@@ -22,11 +22,12 @@ use std::{
 };
 
 use open_eda_model::{
-    AddBusRequest, AddComponentRequest, AddJunctionRequest, AddNoConnectRequest, AddTextRequest, AddWireRequest,
-    ComponentClassRequest, ConnectNetRequest, CreateRequest, DeleteNetRequest, DisconnectNetRequest, InspectOptions,
-    MergeNetsRequest, MoveComponentRequest, NetClassRequest, ReferencePrefixRequest, RemoveComponentPropertyRequest,
-    RenameNetRequest, ServiceError, SetComponentPropertyRequest, SetFootprintRequest, SetPinTypeRequest, SplitWireRequest,
-    TranslateRequest, UpdateComponentRequest, UpdateDesignRequest, UpdateWireRequest,
+    AddBusRequest, AddComponentRequest, AddHierarchyPortRequest, AddHierarchyRequest, AddJunctionRequest, AddNoConnectRequest,
+    AddTextRequest, AddWireRequest, ComponentClassRequest, ConnectNetRequest, CreateRequest, DeleteNetRequest,
+    DisconnectNetRequest, InspectOptions, MergeNetsRequest, MoveComponentRequest, NetClassRequest, ReferencePrefixRequest,
+    RemoveComponentPropertyRequest, RemoveHierarchyPortRequest, RenameNetRequest, ServiceError, SetComponentPropertyRequest,
+    SetFootprintRequest, SetPinTypeRequest, SplitWireRequest, TranslateRequest, UpdateComponentRequest, UpdateDesignRequest,
+    UpdateWireRequest,
 };
 use serde_json::{Value, json};
 use wae::{
@@ -582,6 +583,50 @@ fn design_delete_sheet(ctx: CallContext) -> Result<JsValue> {
     let handle = handle(&ctx, 0)?;
     let sheet = text(&ctx, 1)?;
     let report = open_eda_model::delete_sheet(handle, &sheet).map_err(fail)?;
+    respond(&ctx, &report)
+}
+
+/// Adds one hierarchical sheet symbol to an open design.
+#[function]
+fn design_add_hierarchy(ctx: CallContext) -> Result<JsValue> {
+    let handle = handle(&ctx, 0)?;
+    let request: AddHierarchyRequest = decode(serde_json::from_str(&text(&ctx, 1)?))?;
+    let report = open_eda_model::add_hierarchy(handle, request).map_err(fail)?;
+    respond(&ctx, &report)
+}
+
+/// Lists the hierarchical sheet symbols of an open design.
+#[function]
+fn design_list_hierarchy(ctx: CallContext) -> Result<JsValue> {
+    let handle = handle(&ctx, 0)?;
+    let report = open_eda_model::list_hierarchy(handle).map_err(fail)?;
+    respond(&ctx, &report)
+}
+
+/// Removes one hierarchical sheet symbol by id or name.
+#[function]
+fn design_remove_hierarchy(ctx: CallContext) -> Result<JsValue> {
+    let handle = handle(&ctx, 0)?;
+    let sheet = text(&ctx, 1)?;
+    let report = open_eda_model::remove_hierarchy(handle, &sheet).map_err(fail)?;
+    respond(&ctx, &report)
+}
+
+/// Adds one port to a hierarchical sheet symbol.
+#[function]
+fn design_add_hierarchy_port(ctx: CallContext) -> Result<JsValue> {
+    let handle = handle(&ctx, 0)?;
+    let request: AddHierarchyPortRequest = decode(serde_json::from_str(&text(&ctx, 1)?))?;
+    let report = open_eda_model::add_hierarchy_port(handle, request).map_err(fail)?;
+    respond(&ctx, &report)
+}
+
+/// Removes one port from a hierarchical sheet symbol.
+#[function]
+fn design_remove_hierarchy_port(ctx: CallContext) -> Result<JsValue> {
+    let handle = handle(&ctx, 0)?;
+    let request: RemoveHierarchyPortRequest = decode(serde_json::from_str(&text(&ctx, 1)?))?;
+    let report = open_eda_model::remove_hierarchy_port(handle, request).map_err(fail)?;
     respond(&ctx, &report)
 }
 
@@ -1565,6 +1610,11 @@ register_module![
     design_add_sheet,
     design_rename_sheet,
     design_delete_sheet,
+    design_add_hierarchy,
+    design_list_hierarchy,
+    design_remove_hierarchy,
+    design_add_hierarchy_port,
+    design_remove_hierarchy_port,
     design_move_component,
     design_update_component,
     design_set_component_footprint,

@@ -22,8 +22,8 @@ document projections. It also exports and imports the same schematic subset as a
 6/7 schematic (`kicad_sch`): symbols, wires, junctions, no-connect flags, text
 annotations, net labels, including global and hierarchical labels, and the
 title-block title, date, revision and company. Hierarchical sheet symbols and
-their ports are read and written back as declarations; the child sheet file is
-not opened. A separate read-only reader reports the symbols a KiCad `.kicad_sym`
+their ports are read and written back as declarations, and can be edited (add,
+list, remove symbols; add and remove ports) without opening the child sheet file. A separate read-only reader reports the symbols a KiCad `.kicad_sym`
 library declares, with their units and pins, and the `kicad_sym` export writes
 the placed components' library symbols as an importable KiCad symbol library. Editing
 covers components, nets (derive, rename, merge, disconnect, delete), design-level buses
@@ -53,6 +53,7 @@ prints exactly which entries are supported.
 | checks `erc`, `electrical`, `nets`, `connectivity`, `footprints`, `power` | supported | `drc` and `clearance` are unsupported |
 | export `net`, `net_csv`, `net_hier`, `spice`, `spice_subckt`, `svg`, `bom`, `bom_json`, `bom_html`, `pdf`, `report`, `json`, `kicad_sch`, `kicad_sym` | supported | read-only projections; `kicad_pcb` and `gbr` are unsupported |
 | import `kicad_sch` | supported | symbols, wires, junctions, no-connect flags, text, labels, hierarchical sheet symbols and ports; other constructs are reported as loss entries |
+| hierarchy editing | supported | add/list/remove parent symbol declarations and their ports; child files are never opened |
 | import `kicad_sym` | supported | read-only symbol declarations: name, unit count and each pin's number, name, electrical role and unit |
 | export `kicad_sym` | supported | one library symbol per derived library id, with the pins and their electrical roles; no symbol body is invented |
 | KiCad board, Gerber, drill, STEP | unsupported | declared in the capability matrix only |
@@ -192,6 +193,9 @@ await design.addVariant({ name: 'lite', dnp: ['R1'], values: { R1: '22k' } });
 await design.setComponentProperty({ reference: 'R1', key: 'MPN', value: 'ABC-123' });
 const properties = await design.listComponentProperties('R1');
 await design.removeComponentProperty({ reference: 'R1', key: 'MPN' });
+const sheet = await design.addHierarchy({ name: 'Power', file: 'power.kicad_sch', x: 10, y: 20 });
+await design.addHierarchyPort({ sheet: sheet.hierarchy.id, name: 'VIN', direction: 'input', x: 10, y: 24 });
+await design.listHierarchy();
 await design.export({ format: 'bom', target: 'blinker-lite.csv', variant: 'lite' });
 
 await design.save({ target: 'blinker.oeda', overwrite: true });
@@ -235,6 +239,13 @@ open-eda variant remove blinker.oeda --name lite
 open-eda component property-set blinker.oeda --ref R1 --key MPN --value ABC-123
 open-eda component property-list blinker.oeda --ref R1
 open-eda component property-remove blinker.oeda --ref R1 --key MPN
+
+# Edit hierarchical sheet symbols without opening the child file
+open-eda hierarchy add blinker.oeda --name Power --file power.kicad_sch --x 10 --y 20
+open-eda hierarchy port-add blinker.oeda --id Power --name VIN --direction input --x 10 --y 24
+open-eda hierarchy list blinker.oeda
+open-eda hierarchy port-remove blinker.oeda --id Power --name VIN
+open-eda hierarchy remove blinker.oeda --id Power
 
 # Connect pins to a net, then edit the objects
 open-eda net connect blinker.oeda --net VCC --nodes R1.1,C1.1
@@ -404,8 +415,10 @@ served by the desktop window and talks to the same operations over JSON-RPC.
   not simulate a design: the SPICE projection is a netlist export only.
 - It imports and writes only the schematic subset it models: components, wires,
   junctions, no-connect flags, text annotations, net labels and hierarchical
-  sheet symbols with ports. Bus wires, arcs and the contents of a child sheet
-  file are reported as import losses instead of being reconstructed; global
+  sheet symbols with ports. The hierarchy editor only changes parent symbol
+  declarations; it never creates, opens or rewrites the child sheet file,
+  and it does not check that a port matches a hierarchical label in that child.
+  Bus wires, arcs and the contents of a child sheet file are reported as import losses instead of being reconstructed; global
   and hierarchical labels are flattened to sheet-local nets and reported as
   `kicad/label-scope`.
 - It models buses as design-level name, width and alias declarations. It does not

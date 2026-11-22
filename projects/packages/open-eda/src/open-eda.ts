@@ -14,6 +14,8 @@ import { OpenEDAError } from './errors.js';
 import type { DesignIntent } from './formats.js';
 import * as service from './service.js';
 import type {
+    AddHierarchyInput,
+    AddHierarchyPortInput,
     AnnotateResult,
     Bus,
     BusInput,
@@ -43,6 +45,9 @@ import type {
     ExportOptions,
     ExportReport,
     HistoryResult,
+    HierarchyListResult,
+    HierarchyPortResult,
+    HierarchyResult,
     InspectOptions,
     InspectReport,
     Junction,
@@ -65,6 +70,8 @@ import type {
     ReferencePrefixInput,
     ReferencePrefixRule,
     RemoveComponentPropertyInput,
+    RemoveHierarchyPortInput,
+    RemoveHierarchyResult,
     RenameNetInput,
     SaveOptions,
     SaveReport,
@@ -695,6 +702,29 @@ function attach(opened: service.DesignHandle, options: AttachOptions): Design {
         async deleteSheet(sheet: string): Promise<void> {
             const result = await mutate(() => service.deleteSheet(handle, sheet));
             current = result.design;
+        },
+        async addHierarchy(input: AddHierarchyInput): Promise<HierarchyResult> {
+            const result = await mutate(() => service.addHierarchy(handle, input));
+            current = result.design;
+            return result;
+        },
+        async listHierarchy(): Promise<HierarchyListResult> {
+            return service.listHierarchy(handle);
+        },
+        async removeHierarchy(sheet: string): Promise<RemoveHierarchyResult> {
+            const result = await mutate(() => service.removeHierarchy(handle, sheet));
+            current = result.design;
+            return result;
+        },
+        async addHierarchyPort(input: AddHierarchyPortInput): Promise<HierarchyPortResult> {
+            const result = await mutate(() => service.addHierarchyPort(handle, input));
+            current = result.design;
+            return result;
+        },
+        async removeHierarchyPort(input: RemoveHierarchyPortInput): Promise<RemoveHierarchyResult> {
+            const result = await mutate(() => service.removeHierarchyPort(handle, input));
+            current = result.design;
+            return result;
         },
         async listObjects(): Promise<DesignObjects> {
             return service.listObjects(handle);

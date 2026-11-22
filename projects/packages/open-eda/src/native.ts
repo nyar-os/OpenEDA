@@ -66,6 +66,11 @@ export interface NativeBinding {
     design_add_sheet(handle: number, name?: string): string;
     design_rename_sheet(handle: number, sheet: string, name: string): string;
     design_delete_sheet(handle: number, sheet: string): string;
+    design_add_hierarchy(handle: number, requestJson: string): string;
+    design_list_hierarchy(handle: number): string;
+    design_remove_hierarchy(handle: number, sheet: string): string;
+    design_add_hierarchy_port(handle: number, requestJson: string): string;
+    design_remove_hierarchy_port(handle: number, requestJson: string): string;
     design_move_component(handle: number, requestJson: string): string;
     design_update_component(handle: number, requestJson: string): string;
     design_set_component_footprint(handle: number, requestJson: string): string;

@@ -1094,7 +1094,71 @@ export interface HierarchicalSheet {
     readonly y: number;
     readonly width: number;
     readonly height: number;
-    readonly ports: readonly SheetPort[];
+    /** Ports declared on this symbol; absent when the symbol has no port. */
+    readonly ports?: readonly SheetPort[];
+}
+
+/** Input of `design.addHierarchy()`; size defaults to 60 by 40 design units. */
+export interface AddHierarchyInput {
+    readonly name: string;
+    readonly file: string;
+    readonly x?: number;
+    readonly y?: number;
+    readonly width?: number;
+    readonly height?: number;
+}
+
+/** Input of `design.addHierarchyPort()`. */
+export interface AddHierarchyPortInput {
+    /** Hierarchical sheet id or name. */
+    readonly sheet: string;
+    readonly name: string;
+    readonly direction?: PortDirection;
+    readonly x?: number;
+    readonly y?: number;
+}
+
+/** Input of `design.removeHierarchyPort()`. */
+export interface RemoveHierarchyPortInput {
+    /** Hierarchical sheet id or name. */
+    readonly sheet: string;
+    readonly name: string;
+}
+
+/** Result of `design.addHierarchy()`. */
+export interface HierarchyResult {
+    readonly revision: number;
+    readonly design: DesignSummary;
+    readonly canUndo: boolean;
+    readonly canRedo: boolean;
+    readonly hierarchy: HierarchicalSheet;
+}
+
+/** Result of `design.listHierarchy()`. */
+export interface HierarchyListResult {
+    readonly revision: number;
+    readonly design: DesignSummary;
+    readonly count: number;
+    readonly hierarchy: readonly HierarchicalSheet[];
+}
+
+/** Result of `design.removeHierarchy()` and `design.removeHierarchyPort()`. */
+export interface RemoveHierarchyResult {
+    readonly revision: number;
+    readonly design: DesignSummary;
+    readonly canUndo: boolean;
+    readonly canRedo: boolean;
+    readonly removed: string;
+}
+
+/** Result of `design.addHierarchyPort()`. */
+export interface HierarchyPortResult {
+    readonly revision: number;
+    readonly design: DesignSummary;
+    readonly canUndo: boolean;
+    readonly canRedo: boolean;
+    readonly hierarchy: HierarchicalSheet;
+    readonly port: SheetPort;
 }
 
 /** A sheet as returned by the sheet operations. */
@@ -1323,6 +1387,16 @@ export interface Design {
     renameSheet(sheet: SheetId, name: string): Promise<Sheet>;
     /** Deletes one empty sheet; the last sheet and sheets with objects are refused. */
     deleteSheet(sheet: SheetId): Promise<void>;
+    /** Adds one hierarchical sheet symbol; the child file is never opened. */
+    addHierarchy(input: AddHierarchyInput): Promise<HierarchyResult>;
+    /** Lists the hierarchical sheet symbols of the design. */
+    listHierarchy(): Promise<HierarchyListResult>;
+    /** Removes one hierarchical sheet symbol by id or name. */
+    removeHierarchy(sheet: string): Promise<RemoveHierarchyResult>;
+    /** Adds one port to a hierarchical sheet symbol. */
+    addHierarchyPort(input: AddHierarchyPortInput): Promise<HierarchyPortResult>;
+    /** Removes one port from a hierarchical sheet symbol. */
+    removeHierarchyPort(input: RemoveHierarchyPortInput): Promise<RemoveHierarchyResult>;
     /** Lists components, nets and wires of the open design. */
     listObjects(): Promise<DesignObjects>;
     /** Lists the symbol library the design uses, with pin counts and missing footprints. */

@@ -9,6 +9,8 @@
 import { NotImplementedError, OpenEDAError, errorCodes, type OpenEDAErrorCode } from './errors.js';
 import { nativeBinding } from './native.js';
 import type {
+    AddHierarchyInput,
+    AddHierarchyPortInput,
     AnnotateResult,
     Bus,
     BusInput,
@@ -37,6 +39,9 @@ import type {
     ExportReport,
     ExportTarget,
     HistoryResult,
+    HierarchyListResult,
+    HierarchyPortResult,
+    HierarchyResult,
     InspectOptions,
     InspectReport,
     Junction,
@@ -58,6 +63,8 @@ import type {
     ReferencePrefixListResult,
     ReferencePrefixResult,
     RemoveComponentPropertyInput,
+    RemoveHierarchyPortInput,
+    RemoveHierarchyResult,
     RenameNetInput,
     SaveReport,
     SetComponentPropertyInput,
@@ -674,6 +681,58 @@ export function renameSheet(handle: number, sheet: string, name: string): SheetR
 /** Deletes one empty sheet. */
 export function deleteSheet(handle: number, sheet: string): SheetResult {
     return decode<SheetResult>(() => binding('design.deleteSheet').design_delete_sheet(handle, sheet));
+}
+
+/** Adds one hierarchical sheet symbol. */
+export function addHierarchy(handle: number, input: AddHierarchyInput): HierarchyResult {
+    return decode<HierarchyResult>(() =>
+        binding('design.addHierarchy').design_add_hierarchy(
+            handle,
+            JSON.stringify({
+                name: input.name,
+                file: input.file,
+                x: input.x,
+                y: input.y,
+                width: input.width,
+                height: input.height,
+            }),
+        ),
+    );
+}
+
+/** Lists the hierarchical sheet symbols of one design. */
+export function listHierarchy(handle: number): HierarchyListResult {
+    return decode<HierarchyListResult>(() => binding('design.listHierarchy').design_list_hierarchy(handle));
+}
+
+/** Removes one hierarchical sheet symbol by id or name. */
+export function removeHierarchy(handle: number, sheet: string): RemoveHierarchyResult {
+    return decode<RemoveHierarchyResult>(() =>
+        binding('design.removeHierarchy').design_remove_hierarchy(handle, sheet),
+    );
+}
+
+/** Adds one port to a hierarchical sheet symbol. */
+export function addHierarchyPort(handle: number, input: AddHierarchyPortInput): HierarchyPortResult {
+    return decode<HierarchyPortResult>(() =>
+        binding('design.addHierarchyPort').design_add_hierarchy_port(
+            handle,
+            JSON.stringify({
+                sheet: input.sheet,
+                name: input.name,
+                direction: input.direction,
+                x: input.x,
+                y: input.y,
+            }),
+        ),
+    );
+}
+
+/** Removes one port from a hierarchical sheet symbol. */
+export function removeHierarchyPort(handle: number, input: RemoveHierarchyPortInput): RemoveHierarchyResult {
+    return decode<RemoveHierarchyResult>(() =>
+        binding('design.removeHierarchyPort').design_remove_hierarchy_port(handle, JSON.stringify(input)),
+    );
 }
 
 /** Lists components of one open design. */
