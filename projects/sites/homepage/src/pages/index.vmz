@@ -97,7 +97,7 @@
                 </div>
                 <div class="sheet__foot">
                     <span>open-eda export demo.oeda --format svg</span>
-                    <span>4 symbols · 10 wires · 5605 B</span>
+                    <span>4 symbols · 10 wires · 5607 B</span>
                 </div>
             </div>
         </section>

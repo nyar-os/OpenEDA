@@ -7153,8 +7153,11 @@ fn svg_projection(sheets: &[&Sheet]) -> SvgProjection {
     let view_y = min_y - padding;
     let view_width = (max_x - min_x + 2.0 * padding).max(1.0);
     let view_height = (max_y - min_y + 2.0 * padding).max(1.0);
-    let width = view_width.round();
-    let height = view_height.round();
+    // The SVG viewBox counts millimetres. A standalone file opens at eight
+    // pixels per millimetre so pin labels and references stay legible instead
+    // of rendering as a postage stamp.
+    let width = (view_width * 8.0).round();
+    let height = (view_height * 8.0).round();
 
     let mut svg = String::new();
     svg.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
