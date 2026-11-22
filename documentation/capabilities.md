@@ -18,13 +18,14 @@ instead of degrading silently.
 | BOM variants and DNP | supported | named DNP designator lists and value overrides applied to `bom`, `bom_json` and `bom_html` |
 | net classes | supported | name, width, clearance, via and net/bus assignment lists |
 | component custom properties | supported | trimmed unique keys, verbatim values; stored in `.oeda`, the JSON projection and KiCad symbol properties |
-| checks `erc`, `electrical`, `nets`, `connectivity`, `footprints`, `power` | supported | `drc` and `clearance` are unsupported |
+| checks `erc`, `electrical`, `nets`, `connectivity`, `footprints`, `power`, `hierarchy` | supported | `drc` and `clearance` are unsupported; `hierarchy` is a separate read-only entry, not an `inspect --checks` value |
 | design `stats` | supported | deterministic per-sheet and design-wide counts; tagged `open-eda-stats` |
 | read-only listings `component list`, `net list`, `bus list`, `net-class list`, `wire list`, `label list`, `text list`, `sheet list` | supported | document order with 0-based indices where the model edits by index |
 | junction and no-connect editing | supported | add a junction by coordinate and remove it by 0-based index; add a no-connect flag with or without a `REF.PIN` node and remove it by index; a duplicate junction coordinate is refused (`junction/duplicate`) and so is a second flag on one pin (`no-connect/duplicate`); `capabilities()` reports `edits.junctions` and `edits.noConnects` |
 | export `net`, `net_csv`, `net_hier`, `spice`, `spice_subckt`, `svg`, `bom`, `bom_json`, `bom_html`, `pdf`, `report`, `json`, `kicad_sch`, `kicad_sym` | supported | read-only projections; `kicad_pcb` and `gbr` are unsupported |
 | import `kicad_sch` | supported | symbols, wires, junctions, no-connect flags, text, labels, hierarchical sheet symbols and ports; other constructs are reported as losses |
-| hierarchy editing | supported | add/list/remove parent symbol declarations and their ports; child files are never opened |
+| hierarchy editing | supported | add/list/remove parent symbol declarations and their ports; editing never reads the child files |
+| hierarchy check `hierarchy check` | supported | read-only depth-first walk of `.oeda` children; reports extension, missing file, parse, cycle, depth and port/label mismatches as `hierarchy/*` issues |
 | import `kicad_sym` | supported | read-only symbol declarations: unit count and each pin's number, name, role and unit |
 | export `kicad_sym` | supported | one library symbol per derived library id, with pins and roles; no symbol body is invented |
 | KiCad board, Gerber, drill, STEP | unsupported | declared in the capability matrix only |
@@ -54,8 +55,28 @@ producing an ambiguous file.
   may not collide with a bus name, a member name or another alias.
 - A hierarchical sheet symbol is a parent declaration: name, child file,
   placement, size and ports (`input`, `output`, `bidirectional`, `tri_state`,
-  `passive`). The model never opens or rewrites the child file and does not check
-  that a port matches a hierarchical label there.
+  `passive`). Editing never reads or rewrites the child file.
+- `hierarchy check` (`checkHierarchy()` in the SDK, `capabilities().checks.hierarchy`)
+  walks the declarations depth-first in document order and opens only children
+  whose extension is `.oeda`; any other extension is
+  `hierarchy/child-format-unsupported` (warning) and is not opened. A resolved
+  child that does not exist is `hierarchy/file-missing` (error), and one that
+  cannot be read, parsed or validated is `hierarchy/child-invalid` (error).
+  A normalised path already in the current chain is `hierarchy/cycle` (error)
+  and stops that branch; more than 32 child levels is
+  `hierarchy/depth-exceeded` (error) and also stops that branch.
+- The ports of each symbol are compared with the hierarchical-scope labels of
+  the child's first sheet: a duplicated port name is
+  `hierarchy/duplicate-port` (error), a port without a matching label is
+  `hierarchy/port-without-label` (error), and a hierarchical label without a
+  matching port is `hierarchy/label-without-port` (warning). Each issue carries
+  the child path in `sheet`.
+- The report is `{format: "open-eda-hierarchy", version: 1, sheets, issues,
+  passed}`; `sheets` counts child documents that opened successfully and
+  excludes the root, and `passed` is false only when an issue is an error. The
+  check never writes a document. A design created in memory and not yet saved
+  has no document path, so the check fails with
+  `hierarchy/document-path-missing`.
 
 ### Checks
 
@@ -114,8 +135,9 @@ Losses are explicit. Each occurrence adds an entry to `losses`:
 | `kicad/missing-reference` | a symbol had no reference and received a fallback |
 
 A hierarchical sheet symbol keeps its name, child file, placement, size and
-ports; the child file is never opened. A no-connect flag keeps its placement;
-the optional pin attachment is native-only.
+ports; import does not read the child file, and only `hierarchy check` opens it.
+A no-connect flag keeps its placement; the optional pin attachment is
+native-only.
 
 ### KiCad symbol library (`kicad_sym`)
 

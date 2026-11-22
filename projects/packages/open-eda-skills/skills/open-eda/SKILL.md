@@ -380,7 +380,8 @@ and `design.updateText()`.
   document; `import` materializes a `.kicad_sch` into `.oeda`, while `library`
   only reads a `.kicad_sym` symbol declaration. Hierarchical
   `sheet` symbols and their `pin` ports import as declarations; the referenced
-  child sheet file is never opened.
+  child sheet file is not opened by import; `hierarchy check` opens it for the
+  read-only hierarchy report.
 
 ## Hard rules
 

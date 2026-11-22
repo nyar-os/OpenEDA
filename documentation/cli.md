@@ -111,6 +111,7 @@ Pin roles: `input`, `output`, `bidirectional`, `tri_state`, `passive`,
 | `open-eda sheet delete <file> --id <sheet>` | Delete a sheet |
 | `open-eda hierarchy add <file> --name <name> --file <child> --x <n> --y <n> [--width <n>] [--height <n>]` | Add a hierarchical sheet symbol declaration |
 | `open-eda hierarchy list <file>` | List sheet symbols and ports |
+| `open-eda hierarchy check <file>` | Check child `.oeda` documents without changing them |
 | `open-eda hierarchy port-add <file> --id <sheet> --name <port> --direction <dir> --x <n> --y <n>` | Add a port declaration |
 | `open-eda hierarchy port-remove <file> --id <sheet> --name <port>` | Remove a port declaration |
 | `open-eda hierarchy remove <file> --id <sheet>` | Remove a sheet symbol |

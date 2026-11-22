@@ -67,12 +67,13 @@ pnpm exec open-eda export blinker.oeda --format svg --out blinker.svg
 | Annotations | `addLabel`, `listLabels`, `updateLabel`, `removeLabel`, `addText`, `listTexts`, `updateText`, `moveText`, `deleteText`, `addNoConnect`, `listNoConnects`, `deleteNoConnect` |
 | Sheets | `addSheet`, `listSheets`, `renameSheet`, `deleteSheet`, `addHierarchy`, `listHierarchy`, `addHierarchyPort`, `removeHierarchyPort`, `removeHierarchy` |
 | Design data | `annotate`, `setProperties`, `addVariant`, `listVariants`, `removeVariant`, `setReferencePrefix`, `removeReferencePrefix`, `listReferencePrefixes`, `setComponentClass`, `listComponentClasses`, `stats`, `compareNetlist` |
-| Reports | `listObjects`, `listComponents`, `listNets`, `listSymbols`, `connectivity`, `inspect` |
+| Reports | `listObjects`, `listComponents`, `listNets`, `listSymbols`, `connectivity`, `inspect`, `checkHierarchy` |
 | Output | `save`, `export`, `undo`, `redo`, `close` |
 
 `inspect` runs `erc`, `electrical`, `nets`, `connectivity`, `footprints` and
-`power`, with per-code `severity` overrides and `waivers`. `export` writes
-`net`, `net_csv`, `net_hier`, `spice`, `spice_subckt`, `svg`, `bom`, `bom_json`,
+`power`, with per-code `severity` overrides and `waivers`; `checkHierarchy`
+separately walks the declared hierarchy and reports `hierarchy/*` issues.
+`export` writes `net`, `net_csv`, `net_hier`, `spice`, `spice_subckt`, `svg`, `bom`, `bom_json`,
 `bom_html`, `pdf`, `report`, `json`, `kicad_sch` and `kicad_sym`.
 `importKicadSch` reads the supported KiCad schematic subset and returns a loss
 ledger for everything else.
