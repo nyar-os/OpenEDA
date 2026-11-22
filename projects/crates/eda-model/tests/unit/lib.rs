@@ -72,6 +72,7 @@ fn capability_matrix_reports_only_the_implemented_entries() {
     assert_eq!(matrix["exportTargets"]["gbr"], "unsupported");
     assert_eq!(matrix["edits"]["junctions"], "supported");
     assert_eq!(matrix["edits"]["noConnects"], "supported");
+    assert_eq!(matrix["edits"]["pins"], "supported");
     assert_eq!(matrix["queries"]["trace"], "supported");
 }
 

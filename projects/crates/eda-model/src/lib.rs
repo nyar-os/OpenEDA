@@ -1073,6 +1073,47 @@ pub struct SetPinTypeRequest {
     pub pin_type: Option<PinType>,
 }
 
+/// Request of [`add_pin`].
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AddPinRequest {
+    /// Target sheet id or name; the first sheet is used when omitted.
+    #[serde(default)]
+    pub sheet: Option<String>,
+    /// Reference designator of the placed component.
+    pub reference: String,
+    /// Pin name to add.
+    pub pin: String,
+}
+
+/// Request of [`remove_pin`].
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemovePinRequest {
+    /// Target sheet id or name; the first sheet is used when omitted.
+    #[serde(default)]
+    pub sheet: Option<String>,
+    /// Reference designator of the placed component.
+    pub reference: String,
+    /// Pin name to remove.
+    pub pin: String,
+}
+
+/// Request of [`rename_pin`].
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RenamePinRequest {
+    /// Target sheet id or name; the first sheet is used when omitted.
+    #[serde(default)]
+    pub sheet: Option<String>,
+    /// Reference designator of the placed component.
+    pub reference: String,
+    /// Current pin name.
+    pub from: String,
+    /// New pin name.
+    pub to: String,
+}
+
 /// Request of [`rename_net`].
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1263,7 +1304,9 @@ pub struct Waiver {
 /// Junctions and no-connect flags are editable, not read-only: the matrix
 /// reports `edits.junctions` and `edits.noConnects` as `supported` because
 /// `add_junction`/`delete_junction` and `add_no_connect`/`delete_no_connect`
-/// exist and are covered by tests.
+/// exist and are covered by tests. Component pins are editable too:
+/// `edits.pins` is `supported` because [`add_pin`], [`remove_pin`] and
+/// [`rename_pin`] exist and are covered by tests.
 ///
 /// Read-only queries live under `queries`, next to `checks`: `queries.trace`
 /// reports the pin-to-pin path query of [`trace_pins`]. It is a query, not a
@@ -1305,6 +1348,7 @@ pub fn capabilities() -> Value {
     let edits = json!({
         "junctions": level("edit.junctions".to_string()),
         "noConnects": level("edit.noConnects".to_string()),
+        "pins": level("edit.pins".to_string()),
     });
 
     let mut queries = Map::new();
@@ -1348,6 +1392,7 @@ fn capability_matrix() -> CapabilityMatrix {
     }
     matrix.insert(Capability::new("edit.junctions", "edit", Support::Supported));
     matrix.insert(Capability::new("edit.noConnects", "edit", Support::Supported));
+    matrix.insert(Capability::new("edit.pins", "edit", Support::Supported));
     matrix.insert(Capability::new("query.trace", "query", Support::Supported));
     matrix
 }
@@ -2495,6 +2540,170 @@ pub fn set_pin_type(handle: u64, request: SetPinTypeRequest) -> Result<Value, Se
         payload.insert("reference".to_string(), json!(reference));
         payload.insert("pin".to_string(), json!(request.pin));
         payload.insert("pinType".to_string(), json!(current));
+        Ok(payload)
+    })
+}
+
+/// Adds one pin to a placed component.
+///
+/// The name is trimmed and must not be empty or contain whitespace, a control
+/// character or a dot, because a `REF.PIN` node cannot carry it. A pin the
+/// component already declares is refused as `pin/duplicate`.
+pub fn add_pin(handle: u64, request: AddPinRequest) -> Result<Value, ServiceError> {
+    let pin = request.pin.trim().to_string();
+    if pin.is_empty() {
+        return Err(ServiceError::new("session/argument-invalid", "a pin name must not be empty"));
+    }
+    if breaks_node_grammar(&pin) {
+        return Err(ServiceError::new(
+            "session/argument-invalid",
+            format!("pin name `{pin}` contains whitespace, a control character or a dot; `REF.PIN` nodes cannot carry it"),
+        ));
+    }
+    mutate(handle, |design| {
+        let index = sheet_index(design, request.sheet.as_deref())?;
+        let position =
+            design.sheets[index].components.iter().position(|component| component.reference == request.reference).ok_or_else(
+                || not_found(format!("no component with reference `{}` is placed on this sheet", request.reference)),
+            )?;
+        let component = &mut design.sheets[index].components[position];
+        if component.pins.iter().any(|candidate| candidate == &pin) {
+            return Err(ServiceError::new(
+                "pin/duplicate",
+                format!("component `{}` already declares pin `{pin}`", request.reference),
+            ));
+        }
+        component.pins.push(pin.clone());
+        let component = component.clone();
+        design.revision += 1;
+        let mut payload = Map::new();
+        payload.insert("component".to_string(), json!(component));
+        payload.insert("pin".to_string(), json!(pin));
+        Ok(payload)
+    })
+}
+
+/// Removes one pin from a placed component.
+///
+/// A pin any net node or no-connect flag still references is refused as
+/// `pin/in-use`; the message names the net when a net node holds it. A pin the
+/// component does not declare is `pin/not-found`. Removing a pin also drops its
+/// electrical role, so the document never types a pin it no longer declares.
+pub fn remove_pin(handle: u64, request: RemovePinRequest) -> Result<Value, ServiceError> {
+    let pin = request.pin.trim().to_string();
+    mutate(handle, |design| {
+        let index = sheet_index(design, request.sheet.as_deref())?;
+        let position =
+            design.sheets[index].components.iter().position(|component| component.reference == request.reference).ok_or_else(
+                || not_found(format!("no component with reference `{}` is placed on this sheet", request.reference)),
+            )?;
+        if !design.sheets[index].components[position].pins.iter().any(|candidate| candidate == &pin) {
+            return Err(ServiceError::new(
+                "pin/not-found",
+                format!("component `{}` declares no pin `{pin}`", request.reference),
+            ));
+        }
+        for sheet in &design.sheets {
+            for net in &sheet.nets {
+                if net.nodes.iter().any(|node| node.reference == request.reference && node.pin == pin) {
+                    return Err(ServiceError::new(
+                        "pin/in-use",
+                        format!("pin `{}.{pin}` is still used by net `{}`", request.reference, net.name),
+                    ));
+                }
+            }
+            for flag in &sheet.no_connects {
+                if flag.node.as_ref().is_some_and(|node| node.reference == request.reference && node.pin == pin) {
+                    return Err(ServiceError::new(
+                        "pin/in-use",
+                        format!("pin `{}.{pin}` is still used by a no-connect flag", request.reference),
+                    ));
+                }
+            }
+        }
+        let component = &mut design.sheets[index].components[position];
+        component.pins.retain(|candidate| candidate != &pin);
+        component.pin_types.remove(&pin);
+        let component = component.clone();
+        design.revision += 1;
+        let mut payload = Map::new();
+        payload.insert("component".to_string(), json!(component));
+        payload.insert("deleted".to_string(), json!(pin));
+        Ok(payload)
+    })
+}
+
+/// Renames one pin and every `REF.PIN` reference that named it.
+///
+/// The new name is trimmed and validated like [`add_pin`]. A name the component
+/// already declares is `pin/duplicate`, and a `from` the component does not
+/// declare is `pin/not-found`. The rename rewrites the pin list, the electrical
+/// role, every net node and every no-connect node that referenced the old name,
+/// so connectivity survives. Renaming a pin to itself is a no-op and adds no
+/// revision.
+pub fn rename_pin(handle: u64, request: RenamePinRequest) -> Result<Value, ServiceError> {
+    let from = request.from.trim().to_string();
+    let to = request.to.trim().to_string();
+    if to.is_empty() {
+        return Err(ServiceError::new("session/argument-invalid", "a pin name must not be empty"));
+    }
+    if breaks_node_grammar(&to) {
+        return Err(ServiceError::new(
+            "session/argument-invalid",
+            format!("pin name `{to}` contains whitespace, a control character or a dot; `REF.PIN` nodes cannot carry it"),
+        ));
+    }
+    mutate(handle, |design| {
+        let index = sheet_index(design, request.sheet.as_deref())?;
+        let position =
+            design.sheets[index].components.iter().position(|component| component.reference == request.reference).ok_or_else(
+                || not_found(format!("no component with reference `{}` is placed on this sheet", request.reference)),
+            )?;
+        let component = &mut design.sheets[index].components[position];
+        let pin_index = component.pins.iter().position(|candidate| candidate == &from).ok_or_else(|| {
+            ServiceError::new("pin/not-found", format!("component `{}` declares no pin `{from}`", request.reference))
+        })?;
+        if from == to {
+            let component = component.clone();
+            let mut payload = Map::new();
+            payload.insert("component".to_string(), json!(component));
+            payload.insert("from".to_string(), json!(from));
+            payload.insert("to".to_string(), json!(to));
+            return Ok(payload);
+        }
+        if component.pins.iter().any(|candidate| candidate == &to) {
+            return Err(ServiceError::new(
+                "pin/duplicate",
+                format!("component `{}` already declares pin `{to}`", request.reference),
+            ));
+        }
+        component.pins[pin_index] = to.clone();
+        if let Some(pin_type) = component.pin_types.remove(&from) {
+            component.pin_types.insert(to.clone(), pin_type);
+        }
+        for sheet in &mut design.sheets {
+            for net in &mut sheet.nets {
+                for node in &mut net.nodes {
+                    if node.reference == request.reference && node.pin == from {
+                        node.pin = to.clone();
+                    }
+                }
+            }
+            for flag in &mut sheet.no_connects {
+                if let Some(node) = &mut flag.node
+                    && node.reference == request.reference
+                    && node.pin == from
+                {
+                    node.pin = to.clone();
+                }
+            }
+        }
+        let component = design.sheets[index].components[position].clone();
+        design.revision += 1;
+        let mut payload = Map::new();
+        payload.insert("component".to_string(), json!(component));
+        payload.insert("from".to_string(), json!(from));
+        payload.insert("to".to_string(), json!(to));
         Ok(payload)
     })
 }
@@ -7353,3 +7562,7 @@ mod tests;
 #[cfg(test)]
 #[path = "../tests/unit/trace.rs"]
 mod trace_tests;
+
+#[cfg(test)]
+#[path = "../tests/unit/pins.rs"]
+mod pin_tests;

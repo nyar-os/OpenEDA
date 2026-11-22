@@ -62,6 +62,9 @@ the document and never opens a child document.
 | `open-eda component update <file> --ref <ref> [--value <text>] [--sheet <id>]` | Update the value |
 | `open-eda component footprint <file> --ref <ref> --footprint <text> [--sheet <id>]` | Assign or clear the footprint |
 | `open-eda component pin-type <file> <ref> <pin> <role>` | Type a pin role; add `--clear` to remove it |
+| `open-eda component pin add <file> --ref <ref> --pin <pin> [--sheet <id>]` | Add a pin to a placed component |
+| `open-eda component pin remove <file> --ref <ref> --pin <pin> [--sheet <id>]` | Remove an unreferenced pin |
+| `open-eda component pin rename <file> --ref <ref> --from <pin> --to <pin> [--sheet <id>]` | Rename a pin; net and no-connect nodes follow |
 | `open-eda component property-set <file> --ref <ref> --key <key> --value <text> [--sheet <id>]` | Set a custom property |
 | `open-eda component property-list <file> --ref <ref> [--sheet <id>]` | List custom properties |
 | `open-eda component property-remove <file> --ref <ref> --key <key> [--sheet <id>]` | Remove a custom property |

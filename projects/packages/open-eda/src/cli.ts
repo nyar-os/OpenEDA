@@ -1012,6 +1012,114 @@ componentCommand
         return 0;
     });
 
+const pinCommand = componentCommand.command('pin', 'cli.cmd.component-pin');
+
+pinCommand
+    .command('add', 'cli.cmd.component-pin-add')
+    .option('--ref <ref>', 'cli.opt.ref')
+    .option('--pin <pin>', 'cli.opt.pin')
+    .option('--sheet <sheet>', 'cli.opt.sheet')
+    .actionCtx(async (options, _args, ctx) => {
+        const file = input(options);
+        if (file === undefined) {
+            ctx.fail('open-eda.cli.file-required', { message: 'a design document is required' });
+            return 2;
+        }
+        const reference = text(options, 'ref');
+        const pin = text(options, 'pin');
+        if (reference === undefined || reference.trim().length === 0 || pin === undefined || pin.trim().length === 0) {
+            ctx.fail('open-eda.cli.arguments-invalid', { message: '`--ref` and `--pin` are required' });
+            return 2;
+        }
+        const { component, saved } = await withDesign(file, async (design) => {
+            const component = await design.addPin({
+                sheet: text(options, 'sheet'),
+                reference,
+                pin,
+            });
+            return { component, saved: await savedReport(design) };
+        });
+        ctx.emitResult(
+            { ...saved, revision: saved.revision, component },
+            `added pin ${reference}.${pin} in ${file} revision=${saved.revision}`,
+        );
+        return 0;
+    });
+
+pinCommand
+    .command('remove', 'cli.cmd.component-pin-remove')
+    .option('--ref <ref>', 'cli.opt.ref')
+    .option('--pin <pin>', 'cli.opt.pin')
+    .option('--sheet <sheet>', 'cli.opt.sheet')
+    .actionCtx(async (options, _args, ctx) => {
+        const file = input(options);
+        if (file === undefined) {
+            ctx.fail('open-eda.cli.file-required', { message: 'a design document is required' });
+            return 2;
+        }
+        const reference = text(options, 'ref');
+        const pin = text(options, 'pin');
+        if (reference === undefined || reference.trim().length === 0 || pin === undefined || pin.trim().length === 0) {
+            ctx.fail('open-eda.cli.arguments-invalid', { message: '`--ref` and `--pin` are required' });
+            return 2;
+        }
+        const { component, saved } = await withDesign(file, async (design) => {
+            const component = await design.removePin({
+                sheet: text(options, 'sheet'),
+                reference,
+                pin,
+            });
+            return { component, saved: await savedReport(design) };
+        });
+        ctx.emitResult(
+            { ...saved, revision: saved.revision, component },
+            `removed pin ${reference}.${pin} in ${file} revision=${saved.revision}`,
+        );
+        return 0;
+    });
+
+pinCommand
+    .command('rename', 'cli.cmd.component-pin-rename')
+    .option('--ref <ref>', 'cli.opt.ref')
+    .option('--from <pin>', 'cli.opt.pin-from')
+    .option('--to <pin>', 'cli.opt.pin-to')
+    .option('--sheet <sheet>', 'cli.opt.sheet')
+    .actionCtx(async (options, _args, ctx) => {
+        const file = input(options);
+        if (file === undefined) {
+            ctx.fail('open-eda.cli.file-required', { message: 'a design document is required' });
+            return 2;
+        }
+        const reference = text(options, 'ref');
+        const from = text(options, 'from');
+        const to = text(options, 'to');
+        if (
+            reference === undefined ||
+            reference.trim().length === 0 ||
+            from === undefined ||
+            from.trim().length === 0 ||
+            to === undefined ||
+            to.trim().length === 0
+        ) {
+            ctx.fail('open-eda.cli.arguments-invalid', { message: '`--ref`, `--from` and `--to` are required' });
+            return 2;
+        }
+        const { component, saved } = await withDesign(file, async (design) => {
+            const component = await design.renamePin({
+                sheet: text(options, 'sheet'),
+                reference,
+                from,
+                to,
+            });
+            return { component, saved: await savedReport(design) };
+        });
+        ctx.emitResult(
+            { ...saved, revision: saved.revision, component },
+            `renamed pin ${reference}.${from} to ${to} in ${file} revision=${saved.revision}`,
+        );
+        return 0;
+    });
+
 componentCommand
     .command('delete', 'cli.cmd.component-delete')
     .option('--ref <ref>', 'cli.opt.ref')

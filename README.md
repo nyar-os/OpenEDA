@@ -99,6 +99,9 @@ extension may be listed while remaining `unsupported`.
 - **Design data that survives.** Reference annotation, BOM variants with DNP
   lists, net classes, custom component properties, pin electrical roles, design
   statistics and a structural `diff` between two documents.
+- **Pins you can edit.** Add, remove and rename component pins after placement;
+  a rename follows every net node, no-connect flag and electrical role that
+  named the old `REF.PIN`, and an in-use pin is never removed silently.
 - **Agent-ready.** The skills package records the command surface, preflight
   steps and evidence rules so an assistant can author and review a schematic
   without inventing capabilities.

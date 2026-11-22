@@ -112,7 +112,11 @@ export interface DesignCapabilities {
     readonly renderers: Readonly<Record<RenderFormat, SupportLevel>>;
     readonly exportTargets: Readonly<Record<ExportTarget, SupportLevel>>;
     /** Editing surfaces that are implemented rather than read-only. */
-    readonly edits: { readonly junctions: SupportLevel; readonly noConnects: SupportLevel };
+    readonly edits: {
+        readonly junctions: SupportLevel;
+        readonly noConnects: SupportLevel;
+        readonly pins: SupportLevel;
+    };
     /** Read-only queries that are not rule checks, such as the pin trace. */
     readonly queries: { readonly trace: SupportLevel };
 }
@@ -994,6 +998,32 @@ export interface NoConnectInput {
     readonly node?: NetNode;
 }
 
+/** Input of `design.addPin()`. */
+export interface AddPinInput {
+    readonly sheet?: SheetId;
+    readonly reference: string;
+    /** Pin name to add; must not be empty or break the `REF.PIN` grammar. */
+    readonly pin: string;
+}
+
+/** Input of `design.removePin()`. */
+export interface RemovePinInput {
+    readonly sheet?: SheetId;
+    readonly reference: string;
+    /** Pin name to remove; a pin any net or no-connect flag uses is refused. */
+    readonly pin: string;
+}
+
+/** Input of `design.renamePin()`; every `REF.PIN` reference follows the new name. */
+export interface RenamePinInput {
+    readonly sheet?: SheetId;
+    readonly reference: string;
+    /** Current pin name. */
+    readonly from: string;
+    /** New pin name; must not be empty or break the `REF.PIN` grammar. */
+    readonly to: string;
+}
+
 /** Input of `design.moveComponent()`. */
 export interface MoveComponentInput {
     readonly sheet?: SheetId;
@@ -1555,6 +1585,12 @@ export interface Design {
     setProperties(properties: DesignPropertiesInput): Promise<DesignPropertiesResult>;
     /** Assigns or clears the electrical role of one pin; omitted `pinType` clears it. */
     setPinType(input: SetPinTypeInput): Promise<SetPinTypeResult>;
+    /** Adds one pin to a placed component; an illegal or duplicate name is refused. */
+    addPin(input: AddPinInput): Promise<Component>;
+    /** Removes one pin that no net node or no-connect flag still references. */
+    removePin(input: RemovePinInput): Promise<Component>;
+    /** Renames one pin; every net node and no-connect flag that named it follows. */
+    renamePin(input: RenamePinInput): Promise<Component>;
     /** Renumbers every reference designator by sheet and placement order; net nodes follow. */
     annotate(): Promise<AnnotateResult>;
     /** Restores the snapshot taken before the newest edit. */

@@ -11,6 +11,7 @@ import { nativeBinding } from './native.js';
 import type {
     AddHierarchyInput,
     AddHierarchyPortInput,
+    AddPinInput,
     AnnotateResult,
     Bus,
     BusInput,
@@ -75,7 +76,9 @@ import type {
     RemoveComponentPropertyInput,
     RemoveHierarchyPortInput,
     RemoveHierarchyResult,
+    RemovePinInput,
     RenameNetInput,
+    RenamePinInput,
     SaveReport,
     SetComponentPropertyInput,
     SetFootprintInput,
@@ -326,6 +329,36 @@ export function setPinType(handle: number, input: SetPinTypeInput): SetPinTypeRe
                 pin: input.pin,
                 pinType: input.pinType,
             }),
+        ),
+    );
+}
+
+/** Adds one pin to a placed component. */
+export function addPin(handle: number, input: AddPinInput): ComponentResult {
+    return decode<ComponentResult>(() =>
+        binding('design.addPin').design_add_pin(
+            handle,
+            JSON.stringify({ sheet: input.sheet, reference: input.reference, pin: input.pin }),
+        ),
+    );
+}
+
+/** Removes one unreferenced pin from a placed component. */
+export function removePin(handle: number, input: RemovePinInput): ComponentResult {
+    return decode<ComponentResult>(() =>
+        binding('design.removePin').design_remove_pin(
+            handle,
+            JSON.stringify({ sheet: input.sheet, reference: input.reference, pin: input.pin }),
+        ),
+    );
+}
+
+/** Renames one pin and every `REF.PIN` reference that named it. */
+export function renamePin(handle: number, input: RenamePinInput): ComponentResult {
+    return decode<ComponentResult>(() =>
+        binding('design.renamePin').design_rename_pin(
+            handle,
+            JSON.stringify({ sheet: input.sheet, reference: input.reference, from: input.from, to: input.to }),
         ),
     );
 }

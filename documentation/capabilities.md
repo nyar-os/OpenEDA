@@ -28,6 +28,7 @@ answer about the document, such as a pin-to-pin path.
 | pin trace `trace` | supported | read-only shortest hop path between two `REF.PIN` pins; tagged `open-eda-trace`; reported as `queries.trace`, not as an `inspect --checks` check |
 | read-only listings `component list`, `net list`, `bus list`, `net-class list`, `wire list`, `label list`, `text list`, `sheet list` | supported | document order with 0-based indices where the model edits by index |
 | junction and no-connect editing | supported | add a junction by coordinate and remove it by 0-based index; add a no-connect flag with or without a `REF.PIN` node and remove it by index; a duplicate junction coordinate is refused (`junction/duplicate`) and so is a second flag on one pin (`no-connect/duplicate`); `capabilities()` reports `edits.junctions` and `edits.noConnects` |
+| component pin editing | supported | add, remove and rename pins after placement; an empty or `REF.PIN`-breaking name is `session/argument-invalid`, a repeated name `pin/duplicate`, a missing pin `pin/not-found` and a removal that a net node or no-connect flag still uses `pin/in-use`; a rename follows every net node, no-connect node and electrical role; `capabilities()` reports `edits.pins` |
 | export `net`, `net_csv`, `net_hier`, `spice`, `spice_subckt`, `svg`, `bom`, `bom_json`, `bom_html`, `pdf`, `report`, `json`, `kicad_sch`, `kicad_sym` | supported | read-only projections; `kicad_pcb` and `gbr` are unsupported |
 | import `kicad_sch` | supported | symbols, wires, junctions, no-connect flags, text, labels, hierarchical sheet symbols and ports; other constructs are reported as losses |
 | hierarchy editing | supported | add/list/remove parent symbol declarations and their ports; editing never reads the child files |
@@ -236,6 +237,9 @@ Every file is written through a temporary file and a rename.
 - `projects/crates/eda-model/tests/unit/kicad.rs` — parser and writer subset.
 - `projects/crates/eda-model/tests/unit/diff.rs` — structural comparison.
 - `projects/crates/eda-model/tests/unit/connectivity.rs` — net and pin analysis.
+- `projects/crates/eda-model/tests/unit/pins.rs` — pin add, remove and rename
+  validation, reference-safe removal, net/no-connect rewrites, history and
+  save/reopen persistence.
 - `projects/crates/eda-model/tests/unit/trace.rs` — pin-to-pin trace paths,
   label scope, determinism and read-only behavior.
 - `projects/packages/open-eda/tests/smoke.test.ts` — CLI/SDK surface, with

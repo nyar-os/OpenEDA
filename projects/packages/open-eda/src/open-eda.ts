@@ -16,6 +16,7 @@ import * as service from './service.js';
 import type {
     AddHierarchyInput,
     AddHierarchyPortInput,
+    AddPinInput,
     AnnotateResult,
     Bus,
     BusInput,
@@ -82,7 +83,9 @@ import type {
     RemoveComponentPropertyInput,
     RemoveHierarchyPortInput,
     RemoveHierarchyResult,
+    RemovePinInput,
     RenameNetInput,
+    RenamePinInput,
     SaveOptions,
     SaveReport,
     SetComponentPropertyInput,
@@ -463,6 +466,21 @@ function attach(opened: service.DesignHandle, options: AttachOptions): Design {
             const result = await mutate(() => service.setPinType(handle, input));
             current = result.design;
             return result;
+        },
+        async addPin(input: AddPinInput): Promise<Component> {
+            const result = await mutate(() => service.addPin(handle, input));
+            current = result.design;
+            return result.component;
+        },
+        async removePin(input: RemovePinInput): Promise<Component> {
+            const result = await mutate(() => service.removePin(handle, input));
+            current = result.design;
+            return result.component;
+        },
+        async renamePin(input: RenamePinInput): Promise<Component> {
+            const result = await mutate(() => service.renamePin(handle, input));
+            current = result.design;
+            return result.component;
         },
         async annotate(): Promise<AnnotateResult> {
             const result = await mutate(() => service.annotate(handle));

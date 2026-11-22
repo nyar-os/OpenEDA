@@ -23,11 +23,12 @@ use std::{
 
 use open_eda_model::{
     AddBusRequest, AddComponentRequest, AddHierarchyPortRequest, AddHierarchyRequest, AddJunctionRequest, AddLabelRequest,
-    AddNoConnectRequest, AddTextRequest, AddWireRequest, ComponentClassRequest, ConnectNetRequest, CopyComponentRequest,
-    CreateRequest, DeleteNetRequest, DisconnectNetRequest, InspectOptions, MergeNetsRequest, MoveComponentRequest,
-    NetClassRequest, ReferencePrefixRequest, RemoveComponentPropertyRequest, RemoveHierarchyPortRequest, RenameNetRequest,
-    ServiceError, SetComponentPropertyRequest, SetFootprintRequest, SetPinTypeRequest, SplitWireRequest, TranslateRequest,
-    UpdateComponentRequest, UpdateDesignRequest, UpdateLabelRequest, UpdateTextRequest, UpdateWireRequest,
+    AddNoConnectRequest, AddPinRequest, AddTextRequest, AddWireRequest, ComponentClassRequest, ConnectNetRequest,
+    CopyComponentRequest, CreateRequest, DeleteNetRequest, DisconnectNetRequest, InspectOptions, MergeNetsRequest,
+    MoveComponentRequest, NetClassRequest, ReferencePrefixRequest, RemoveComponentPropertyRequest, RemoveHierarchyPortRequest,
+    RemovePinRequest, RenameNetRequest, RenamePinRequest, ServiceError, SetComponentPropertyRequest, SetFootprintRequest,
+    SetPinTypeRequest, SplitWireRequest, TranslateRequest, UpdateComponentRequest, UpdateDesignRequest, UpdateLabelRequest,
+    UpdateTextRequest, UpdateWireRequest,
 };
 use serde_json::{Value, json};
 use wae::{
@@ -242,6 +243,33 @@ fn design_set_pin_type(ctx: CallContext) -> Result<JsValue> {
     let handle = handle(&ctx, 0)?;
     let request: SetPinTypeRequest = decode(serde_json::from_str(&text(&ctx, 1)?))?;
     let report = open_eda_model::set_pin_type(handle, request).map_err(fail)?;
+    respond(&ctx, &report)
+}
+
+/// Adds one pin to a placed component.
+#[function]
+fn design_add_pin(ctx: CallContext) -> Result<JsValue> {
+    let handle = handle(&ctx, 0)?;
+    let request: AddPinRequest = decode(serde_json::from_str(&text(&ctx, 1)?))?;
+    let report = open_eda_model::add_pin(handle, request).map_err(fail)?;
+    respond(&ctx, &report)
+}
+
+/// Removes one unreferenced pin from a placed component.
+#[function]
+fn design_remove_pin(ctx: CallContext) -> Result<JsValue> {
+    let handle = handle(&ctx, 0)?;
+    let request: RemovePinRequest = decode(serde_json::from_str(&text(&ctx, 1)?))?;
+    let report = open_eda_model::remove_pin(handle, request).map_err(fail)?;
+    respond(&ctx, &report)
+}
+
+/// Renames one pin and every `REF.PIN` reference that named it.
+#[function]
+fn design_rename_pin(ctx: CallContext) -> Result<JsValue> {
+    let handle = handle(&ctx, 0)?;
+    let request: RenamePinRequest = decode(serde_json::from_str(&text(&ctx, 1)?))?;
+    let report = open_eda_model::rename_pin(handle, request).map_err(fail)?;
     respond(&ctx, &report)
 }
 
@@ -1678,6 +1706,9 @@ register_module![
     design_save,
     design_set_properties,
     design_set_pin_type,
+    design_add_pin,
+    design_remove_pin,
+    design_rename_pin,
     design_annotate,
     design_inspect,
     design_inspect_with,
