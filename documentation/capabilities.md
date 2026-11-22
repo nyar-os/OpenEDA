@@ -15,7 +15,7 @@ instead of degrading silently.
 | design compare `diff` | supported | read-only report of added, removed and modified sheets, components, nets, wires, buses and BOM variants |
 | pin electrical types | supported | per-pin roles, the `electrical` check and the KiCad library pin types |
 | reference annotation `annotate` | supported | renumbers per prefix by sheet and placement order; net nodes follow |
-| BOM variants and DNP | supported | named DNP designator lists and value overrides applied to `bom`/`bom_json` |
+| BOM variants and DNP | supported | named DNP designator lists and value overrides applied to `bom`, `bom_json` and `bom_html` |
 | net classes | supported | name, width, clearance, via and net/bus assignment lists |
 | component custom properties | supported | trimmed unique keys, verbatim values; stored in `.oeda`, the JSON projection and KiCad symbol properties |
 | checks `erc`, `electrical`, `nets`, `connectivity`, `footprints`, `power` | supported | `drc` and `clearance` are unsupported |

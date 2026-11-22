@@ -136,8 +136,8 @@ Port directions: `input`, `output`, `bidirectional`, `tri_state`, `passive`.
 
 Export formats: `net`, `net_csv`, `net_hier`, `spice`, `spice_subckt`, `svg`,
 `bom`, `bom_json`, `bom_html`, `pdf`, `report`, `json`, `kicad_sch`, `kicad_sym`.
-A variant is accepted by `bom` and `bom_json` only; other targets reject it
-instead of ignoring it.
+A variant is accepted by `bom`, `bom_json` and `bom_html` only; other targets
+reject it instead of ignoring it.
 
 ## Worked example
 
