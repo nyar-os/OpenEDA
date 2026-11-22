@@ -8,13 +8,15 @@
  */
 
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 import { designFormats, formatFromPath, formatInfo, OpenEDA, OpenEDAError } from '../src/index.js';
-import type { DesignInput } from '../src/index.js';
+import type { Design, DesignInput } from '../src/index.js';
 import { nativeBinding } from '../src/native.js';
 
 const installed = (() => {
@@ -824,5 +826,127 @@ test('net labels carry scope and stats report deterministic counts', { skip: wit
         await design.close();
     } finally {
         await eda.dispose();
+    }
+});
+
+test('junction and no-connect edits refuse duplicates and track ERC', { skip: withoutAddon }, async () => {
+    const eda = new OpenEDA();
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'open-eda-annotations-'));
+    const target = path.join(directory, 'annotations.oeda');
+    try {
+        const design = await eda.create();
+        await design.addComponent({ reference: 'R1', value: '10k', x: 40, y: 30, pins: ['1', '2'] });
+        await design.connectNet({ net: 'SIGNAL', nodes: ['R1.1'] });
+
+        const unconnected = async (open: Design): Promise<number> => {
+            const report = await open.inspect({ checks: ['erc'] });
+            return report.issues.filter((issue) => issue.code === 'erc/unconnected-pin').length;
+        };
+        assert.equal(await unconnected(design), 1);
+
+        await design.addJunction({ x: 10, y: 20 });
+        await assert.rejects(
+            design.addJunction({ x: 10, y: 20 }),
+            (error: unknown) => error instanceof OpenEDAError && error.code === 'junction/duplicate',
+        );
+        await design.addJunction({ x: 30, y: 40 });
+        await assert.rejects(
+            design.addJunction({ sheet: 'missing', x: 1, y: 2 }),
+            (error: unknown) => error instanceof OpenEDAError && error.code === 'sheet/not-found',
+        );
+        await design.removeJunction(0);
+        assert.deepEqual((await design.listJunctions()).junctions, [{ index: 0, x: 30, y: 40 }]);
+        await assert.rejects(
+            design.removeJunction(1),
+            (error: unknown) => error instanceof OpenEDAError && error.code === 'junction/not-found',
+        );
+
+        await design.addNoConnect({ x: 40, y: 30, node: { ref: 'R1', pin: '2' } });
+        assert.equal(await unconnected(design), 0);
+        await design.addNoConnect({ x: 0, y: 0 });
+        assert.equal(await unconnected(design), 0);
+        await assert.rejects(
+            design.addNoConnect({ x: 40, y: 30, node: { ref: 'R1', pin: '2' } }),
+            (error: unknown) => error instanceof OpenEDAError && error.code === 'no-connect/duplicate',
+        );
+        await assert.rejects(
+            design.addNoConnect({ x: 40, y: 30, node: { ref: 'R1', pin: '9' } }),
+            (error: unknown) => error instanceof OpenEDAError && error.code === 'no-connect/pin-missing',
+        );
+
+        await design.save({ target, overwrite: true });
+        await design.close();
+
+        const reopened = await eda.open({ path: target });
+        assert.deepEqual((await reopened.listJunctions()).junctions, [{ index: 0, x: 30, y: 40 }]);
+        const flags = (await reopened.listNoConnects()).noConnects;
+        assert.equal(flags.length, 2);
+        assert.deepEqual(flags[0]?.node, { ref: 'R1', pin: '2' });
+        assert.equal(flags[1]?.node, undefined);
+        await reopened.removeNoConnect(0);
+        assert.equal((await reopened.listNoConnects()).noConnects.length, 1);
+        await assert.rejects(
+            reopened.removeNoConnect(1),
+            (error: unknown) => error instanceof OpenEDAError && error.code === 'no-connect/not-found',
+        );
+        assert.equal(await unconnected(reopened), 1);
+        await reopened.close();
+    } finally {
+        await eda.dispose();
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
+});
+
+test('junction and no-connect commands edit a document in place', { skip: withoutAddon }, () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'open-eda-cli-annotations-'));
+    const target = path.join(directory, 'cli.oeda');
+    const testDirectory = path.dirname(fileURLToPath(import.meta.url));
+    const cli = fileURLToPath(new URL('../src/cli.js', import.meta.url));
+    // The test build keeps `src` under `dist-test`, so the CLI looks for
+    // `dist-test/locales`; mirror the package locale files for this run only.
+    const generatedLocales = path.resolve(testDirectory, '../locales');
+    const sourceLocales = path.resolve(testDirectory, '../../locales');
+    const copiedLocales = !fs.existsSync(generatedLocales);
+    if (copiedLocales) {
+        fs.cpSync(sourceLocales, generatedLocales, { recursive: true });
+    }
+    const run = (...args: string[]) => spawnSync(process.execPath, [cli, ...args], { encoding: 'utf8' });
+    try {
+        assert.equal(run('create', '--out', target).status, 0);
+
+        let result = run('junction', 'add', target, '--x', '55', '--y', '30');
+        assert.equal(result.status, 0, result.stderr);
+        assert.match(result.stdout, /added junction at \(55, 30\)/);
+        result = run('junction', 'add', target, '--x', '55', '--y', '30');
+        assert.equal(result.status, 1);
+        assert.match(result.stdout + result.stderr, /a junction already exists at \(55, 30\)/);
+
+        result = run('junction', 'remove', target, '--index', '0');
+        assert.equal(result.status, 0, result.stderr);
+        assert.match(result.stdout, /removed junction 0/);
+        result = run('junction', 'list', target);
+        assert.equal(result.status, 0, result.stderr);
+        assert.match(result.stdout, /count=0/);
+
+        result = run('component', 'add', target, '--ref', 'R1', '--value', '10k', '--x', '40', '--y', '30', '--pins', '1,2');
+        assert.equal(result.status, 0, result.stderr);
+        result = run('no-connect', 'add', target, '--x', '40', '--y', '30', '--ref', 'R1', '--pin', '2');
+        assert.equal(result.status, 0, result.stderr);
+        assert.match(result.stdout, /added no-connect at \(40, 30\)/);
+        result = run('no-connect', 'list', target);
+        assert.equal(result.status, 0, result.stderr);
+        assert.match(result.stdout, /R1\.2/);
+
+        result = run('no-connect', 'remove', target, '--index', '0');
+        assert.equal(result.status, 0, result.stderr);
+        assert.match(result.stdout, /removed no-connect 0/);
+        result = run('no-connect', 'list', target);
+        assert.equal(result.status, 0, result.stderr);
+        assert.match(result.stdout, /count=0/);
+    } finally {
+        if (copiedLocales) {
+            fs.rmSync(generatedLocales, { recursive: true, force: true });
+        }
+        fs.rmSync(directory, { recursive: true, force: true });
     }
 });

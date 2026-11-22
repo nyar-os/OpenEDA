@@ -1246,6 +1246,11 @@ pub struct Waiver {
 /// `net-bus-alias-collision` when two nets on one sheet resolve to the same bus
 /// through an alias. The JSON keys of this
 /// report are unchanged.
+///
+/// Junctions and no-connect flags are editable, not read-only: the matrix
+/// reports `edits.junctions` and `edits.noConnects` as `supported` because
+/// `add_junction`/`delete_junction` and `add_no_connect`/`delete_no_connect`
+/// exist and are covered by tests.
 pub fn capabilities() -> Value {
     let matrix = capability_matrix();
     let level = |id: String| if matrix.supports(&id) { "supported" } else { "unsupported" };
@@ -1279,6 +1284,11 @@ pub fn capabilities() -> Value {
         export_targets.insert(target.to_string(), Value::String(level(format!("export.{target}")).to_string()));
     }
 
+    let edits = json!({
+        "junctions": level("edit.junctions".to_string()),
+        "noConnects": level("edit.noConnects".to_string()),
+    });
+
     json!({
         "engine": { "package": env!("CARGO_PKG_NAME"), "version": env!("CARGO_PKG_VERSION") },
         "project": { "import": "partial", "edit": "partial", "export": "partial" },
@@ -1286,6 +1296,7 @@ pub fn capabilities() -> Value {
         "checks": Value::Object(checks),
         "renderers": Value::Object(renderers),
         "exportTargets": Value::Object(export_targets),
+        "edits": edits,
     })
 }
 
@@ -1312,6 +1323,8 @@ fn capability_matrix() -> CapabilityMatrix {
     for &target in EXPORT_TARGETS {
         matrix.insert(Capability::new(format!("export.{target}"), "export", support_of(SUPPORTED_EXPORTS.contains(&target))));
     }
+    matrix.insert(Capability::new("edit.junctions", "edit", Support::Supported));
+    matrix.insert(Capability::new("edit.noConnects", "edit", Support::Supported));
     matrix
 }
 
@@ -2831,7 +2844,8 @@ pub fn delete_net(handle: u64, request: DeleteNetRequest) -> Result<Value, Servi
 ///
 /// A flag without a `node` is a plain placement mark. A flag with a `node`
 /// additionally marks that component pin as deliberately open; the pin must
-/// already exist, and one pin can only carry one flag.
+/// already exist (`no-connect/pin-missing`), and one pin can only carry one
+/// flag (`no-connect/duplicate`).
 pub fn add_no_connect(handle: u64, request: AddNoConnectRequest) -> Result<Value, ServiceError> {
     if !request.x.is_finite() || !request.y.is_finite() {
         return Err(ServiceError::new("session/argument-invalid", "no-connect coordinates must be finite numbers"));
@@ -2840,16 +2854,24 @@ pub fn add_no_connect(handle: u64, request: AddNoConnectRequest) -> Result<Value
         let index = sheet_index(design, request.sheet.as_deref())?;
         let sheet = &design.sheets[index];
         if let Some(node) = &request.node {
-            let component = sheet
-                .components
-                .iter()
-                .find(|component| component.reference == node.reference)
-                .ok_or_else(|| not_found(format!("no component `{}` is placed on this sheet", node.reference)))?;
+            let component =
+                sheet.components.iter().find(|component| component.reference == node.reference).ok_or_else(|| {
+                    ServiceError::new(
+                        "no-connect/pin-missing",
+                        format!("no component `{}` is placed on this sheet", node.reference),
+                    )
+                })?;
             if !component.pins.iter().any(|pin| pin == &node.pin) {
-                return Err(not_found(format!("component `{}` declares no pin `{}`", node.reference, node.pin)));
+                return Err(ServiceError::new(
+                    "no-connect/pin-missing",
+                    format!("component `{}` declares no pin `{}`", node.reference, node.pin),
+                ));
             }
             if sheet.no_connects.iter().any(|flag| flag.node.as_ref() == Some(node)) {
-                return Err(duplicate(format!("pin `{}.{}` already carries a no-connect flag", node.reference, node.pin)));
+                return Err(ServiceError::new(
+                    "no-connect/duplicate",
+                    format!("pin `{}.{}` already carries a no-connect flag", node.reference, node.pin),
+                ));
             }
         }
         let flag = NoConnect { x: request.x, y: request.y, node: request.node };
@@ -2862,12 +2884,17 @@ pub fn add_no_connect(handle: u64, request: AddNoConnectRequest) -> Result<Value
 }
 
 /// Deletes the no-connect flag at `index` (0-based) on a sheet.
+///
+/// An out-of-range value is reported as `no-connect/not-found`.
 pub fn delete_no_connect(handle: u64, index: usize, sheet: Option<&str>) -> Result<Value, ServiceError> {
     mutate(handle, |design| {
         let position = sheet_index(design, sheet)?;
         let target = &mut design.sheets[position];
         if index >= target.no_connects.len() {
-            return Err(not_found(format!("no no-connect flag exists at index {index} on this sheet")));
+            return Err(ServiceError::new(
+                "no-connect/not-found",
+                format!("no no-connect flag exists at index {index} on this sheet"),
+            ));
         }
         target.no_connects.remove(index);
         let remaining = target.no_connects.len();
@@ -2882,13 +2909,13 @@ pub fn delete_no_connect(handle: u64, index: usize, sheet: Option<&str>) -> Resu
 /// Deletes the junction at `index` (0-based) on a sheet.
 ///
 /// The index is checked against the sheet's junction list; an out-of-range
-/// value is reported as `object/not-found`.
+/// value is reported as `junction/not-found`.
 pub fn delete_junction(handle: u64, index: usize, sheet: Option<&str>) -> Result<Value, ServiceError> {
     mutate(handle, |design| {
         let sheet_position = sheet_index(design, sheet)?;
         let target = &mut design.sheets[sheet_position];
         if index >= target.junctions.len() {
-            return Err(not_found(format!("no junction at index {index} on this sheet")));
+            return Err(ServiceError::new("junction/not-found", format!("no junction at index {index} on this sheet")));
         }
         let removed = target.junctions.remove(index);
         let remaining = target.junctions.len();
@@ -2904,7 +2931,8 @@ pub fn delete_junction(handle: u64, index: usize, sheet: Option<&str>) -> Result
 /// Moves the junction at `index` (0-based) to `(x, y)`.
 ///
 /// Coordinates must be finite and the index must be inside the sheet's
-/// junction list.
+/// junction list (`junction/not-found`). The destination must be free, so
+/// moving onto another junction is refused as `junction/duplicate`.
 pub fn move_junction(handle: u64, index: usize, sheet: Option<&str>, x: f64, y: f64) -> Result<Value, ServiceError> {
     if !x.is_finite() || !y.is_finite() {
         return Err(ServiceError::new("session/argument-invalid", "junction coordinates must be finite numbers"));
@@ -2912,10 +2940,21 @@ pub fn move_junction(handle: u64, index: usize, sheet: Option<&str>, x: f64, y: 
     mutate(handle, |design| {
         let sheet_position = sheet_index(design, sheet)?;
         let target = &mut design.sheets[sheet_position];
-        let Some(junction) = target.junctions.get_mut(index)
-        else {
-            return Err(not_found(format!("no junction at index {index} on this sheet")));
-        };
+        if index >= target.junctions.len() {
+            return Err(ServiceError::new("junction/not-found", format!("no junction at index {index} on this sheet")));
+        }
+        if target
+            .junctions
+            .iter()
+            .enumerate()
+            .any(|(position, junction)| position != index && junction.x == x && junction.y == y)
+        {
+            return Err(ServiceError::new(
+                "junction/duplicate",
+                format!("a junction already exists at ({x}, {y}) on this sheet"),
+            ));
+        }
+        let junction = &mut target.junctions[index];
         junction.x = x;
         junction.y = y;
         let moved = junction.clone();
@@ -3477,12 +3516,21 @@ pub fn delete_wire(handle: u64, wire: &str, sheet: Option<&str>) -> Result<Value
 }
 
 /// Adds one junction (connection dot) to a sheet.
+///
+/// A junction is identified by its placement, so a second junction at the same
+/// `(x, y)` is refused as `junction/duplicate` instead of stacking two dots.
 pub fn add_junction(handle: u64, request: AddJunctionRequest) -> Result<Value, ServiceError> {
     if !request.x.is_finite() || !request.y.is_finite() {
         return Err(ServiceError::new("session/argument-invalid", "junction coordinates must be finite numbers"));
     }
     mutate(handle, |design| {
         let index = sheet_index(design, request.sheet.as_deref())?;
+        if design.sheets[index].junctions.iter().any(|junction| junction.x == request.x && junction.y == request.y) {
+            return Err(ServiceError::new(
+                "junction/duplicate",
+                format!("a junction already exists at ({}, {}) on this sheet", request.x, request.y),
+            ));
+        }
         let junction = Junction { x: request.x, y: request.y };
         design.sheets[index].junctions.push(junction.clone());
         design.revision += 1;
@@ -4087,7 +4135,7 @@ pub fn render(handle: u64, format: &str, sheet: Option<&str>) -> Result<Value, S
             .sheets
             .iter()
             .position(|sheet| sheet.id == needle || sheet.name == needle)
-            .ok_or_else(|| not_found(format!("sheet `{needle}` is not part of this design")))?,
+            .ok_or_else(|| ServiceError::new("sheet/not-found", format!("sheet `{needle}` is not part of this design")))?,
     };
     let target = &design.sheets[index];
     let projection = svg_projection(&[target]);
@@ -4154,7 +4202,7 @@ fn sheet_index(design: &Design, sheet: Option<&str>) -> Result<usize, ServiceErr
             .sheets
             .iter()
             .position(|sheet| sheet.id == needle || sheet.name == needle)
-            .ok_or_else(|| invalid(format!("sheet `{needle}` is not part of this design"))),
+            .ok_or_else(|| ServiceError::new("sheet/not-found", format!("sheet `{needle}` is not part of this design"))),
     }
 }
 

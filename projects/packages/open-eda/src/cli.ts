@@ -136,12 +136,16 @@ function describeCapabilities(matrix: DesignCapabilities): string {
     const targets = Object.entries(matrix.exportTargets)
         .filter(([, level]) => level === 'supported')
         .map(([name]) => name);
+    const edits = Object.entries(matrix.edits)
+        .filter(([, level]) => level === 'supported')
+        .map(([name]) => name);
     return [
         `engine: ${matrix.engine.package} ${matrix.engine.version}`,
         `import formats: ${formats.length > 0 ? formats.join(', ') : 'none supported'}`,
         `export formats: ${exports.length > 0 ? exports.join(', ') : 'none supported'}`,
         `export targets: ${targets.length > 0 ? targets.join(', ') : 'none supported'}`,
         `checks: ${checks.length > 0 ? checks.join(', ') : 'none supported'}`,
+        `edits: ${edits.length > 0 ? edits.join(', ') : 'none supported'}`,
         `project: import=${matrix.project.import} edit=${matrix.project.edit} export=${matrix.project.export}`,
     ].join('\n');
 }
@@ -1800,7 +1804,7 @@ junctionCommand
     });
 
 junctionCommand
-    .command('delete', 'cli.cmd.junction-delete')
+    .command('remove', 'cli.cmd.junction-remove')
     .option('--index <number>', 'cli.opt.index')
     .option('--sheet <sheet>', 'cli.opt.sheet')
     .actionCtx(async (options, _args, ctx) => {
@@ -1815,12 +1819,12 @@ junctionCommand
             return 2;
         }
         const saved = await withDesign(file, async (design) => {
-            await design.deleteJunction(index, { sheet: text(options, 'sheet') });
+            await design.removeJunction(index, { sheet: text(options, 'sheet') });
             return savedReport(design);
         });
         ctx.emitResult(
-            { ...saved, revision: saved.revision, deleted: index },
-            `deleted junction ${index} from ${file} revision=${saved.revision}`,
+            { ...saved, revision: saved.revision, removed: index },
+            `removed junction ${index} from ${file} revision=${saved.revision}`,
         );
         return 0;
     });
@@ -1930,7 +1934,7 @@ noConnectCommand
     });
 
 noConnectCommand
-    .command('delete', 'cli.cmd.no-connect-delete')
+    .command('remove', 'cli.cmd.no-connect-remove')
     .option('--index <number>', 'cli.opt.index')
     .option('--sheet <sheet>', 'cli.opt.sheet')
     .actionCtx(async (options, _args, ctx) => {
@@ -1945,12 +1949,12 @@ noConnectCommand
             return 2;
         }
         const saved = await withDesign(file, async (design) => {
-            await design.deleteNoConnect(index, { sheet: text(options, 'sheet') });
+            await design.removeNoConnect(index, { sheet: text(options, 'sheet') });
             return savedReport(design);
         });
         ctx.emitResult(
-            { ...saved, revision: saved.revision, deleted: index },
-            `deleted no-connect ${index} from ${file} revision=${saved.revision}`,
+            { ...saved, revision: saved.revision, removed: index },
+            `removed no-connect ${index} from ${file} revision=${saved.revision}`,
         );
         return 0;
     });

@@ -111,6 +111,8 @@ export interface DesignCapabilities {
     readonly checks: Readonly<Record<InspectCheck, SupportLevel>>;
     readonly renderers: Readonly<Record<RenderFormat, SupportLevel>>;
     readonly exportTargets: Readonly<Record<ExportTarget, SupportLevel>>;
+    /** Editing surfaces that are implemented rather than read-only. */
+    readonly edits: { readonly junctions: SupportLevel; readonly noConnects: SupportLevel };
 }
 
 /** Options of `OpenEDA.create()`. */
@@ -1527,8 +1529,8 @@ export interface Design {
     addText(input: TextInput): Promise<TextLabel>;
     /** Adds one no-connect flag; a `node` marks that pin as deliberately open. */
     addNoConnect(input: NoConnectInput): Promise<NoConnect>;
-    /** Deletes the no-connect flag at a 0-based index on a sheet. */
-    deleteNoConnect(index: number, options?: { readonly sheet?: SheetId }): Promise<void>;
+    /** Removes the no-connect flag at a 0-based index on a sheet. */
+    removeNoConnect(index: number, options?: { readonly sheet?: SheetId }): Promise<void>;
     /** Moves one component to a new placement and optional rotation. */
     moveComponent(input: MoveComponentInput): Promise<Component>;
     /** Replaces the value text of one component. */
@@ -1591,8 +1593,8 @@ export interface Design {
      * netlist and `removed` entries exist only in the design.
      */
     compareNetlist(source: string): Promise<NetlistDiffReport>;
-    /** Deletes the junction at a 0-based index on a sheet. */
-    deleteJunction(index: number, options?: { readonly sheet?: SheetId }): Promise<void>;
+    /** Removes the junction at a 0-based index on a sheet. */
+    removeJunction(index: number, options?: { readonly sheet?: SheetId }): Promise<void>;
     /** Moves the junction at a 0-based index to a new placement. */
     moveJunction(index: number, x: number, y: number, options?: { readonly sheet?: SheetId }): Promise<Junction>;
     /** Deletes the text annotation at a 0-based index on a sheet. */

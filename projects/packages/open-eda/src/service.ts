@@ -219,7 +219,7 @@ export interface BusListResult extends EditResult {
     readonly buses: readonly Bus[];
 }
 
-/** Result of {@link deleteJunction} and {@link deleteText}. */
+/** Result of {@link removeJunction} and {@link deleteText}. */
 export interface DeleteIndexResult extends EditResult, HistoryFlags {
     readonly index: number;
     readonly remaining: number;
@@ -687,9 +687,11 @@ export function addNoConnect(handle: number, input: NoConnectInput): NoConnectRe
     );
 }
 
-/** Deletes the no-connect flag at a 0-based sheet index. */
-export function deleteNoConnect(handle: number, index: number, sheet?: string): DeleteIndexResult {
-    return decode<DeleteIndexResult>(() => binding('design.deleteNoConnect').design_delete_no_connect(handle, index, sheet));
+/** Removes the no-connect flag at a 0-based index on a sheet. */
+export function removeNoConnect(handle: number, index: number, sheet?: string): DeleteIndexResult {
+    return decode<DeleteIndexResult>(() =>
+        binding('design.removeNoConnect').design_delete_no_connect(handle, index, sheet),
+    );
 }
 
 /** Restores the snapshot taken before the newest edit. */
@@ -1025,9 +1027,9 @@ export function listComponentClasses(handle: number): ComponentClassListResult {
     );
 }
 
-/** Deletes the junction at a 0-based index on a sheet. */
-export function deleteJunction(handle: number, index: number, sheet?: string): DeleteIndexResult {
-    return decode<DeleteIndexResult>(() => binding('design.deleteJunction').design_delete_junction(handle, index, sheet));
+/** Removes the junction at a 0-based index on a sheet. */
+export function removeJunction(handle: number, index: number, sheet?: string): DeleteIndexResult {
+    return decode<DeleteIndexResult>(() => binding('design.removeJunction').design_delete_junction(handle, index, sheet));
 }
 
 /** Moves the junction at a 0-based index to a new placement. */

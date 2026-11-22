@@ -546,8 +546,8 @@ function attach(opened: service.DesignHandle, options: AttachOptions): Design {
             current = result.design;
             return result.noConnect;
         },
-        async deleteNoConnect(index: number, deleteOptions?: { readonly sheet?: string }): Promise<void> {
-            const result = await mutate(() => service.deleteNoConnect(handle, index, deleteOptions?.sheet));
+        async removeNoConnect(index: number, removeOptions?: { readonly sheet?: string }): Promise<void> {
+            const result = await mutate(() => service.removeNoConnect(handle, index, removeOptions?.sheet));
             current = result.design;
         },
         async moveComponent(input: MoveComponentInput): Promise<Component> {
@@ -685,8 +685,8 @@ function attach(opened: service.DesignHandle, options: AttachOptions): Design {
             }
             return service.compareNetlist(handle, source);
         },
-        async deleteJunction(index: number, deleteOptions?: { readonly sheet?: string }): Promise<void> {
-            const result = await mutate(() => service.deleteJunction(handle, index, deleteOptions?.sheet));
+        async removeJunction(index: number, removeOptions?: { readonly sheet?: string }): Promise<void> {
+            const result = await mutate(() => service.removeJunction(handle, index, removeOptions?.sheet));
             current = result.design;
         },
         async moveJunction(

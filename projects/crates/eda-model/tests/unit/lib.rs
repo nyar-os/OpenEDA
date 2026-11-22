@@ -69,6 +69,8 @@ fn capability_matrix_reports_only_the_implemented_entries() {
     assert_eq!(matrix["exportTargets"]["kicad_sym"], "supported");
     assert_eq!(matrix["exportTargets"]["kicad_pcb"], "unsupported");
     assert_eq!(matrix["exportTargets"]["gbr"], "unsupported");
+    assert_eq!(matrix["edits"]["junctions"], "supported");
+    assert_eq!(matrix["edits"]["noConnects"], "supported");
 }
 
 #[test]
@@ -1590,7 +1592,7 @@ fn no_connect_flags_mark_pins_and_erc_ignores_them() {
         },
     )
     .expect_err("duplicate flag");
-    assert_eq!(duplicate.code, "object/duplicate");
+    assert_eq!(duplicate.code, "no-connect/duplicate");
     let missing = add_no_connect(
         handle,
         AddNoConnectRequest {
@@ -1601,7 +1603,7 @@ fn no_connect_flags_mark_pins_and_erc_ignores_them() {
         },
     )
     .expect_err("missing pin");
-    assert_eq!(missing.code, "object/not-found");
+    assert_eq!(missing.code, "no-connect/pin-missing");
 
     let removed = delete_no_connect(handle, 0, None).expect("delete flag");
     assert_eq!(removed["remaining"], 0);
@@ -1609,8 +1611,113 @@ fn no_connect_flags_mark_pins_and_erc_ignores_them() {
         inspect_with_options(handle, InspectOptions { checks: Some(vec!["erc".to_string()]), ..InspectOptions::default() })
             .expect("inspect");
     assert_eq!(unconnected(&restored), 1);
-    assert_eq!(delete_no_connect(handle, 0, None).expect_err("out of range").code, "object/not-found");
+    assert_eq!(delete_no_connect(handle, 0, None).expect_err("out of range").code, "no-connect/not-found");
     close(handle).expect("close");
+}
+
+#[test]
+fn junction_edits_refuse_duplicates_and_keep_indices_stable() {
+    let dir = TempDir::new("junction-edits");
+    let path = dir.join("junctions.oeda");
+    let created = create(CreateRequest::default()).expect("create");
+    let handle = created["handle"].as_u64().expect("handle");
+
+    let first = add_junction(handle, AddJunctionRequest { sheet: None, x: 10.0, y: 20.0 }).expect("first junction");
+    assert_eq!(first["revision"], 2);
+    let duplicate = add_junction(handle, AddJunctionRequest { sheet: None, x: 10.0, y: 20.0 }).unwrap_err();
+    assert_eq!(duplicate.code, "junction/duplicate");
+    let second = add_junction(handle, AddJunctionRequest { sheet: None, x: 30.0, y: 40.0 }).expect("second junction");
+    assert_eq!(second["revision"], 3);
+    let unknown_sheet =
+        add_junction(handle, AddJunctionRequest { sheet: Some("missing".to_string()), x: 1.0, y: 2.0 }).unwrap_err();
+    assert_eq!(unknown_sheet.code, "sheet/not-found");
+    assert_eq!(move_junction(handle, 1, None, 10.0, 20.0).unwrap_err().code, "junction/duplicate");
+
+    let listed = list_junctions(handle, None).expect("list junctions");
+    assert_eq!(listed["junctions"], json!([{ "index": 0, "x": 10.0, "y": 20.0 }, { "index": 1, "x": 30.0, "y": 40.0 }]));
+
+    let removed = delete_junction(handle, 0, None).expect("remove first");
+    assert_eq!(removed["index"], 0);
+    assert_eq!(removed["remaining"], 1);
+    let relisted = list_junctions(handle, None).expect("relist");
+    assert_eq!(relisted["junctions"], json!([{ "index": 0, "x": 30.0, "y": 40.0 }]));
+    assert_eq!(delete_junction(handle, 1, None).unwrap_err().code, "junction/not-found");
+    assert_eq!(delete_junction(handle, 0, Some("missing")).unwrap_err().code, "sheet/not-found");
+
+    add_junction(handle, AddJunctionRequest { sheet: None, x: 55.0, y: 30.0 }).expect("persist junction");
+    save(handle, &path, false).expect("save");
+    close(handle).expect("close");
+
+    let reopened = open(&path).expect("reopen");
+    let reopened_handle = reopened["handle"].as_u64().expect("reopened handle");
+    let persisted = list_junctions(reopened_handle, None).expect("list reopened");
+    assert_eq!(persisted["junctions"], json!([{ "index": 0, "x": 30.0, "y": 40.0 }, { "index": 1, "x": 55.0, "y": 30.0 }]));
+    delete_junction(reopened_handle, 0, None).expect("remove after reopen");
+    save(reopened_handle, &path, true).expect("save removal");
+    close(reopened_handle).expect("close");
+}
+
+#[test]
+fn no_connect_edits_suppress_erc_only_for_pin_flags() {
+    let dir = TempDir::new("no-connect-edits");
+    let path = dir.join("no-connects.oeda");
+    let created = create(CreateRequest::default()).expect("create");
+    let handle = created["handle"].as_u64().expect("handle");
+    add_component(
+        handle,
+        AddComponentRequest {
+            sheet: None,
+            reference: "R1".to_string(),
+            value: "10k".to_string(),
+            x: 40.0,
+            y: 30.0,
+            rotation: 0.0,
+            pins: vec!["1".to_string(), "2".to_string()],
+        },
+    )
+    .expect("add R1");
+    connect_net(handle, ConnectNetRequest { sheet: None, net: "SIGNAL".to_string(), nodes: vec!["R1.1".to_string()] })
+        .expect("connect R1.1");
+
+    let unconnected = |handle: u64| {
+        let report =
+            inspect_with_options(handle, InspectOptions { checks: Some(vec!["erc".to_string()]), ..InspectOptions::default() })
+                .expect("inspect");
+        report["issues"].as_array().expect("issues").iter().filter(|issue| issue["code"] == "erc/unconnected-pin").count()
+    };
+
+    assert_eq!(unconnected(handle), 1);
+    add_no_connect(
+        handle,
+        AddNoConnectRequest {
+            sheet: None,
+            x: 40.0,
+            y: 30.0,
+            node: Some(Node { reference: "R1".to_string(), pin: "2".to_string() }),
+        },
+    )
+    .expect("pin flag");
+    assert_eq!(unconnected(handle), 0);
+
+    add_no_connect(handle, AddNoConnectRequest { sheet: None, x: 0.0, y: 0.0, node: None }).expect("coordinate mark");
+    assert_eq!(unconnected(handle), 0, "a coordinate-only mark suppresses nothing");
+
+    save(handle, &path, false).expect("save");
+    close(handle).expect("close");
+
+    let reopened = open(&path).expect("reopen");
+    let reopened_handle = reopened["handle"].as_u64().expect("reopened handle");
+    let listed = list_no_connects(reopened_handle, None).expect("list reopened");
+    assert_eq!(listed["noConnects"][0]["node"], json!({ "ref": "R1", "pin": "2" }));
+    assert_eq!(listed["noConnects"][1], json!({ "index": 1, "x": 0.0, "y": 0.0 }));
+    assert_eq!(unconnected(reopened_handle), 0);
+
+    let removed = delete_no_connect(reopened_handle, 0, None).expect("remove pin flag");
+    assert_eq!(removed["remaining"], 1);
+    assert_eq!(unconnected(reopened_handle), 1, "removing the flag restores the finding");
+    assert_eq!(delete_no_connect(reopened_handle, 1, None).unwrap_err().code, "no-connect/not-found");
+    assert_eq!(delete_no_connect(reopened_handle, 0, Some("missing")).unwrap_err().code, "sheet/not-found");
+    close(reopened_handle).expect("close");
 }
 
 #[test]
@@ -2691,7 +2798,7 @@ fn junction_and_text_index_edits_are_validated() {
     let deleted = delete_text(handle, 0, None).expect("delete text");
     assert_eq!(deleted["remaining"], 0);
     delete_junction(handle, 0, None).expect("delete junction");
-    assert_eq!(move_junction(handle, 0, None, 0.0, 0.0).unwrap_err().code, "object/not-found");
+    assert_eq!(move_junction(handle, 0, None, 0.0, 0.0).unwrap_err().code, "junction/not-found");
     assert_eq!(delete_text(handle, 0, None).unwrap_err().code, "object/not-found");
     assert_eq!(move_text(handle, 0, None, f64::NAN, 0.0).unwrap_err().code, "session/argument-invalid");
     close(handle).expect("close");
@@ -4256,7 +4363,7 @@ fn texts_are_listed_and_updated_in_place() {
         )
         .unwrap_err()
         .code,
-        "format/invalid"
+        "sheet/not-found"
     );
 
     undo(handle).expect("undo move");
