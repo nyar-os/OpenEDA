@@ -433,6 +433,16 @@ fn design_list_nets(ctx: CallContext) -> Result<JsValue> {
     respond(&ctx, &report)
 }
 
+/// Reports one declared net by name and the objects that reference it.
+#[function]
+fn design_net_show(ctx: CallContext) -> Result<JsValue> {
+    let handle = handle(&ctx, 0)?;
+    let name = text(&ctx, 1)?;
+    let sheet = optional_text(&ctx, 2)?;
+    let report = open_eda_model::net_show(handle, &name, sheet.as_deref()).map_err(fail)?;
+    respond(&ctx, &report)
+}
+
 /// Declares one design-level bus.
 #[function]
 fn design_add_bus(ctx: CallContext) -> Result<JsValue> {
@@ -1744,6 +1754,7 @@ register_module![
     design_delete_no_connect,
     design_list_components,
     design_list_nets,
+    design_net_show,
     design_add_bus,
     design_remove_bus,
     design_list_buses,

@@ -64,6 +64,7 @@ open-eda component footprint <file.oeda> --ref <ref> [--footprint <footprint>] [
 open-eda component pin-type <file.oeda> <ref> <pin> [type] [--clear] [--sheet <sheet>]
 open-eda component delete <file.oeda> --ref <ref> [--sheet <sheet>]
 open-eda net list <file.oeda> [--sheet <sheet>]
+open-eda net show <file.oeda> <net> [--sheet <sheet>]
 open-eda net connect <file.oeda> --net <name> --nodes <ref.pin>,<ref.pin> [--sheet <sheet>]
 open-eda net derive <file.oeda> [--sheet <sheet>]
 open-eda net disconnect <file.oeda> --net <name> [--nodes <ref.pin>,<ref.pin>] [--sheet <sheet>]
@@ -291,6 +292,18 @@ reaches, and the wire-group and junction totals (groups, unassigned groups,
 conflicting groups, floating junctions). The report is read-only, tagged
 `open-eda-connectivity`, and deterministic for one revision; it never assigns
 nets or edits the document.
+
+## Net detail
+
+`open-eda net show <file.oeda> <net> [--sheet <sheet>]` returns one declared net
+by name. With `--sheet` it searches only that sheet; otherwise it walks every
+sheet in document order and reports each match with the sheet id and name, the
+net id and its `REF.PIN` nodes, the wires whose declared net name matches with
+their 0-based document index, and the net labels whose text matches. The report
+aggregates the node count across matches and also resolves the declared bus whose
+name or alias equals the net name and the net class whose `nets` list contains
+it, or `null` for each. The report is read-only, tagged `open-eda-net`, and an
+unknown name is `net/not-found`; it never edits the document.
 
 ## Component detail
 

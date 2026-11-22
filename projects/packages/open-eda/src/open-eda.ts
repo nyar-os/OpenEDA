@@ -74,6 +74,7 @@ import type {
     NetClassInput,
     NetLabel,
     NetlistDiffReport,
+    NetReport,
     NoConnect,
     NoConnectInput,
     NoConnectListResult,
@@ -822,6 +823,9 @@ function attach(opened: service.DesignHandle, options: AttachOptions): Design {
         },
         async componentReport(reference: string): Promise<ComponentReport> {
             return service.componentReport(handle, reference);
+        },
+        async netShow(name: string, options?: { readonly sheet?: string }): Promise<NetReport> {
+            return service.netShow(handle, name, options?.sheet);
         },
         async listComponents(options?: { readonly sheet?: string }): Promise<readonly Component[]> {
             return service.listComponents(handle, options?.sheet).components;

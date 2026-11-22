@@ -53,6 +53,7 @@ export interface NativeBinding {
     design_delete_no_connect(handle: number, index: number, sheet?: string): string;
     design_list_components(handle: number, sheet?: string): string;
     design_list_nets(handle: number, sheet?: string): string;
+    design_net_show(handle: number, name: string, sheet?: string): string;
     design_add_bus(handle: number, requestJson: string): string;
     design_remove_bus(handle: number, bus: string): string;
     design_list_buses(handle: number): string;

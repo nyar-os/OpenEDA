@@ -131,6 +131,11 @@ const COMPONENT_REPORT_FORMAT: &str = "open-eda-component";
 /// Version written into the read-only component detail report.
 const COMPONENT_REPORT_VERSION: u64 = 1;
 
+/// Tag written into the read-only net detail report.
+const NET_REPORT_FORMAT: &str = "open-eda-net";
+/// Version written into the read-only net detail report.
+const NET_REPORT_VERSION: u64 = 1;
+
 /// Loss code reported when a SPICE element pin has no net and gets an NC node.
 const SPICE_OPEN_PIN: &str = "spice/open-pin";
 
@@ -1341,8 +1346,9 @@ pub struct Waiver {
 /// exists and is covered by tests.
 ///
 /// Read-only queries live under `queries`, next to `checks`: `queries.trace`
-/// reports the pin-to-pin path query of [`trace_pins`]. It is a query, not a
-/// rule check, so it never appears in the `inspect --checks` value.
+/// reports the pin-to-pin path query of [`trace_pins`] and `queries.net` reports
+/// the net detail query of [`net_show`]. They are queries, not rule checks, so
+/// they never appear in the `inspect --checks` value.
 pub fn capabilities() -> Value {
     let matrix = capability_matrix();
     let level = |id: String| if matrix.supports(&id) { "supported" } else { "unsupported" };
@@ -1387,6 +1393,7 @@ pub fn capabilities() -> Value {
 
     let mut queries = Map::new();
     queries.insert("component".to_string(), Value::String(level("query.component".to_string()).to_string()));
+    queries.insert("net".to_string(), Value::String(level("query.net".to_string()).to_string()));
     queries.insert("trace".to_string(), Value::String(level("query.trace".to_string()).to_string()));
 
     json!({
@@ -1431,6 +1438,7 @@ fn capability_matrix() -> CapabilityMatrix {
     matrix.insert(Capability::new("edit.pins", "edit", Support::Supported));
     matrix.insert(Capability::new("edit.annotate", "edit", Support::Supported));
     matrix.insert(Capability::new("query.component", "query", Support::Supported));
+    matrix.insert(Capability::new("query.net", "query", Support::Supported));
     matrix.insert(Capability::new("query.trace", "query", Support::Supported));
     matrix
 }
@@ -1792,6 +1800,95 @@ pub fn list_nets(handle: u64, sheet: Option<&str>) -> Result<Value, ServiceError
             "design": summary_of(session),
             "sheetId": sheet.id,
             "nets": sheet.nets,
+        }))
+    })
+}
+
+/// Reports one declared net by name and the objects that reference it.
+///
+/// `name` is trimmed and must not be empty (`session/argument-invalid`). A named
+/// `sheet` resolves through [`sheet_index`] and limits the search to that sheet;
+/// without it the query walks every sheet in document order. A name no searched
+/// sheet declares is `net/not-found`. Each match reports the sheet identity, the
+/// net id and its nodes, the wires on that sheet whose declared net name equals
+/// `name` with their 0-based document index, and the net labels whose text equals
+/// `name`. The report also resolves the declared bus whose name or alias equals
+/// `name` and the net class whose `nets` list contains it, or `null` for each.
+/// The report is deterministic and never mutates the design.
+pub fn net_show(handle: u64, name: &str, sheet: Option<&str>) -> Result<Value, ServiceError> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err(ServiceError::new("session/argument-invalid", "a net name must not be empty"));
+    }
+    with_session(handle, |session| {
+        let design = &session.design;
+        let scope = match sheet {
+            Some(needle) => Some((sheet_index(design, sheet)?, needle)),
+            None => None,
+        };
+        let mut matches = Vec::new();
+        let mut node_count = 0usize;
+        for (index, current) in design.sheets.iter().enumerate() {
+            if scope.is_some_and(|(only, _)| only != index) {
+                continue;
+            }
+            for net in current.nets.iter().filter(|net| net.name == name) {
+                node_count += net.nodes.len();
+                let wires = current
+                    .wires
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, wire)| wire.net.as_deref() == Some(name))
+                    .map(|(wire_index, wire)| json!({ "index": wire_index, "from": wire.from, "to": wire.to }))
+                    .collect::<Vec<_>>();
+                let labels = current
+                    .labels
+                    .iter()
+                    .filter(|label| label.text == name)
+                    .map(|label| json!({ "text": label.text, "scope": label.scope, "x": label.x, "y": label.y }))
+                    .collect::<Vec<_>>();
+                matches.push(json!({
+                    "sheet": { "id": current.id, "name": current.name },
+                    "net": { "id": net.id, "name": net.name, "nodes": net.nodes },
+                    "wires": wires,
+                    "labels": labels,
+                }));
+            }
+        }
+        if matches.is_empty() {
+            let message = match scope {
+                Some((_, needle)) => format!("net `{name}` is not declared on sheet `{needle}`"),
+                None => format!("net `{name}` is not declared in this design"),
+            };
+            return Err(ServiceError::new("net/not-found", message));
+        }
+        let bus = bus_for_net(design, name).map(|bus| {
+            json!({
+                "id": bus.id,
+                "name": bus.name,
+                "width": bus.width,
+                "members": (0..bus.width).map(|index| format!("{}{index}", bus.name)).collect::<Vec<_>>(),
+            })
+        });
+        let net_class = design.rules.net_classes.iter().find(|class| class.nets.iter().any(|net| net == name)).map(|class| {
+            json!({
+                "id": class.id,
+                "name": class.name,
+                "width": class.width,
+                "clearance": class.clearance,
+                "via": class.via,
+            })
+        });
+        Ok(json!({
+            "format": NET_REPORT_FORMAT,
+            "version": NET_REPORT_VERSION,
+            "revision": design.revision,
+            "design": summary_of(session),
+            "name": name,
+            "sheets": matches,
+            "nodeCount": node_count,
+            "bus": bus,
+            "netClass": net_class,
         }))
     })
 }

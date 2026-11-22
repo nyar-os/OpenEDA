@@ -83,6 +83,7 @@ Pin roles: `input`, `output`, `bidirectional`, `tri_state`, `passive`,
 | `open-eda net derive <file>` | Derive nets from connectivity |
 | `open-eda net rename <file> --id <net> --name <name> [--sheet <id>]` | Rename a net |
 | `open-eda net merge <file> --target <net> --source <net> [--sheet <id>]` | Merge two nets |
+| `open-eda net show <file> <net> [--sheet <id>]` | Report one net's nodes, wires, labels and matching bus and net class |
 | `open-eda net list <file> [--sheet <id>]` | List nets and nodes |
 | `open-eda net delete <file> --net <name> [--sheet <id>]` | Delete a net |
 | `open-eda bus add <file> --name <name> --width <n> [--aliases <list>]` | Declare a bus |

@@ -42,6 +42,7 @@
             "component-pin-rename": "Rename a component pin and update the nets and no-connect flags that referenced it",
             "component-delete": "Delete a placed component and its net nodes in place",
             "net": "Edit electrical nets",
+            "net-show": "Show one net's nodes, wires, labels and matching bus and net class",
             "net-list": "List the nets of a sheet with their REF.PIN nodes",
             "net-connect": "Connect REF.PIN nodes to a named net in place",
             "net-rename": "Rename a net and update the wires that referenced it",

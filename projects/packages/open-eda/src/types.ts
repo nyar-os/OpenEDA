@@ -446,6 +446,66 @@ export interface ComponentReport {
     readonly pins: readonly ComponentPinDetail[];
 }
 
+/** One wire segment of a net detail report, with its 0-based sheet document index. */
+export interface NetWireDetail {
+    readonly index: number;
+    readonly from: readonly [number, number];
+    readonly to: readonly [number, number];
+}
+
+/** One net label of a net detail report. */
+export interface NetLabelDetail {
+    readonly text: string;
+    readonly scope: LabelScope;
+    readonly x: number;
+    readonly y: number;
+}
+
+/** One sheet of a net detail report. */
+export interface NetSheetDetail {
+    readonly sheet: { readonly id: SheetId; readonly name: string };
+    /** The declared net on this sheet with its nodes. */
+    readonly net: Net;
+    /** Wire segments on this sheet whose declared net name equals the requested name. */
+    readonly wires: readonly NetWireDetail[];
+    /** Net labels on this sheet whose text equals the requested name. */
+    readonly labels: readonly NetLabelDetail[];
+}
+
+/** A declared bus whose name or alias resolves to the requested net name. */
+export interface NetBusDetail {
+    readonly id: ObjectId;
+    readonly name: string;
+    readonly width: number;
+    /** Canonical member net names, `name` followed by the 0-based index. */
+    readonly members: readonly string[];
+}
+
+/** A declared net class whose `nets` list contains the requested name. */
+export interface NetClassDetail {
+    readonly id: ObjectId;
+    readonly name: string;
+    readonly width: number;
+    readonly clearance: number;
+    readonly via: number;
+}
+
+/** Result of `design.netShow()`, tagged `open-eda-net`. */
+export interface NetReport {
+    readonly format: 'open-eda-net';
+    readonly version: number;
+    readonly revision: number;
+    readonly design: DesignSummary;
+    /** Requested net name after trimming. */
+    readonly name: string;
+    /** One entry per matching declared net, in sheet document order. */
+    readonly sheets: readonly NetSheetDetail[];
+    /** Nodes across every matching sheet. */
+    readonly nodeCount: number;
+    readonly bus: NetBusDetail | null;
+    readonly netClass: NetClassDetail | null;
+}
+
 /** One schematic junction (connection dot). */
 export interface Junction {
     readonly x: number;
@@ -1806,6 +1866,8 @@ export interface Design {
     tracePins(from: string, to: string): Promise<TraceReport>;
     /** Reports one placed component's placement, properties, pins and reaching nets. */
     componentReport(reference: string): Promise<ComponentReport>;
+    /** Reports one declared net's nodes, wires, labels and matching bus and net class. */
+    netShow(name: string, options?: { readonly sheet?: SheetId }): Promise<NetReport>;
     listComponents(options?: { readonly sheet?: SheetId }): Promise<readonly Component[]>;
     listNets(options?: { readonly sheet?: SheetId }): Promise<readonly Net[]>;
     close(): Promise<void>;

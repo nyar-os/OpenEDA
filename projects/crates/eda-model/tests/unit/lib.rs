@@ -77,6 +77,7 @@ fn capability_matrix_reports_only_the_implemented_entries() {
     assert_eq!(matrix["edits"]["pins"], "supported");
     assert_eq!(matrix["edits"]["annotate"], "supported");
     assert_eq!(matrix["queries"]["component"], "supported");
+    assert_eq!(matrix["queries"]["net"], "supported");
     assert_eq!(matrix["queries"]["trace"], "supported");
 }
 
@@ -2925,6 +2926,190 @@ fn component_report_reports_unknown_references_as_object_not_found() {
     assert_eq!(error.code, "object/not-found");
     assert!(error.message.contains("R9"));
     assert_eq!(summary(handle).expect("summary")["revision"], revision, "a failed lookup adds no revision");
+    close(handle).expect("close");
+}
+
+#[test]
+fn net_show_reports_nodes_wires_labels_and_design_matches() {
+    let created = create(CreateRequest::default()).expect("create");
+    let handle = created["handle"].as_u64().expect("handle");
+    add_component(
+        handle,
+        AddComponentRequest {
+            sheet: None,
+            reference: "R1".to_string(),
+            value: "10k".to_string(),
+            x: 0.0,
+            y: 0.0,
+            rotation: 0.0,
+            pins: vec!["1".to_string(), "2".to_string()],
+        },
+    )
+    .expect("add R1");
+    add_sheet(handle, Some("Power")).expect("add sheet");
+    add_component(
+        handle,
+        AddComponentRequest {
+            sheet: Some("sheet-2".to_string()),
+            reference: "R2".to_string(),
+            value: "10k".to_string(),
+            x: 0.0,
+            y: 0.0,
+            rotation: 0.0,
+            pins: vec!["1".to_string(), "2".to_string()],
+        },
+    )
+    .expect("add R2");
+    connect_net(handle, ConnectNetRequest { sheet: None, net: "VCC".to_string(), nodes: vec!["R1.1".to_string()] })
+        .expect("VCC on sheet 1");
+    connect_net(
+        handle,
+        ConnectNetRequest { sheet: Some("sheet-2".to_string()), net: "VCC".to_string(), nodes: vec!["R2.1".to_string()] },
+    )
+    .expect("VCC on sheet 2");
+    wire(handle, Some("GND"), [0.0, 0.0], [1.0, 0.0]);
+    wire(handle, Some("VCC"), [2.0, 0.0], [3.0, 0.0]);
+    add_wire(
+        handle,
+        AddWireRequest { sheet: Some("sheet-2".to_string()), net: Some("VCC".to_string()), from: [4.0, 0.0], to: [5.0, 0.0] },
+    )
+    .expect("VCC wire on sheet 2");
+    for (text, x, y, scope) in [("GND", 0.0, 0.0, LabelScope::Local), ("VCC", 1.0, 2.0, LabelScope::Global)] {
+        add_label(
+            handle,
+            AddLabelRequest { sheet: None, text: text.to_string(), x, y, scope: Some(scope), rotation: None, justify: None },
+        )
+        .expect("label");
+    }
+    add_label(
+        handle,
+        AddLabelRequest {
+            sheet: Some("sheet-2".to_string()),
+            text: "VCC".to_string(),
+            x: 3.0,
+            y: 4.0,
+            scope: Some(LabelScope::Hierarchical),
+            rotation: None,
+            justify: None,
+        },
+    )
+    .expect("label on sheet 2");
+    add_bus(handle, AddBusRequest { name: "DATA".to_string(), width: 2, aliases: vec!["VCC".to_string()] }).expect("add bus");
+    add_net_class(
+        handle,
+        NetClassRequest {
+            name: "Power".to_string(),
+            width: 0.25,
+            clearance: 0.1,
+            via: 0.2,
+            nets: vec!["VCC".to_string()],
+            buses: Vec::new(),
+        },
+    )
+    .expect("add net class");
+    let revision = summary(handle).expect("summary")["revision"].clone();
+
+    let report = net_show(handle, "  VCC  ", None).expect("net report");
+    assert_eq!(report["format"], "open-eda-net");
+    assert_eq!(report["version"], 1);
+    assert_eq!(report["name"], "VCC", "the requested name is trimmed");
+    assert_eq!(report["revision"], revision);
+    assert_eq!(report["design"]["id"], created["design"]["id"]);
+    assert_eq!(
+        report["sheets"],
+        json!([
+            {
+                "sheet": { "id": "sheet-1", "name": "Sheet 1" },
+                "net": { "id": "net-1", "name": "VCC", "nodes": [{ "ref": "R1", "pin": "1" }] },
+                "wires": [{ "index": 1, "from": [2.0, 0.0], "to": [3.0, 0.0] }],
+                "labels": [{ "text": "VCC", "scope": "global", "x": 1.0, "y": 2.0 }],
+            },
+            {
+                "sheet": { "id": "sheet-2", "name": "Power" },
+                "net": { "id": "net-2", "name": "VCC", "nodes": [{ "ref": "R2", "pin": "1" }] },
+                "wires": [{ "index": 0, "from": [4.0, 0.0], "to": [5.0, 0.0] }],
+                "labels": [{ "text": "VCC", "scope": "hierarchical", "x": 3.0, "y": 4.0 }],
+            },
+        ])
+    );
+    assert_eq!(report["nodeCount"], 2, "the node count aggregates every matching sheet");
+    assert_eq!(report["bus"], json!({ "id": "bus-1", "name": "DATA", "width": 2, "members": ["DATA0", "DATA1"] }));
+    assert_eq!(
+        report["netClass"],
+        json!({ "id": "net-class-1", "name": "Power", "width": 0.25, "clearance": 0.1, "via": 0.2 })
+    );
+
+    let again = net_show(handle, "VCC", None).expect("net report again");
+    assert_eq!(again, report, "the report is deterministic for one document state");
+    assert_eq!(summary(handle).expect("summary")["revision"], revision, "the report never mutates the design");
+    close(handle).expect("close");
+}
+
+#[test]
+fn net_show_scopes_to_one_sheet_and_reports_unknown_names() {
+    let created = create(CreateRequest::default()).expect("create");
+    let handle = created["handle"].as_u64().expect("handle");
+    add_sheet(handle, Some("Power")).expect("add sheet");
+    for (sheet, reference, pin, net) in [(None, "R1", "1", "VCC"), (Some("sheet-2".to_string()), "R2", "1", "VCC")] {
+        add_component(
+            handle,
+            AddComponentRequest {
+                sheet: sheet.clone(),
+                reference: reference.to_string(),
+                value: "10k".to_string(),
+                x: 0.0,
+                y: 0.0,
+                rotation: 0.0,
+                pins: vec!["1".to_string(), "2".to_string()],
+            },
+        )
+        .expect("add component");
+        connect_net(
+            handle,
+            ConnectNetRequest { sheet: sheet.clone(), net: net.to_string(), nodes: vec![format!("{reference}.{pin}")] },
+        )
+        .expect("connect");
+    }
+    connect_net(
+        handle,
+        ConnectNetRequest { sheet: Some("sheet-2".to_string()), net: "GND".to_string(), nodes: vec!["R2.2".to_string()] },
+    )
+    .expect("GND only on sheet 2");
+
+    let all = net_show(handle, "VCC", None).expect("design-wide");
+    let ids: Vec<&str> =
+        all["sheets"].as_array().expect("sheets").iter().filter_map(|entry| entry["sheet"]["id"].as_str()).collect();
+    assert_eq!(ids, ["sheet-1", "sheet-2"], "matches keep document order");
+
+    let by_name = net_show(handle, "VCC", Some("Power")).expect("sheet by name");
+    assert_eq!(by_name["sheets"].as_array().expect("sheets").len(), 1);
+    assert_eq!(by_name["sheets"][0]["sheet"]["id"], "sheet-2");
+    assert_eq!(by_name["bus"], Value::Null, "no bus matches this net");
+    assert_eq!(by_name["netClass"], Value::Null, "no net class matches this net");
+
+    let by_id = net_show(handle, "VCC", Some("sheet-1")).expect("sheet by id");
+    assert_eq!(by_id["sheets"].as_array().expect("sheets").len(), 1);
+    assert_eq!(by_id["sheets"][0]["sheet"]["id"], "sheet-1");
+
+    let revision = summary(handle).expect("summary")["revision"].clone();
+    assert_eq!(net_show(handle, "VCC", Some("Missing")).unwrap_err().code, "sheet/not-found");
+    let missing = net_show(handle, "NOPE", None).expect_err("unknown net");
+    assert_eq!(missing.code, "net/not-found");
+    assert!(missing.message.contains("NOPE"));
+    assert_eq!(net_show(handle, "GND", Some("sheet-1")).expect_err("net on another sheet").code, "net/not-found");
+    assert_eq!(summary(handle).expect("summary")["revision"], revision, "failed lookups add no revision");
+    close(handle).expect("close");
+}
+
+#[test]
+fn net_show_rejects_an_empty_name() {
+    let created = create(CreateRequest::default()).expect("create");
+    let handle = created["handle"].as_u64().expect("handle");
+    let revision = summary(handle).expect("summary")["revision"].clone();
+
+    assert_eq!(net_show(handle, "   ", None).unwrap_err().code, "session/argument-invalid");
+    assert_eq!(net_show(handle, "", Some("sheet-1")).unwrap_err().code, "session/argument-invalid");
+    assert_eq!(summary(handle).expect("summary")["revision"], revision, "a rejected name adds no revision");
     close(handle).expect("close");
 }
 

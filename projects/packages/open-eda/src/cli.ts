@@ -1214,6 +1214,36 @@ componentCommand
 
 const netCommand = cli.command('net', 'cli.cmd.net');
 netCommand
+    .command('show', 'cli.cmd.net-show')
+    .option('--sheet <sheet>', 'cli.opt.sheet')
+    .actionCtx(async (options, _args, ctx) => {
+        const file = input(options);
+        const name = options._?.[1];
+        if (file === undefined) {
+            ctx.fail('open-eda.cli.file-required', { message: 'a design document is required' });
+            return 2;
+        }
+        if (name === undefined || name.trim().length === 0) {
+            ctx.fail('open-eda.cli.arguments-invalid', { message: 'a `<net>` argument is required' });
+            return 2;
+        }
+        const sheet = text(options, 'sheet');
+        const report = await withDesign(file, (design) => design.netShow(name, sheet === undefined ? undefined : { sheet }));
+        const lines = [
+            `net ${report.name} revision=${report.revision} sheets=${report.sheets.length} nodes=${report.nodeCount} ` +
+                `bus=${report.bus === null ? '-' : report.bus.name} netClass=${report.netClass === null ? '-' : report.netClass.name}`,
+        ];
+        for (const match of report.sheets) {
+            lines.push(
+                `  sheet ${match.sheet.name} net=${match.net.id} nodes=${match.net.nodes.length} ` +
+                    `wires=${match.wires.length} labels=${match.labels.length}`,
+            );
+        }
+        ctx.emitResult(report, lines.join('\n'));
+        return 0;
+    });
+
+netCommand
     .command('list', 'cli.cmd.net-list')
     .option('--sheet <sheet>', 'cli.opt.sheet')
     .actionCtx(async (options, _args, ctx) => {

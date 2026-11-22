@@ -68,6 +68,7 @@ import type {
     NetClassListResult,
     NetClassResult,
     NetlistDiffReport,
+    NetReport,
     NoConnect,
     NoConnectListResult,
     NoConnectInput,
@@ -482,6 +483,14 @@ export function tracePins(handle: number, from: string, to: string): TraceReport
 /** Reports the full detail of one placed component by reference. */
 export function componentReport(handle: number, reference: string): ComponentReport {
     return decode<ComponentReport>(() => binding('design.componentReport').design_component_report(handle, reference));
+}
+
+/** Reports one declared net by name and the objects that reference it. */
+export function netShow(handle: number, name: string, sheet?: string): NetReport {
+    const native = binding('design.netShow');
+    return decode<NetReport>(() =>
+        sheet === undefined ? native.design_net_show(handle, name) : native.design_net_show(handle, name, sheet),
+    );
 }
 
 /** Adds one component to an open design. */
