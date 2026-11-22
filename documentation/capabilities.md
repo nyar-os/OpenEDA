@@ -7,6 +7,11 @@ name, CLI flag or file extension is not evidence that a capability exists.
 Unsupported work answers with `capability/not-implemented` (exit code `2`)
 instead of degrading silently.
 
+Read-only queries are reported next to `checks` but are not rule checks:
+`queries.trace` is `supported` and `inspect --checks` never accepts `trace`.
+A check reports findings on one revision; a query returns one deterministic
+answer about the document, such as a pin-to-pin path.
+
 ## Capability matrix
 
 | Capability | Status | Notes |
@@ -20,6 +25,7 @@ instead of degrading silently.
 | component custom properties | supported | trimmed unique keys, verbatim values; stored in `.oeda`, the JSON projection and KiCad symbol properties |
 | checks `erc`, `electrical`, `nets`, `connectivity`, `footprints`, `power`, `hierarchy` | supported | `drc` and `clearance` are unsupported; `hierarchy` is a separate read-only entry, not an `inspect --checks` value |
 | design `stats` | supported | deterministic per-sheet and design-wide counts; tagged `open-eda-stats` |
+| pin trace `trace` | supported | read-only shortest hop path between two `REF.PIN` pins; tagged `open-eda-trace`; reported as `queries.trace`, not as an `inspect --checks` check |
 | read-only listings `component list`, `net list`, `bus list`, `net-class list`, `wire list`, `label list`, `text list`, `sheet list` | supported | document order with 0-based indices where the model edits by index |
 | junction and no-connect editing | supported | add a junction by coordinate and remove it by 0-based index; add a no-connect flag with or without a `REF.PIN` node and remove it by index; a duplicate junction coordinate is refused (`junction/duplicate`) and so is a second flag on one pin (`no-connect/duplicate`); `capabilities()` reports `edits.junctions` and `edits.noConnects` |
 | export `net`, `net_csv`, `net_hier`, `spice`, `spice_subckt`, `svg`, `bom`, `bom_json`, `bom_html`, `pdf`, `report`, `json`, `kicad_sch`, `kicad_sym` | supported | read-only projections; `kicad_pcb` and `gbr` are unsupported |
@@ -47,7 +53,9 @@ producing an ambiguous file.
 
 - A net label is an annotation with `local`, `global` or `hierarchical` scope.
   Labels never derive, rename or merge a net, and a global or hierarchical label
-  does not connect nets across sheets.
+  does not connect nets across sheets. The read-only pin trace honours the
+  declared scope while walking a path (a global label pair bridges sheets, a
+  local pair does not); that walk never creates, renames or merges a net.
 - A bus is a design-level declaration: a name, a width and optional aliases. A
   bus `DATA` with width 4 expands into `DATA0`..`DATA3` (name plus 0-based index,
   no separator). A declared net with the bus name repeats its nodes into every
@@ -112,6 +120,28 @@ fail the report.
 - `connectivity` lists every net with node count and `REF.PIN` pins, the pins no
   net reaches, per-sheet wire-group and junction totals, and per-sheet label
   counts split by scope. Tagged `open-eda-connectivity`.
+- `trace` (`tracePins()` in the SDK) is the point-to-point query, not a check.
+  It takes two `REF.PIN` strings and returns
+  `{format: "open-eda-trace", version: 1, from, to, connected, via, hops,
+  sheets}`. Hops are `pin`, `wire`, `junction`, `label` or `sheet-port` nodes
+  with the sheet name, the 0-based index or object name, and a readable
+  `detail`. The report follows the shortest hop count, with ties broken by
+  `(sheet, kind, index or name)` order, so one document state always produces
+  the same path. A pin traced to itself returns `via: "direct"` with no hops.
+  Two pins nothing reaches return `connected: false` and `via: "none"`; that is
+  not an error. `via` is `"label"` only when every path needs a label hop, and
+  `"wire"` when net membership, wires and junctions already connect the pins.
+  Unknown references and pins fail with `trace/component-missing` and
+  `trace/pin-missing`. The trace never writes a document and never opens a
+  child document.
+- The trace joins objects with the same rules the connectivity check reads: a
+  pin joins the wires of its declared net, wires join at coincident endpoints
+  or a T-junction, a junction joins every wire it lies on, and a label joins
+  the wire it sits on. Labels join by equal text only where their scope allows:
+  any pair on one sheet, and `global` labels across the design. A
+  hierarchical-scope label also joins a same-named sheet port, because
+  hierarchy declarations are document-level; the port lets two hierarchical
+  labels of one name meet without opening a child document.
 - `diff` compares modelled objects, not bytes: sheets by id, components by
   reference, nets by name inside a sheet, buses and BOM variants by name. It
   records field-level changes and is tagged `open-eda-diff`.
@@ -206,5 +236,7 @@ Every file is written through a temporary file and a rename.
 - `projects/crates/eda-model/tests/unit/kicad.rs` — parser and writer subset.
 - `projects/crates/eda-model/tests/unit/diff.rs` — structural comparison.
 - `projects/crates/eda-model/tests/unit/connectivity.rs` — net and pin analysis.
+- `projects/crates/eda-model/tests/unit/trace.rs` — pin-to-pin trace paths,
+  label scope, determinism and read-only behavior.
 - `projects/packages/open-eda/tests/smoke.test.ts` — CLI/SDK surface, with
   native-addon-dependent cases skipped when no addon is installed.

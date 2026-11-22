@@ -16,6 +16,10 @@ The CLI opens one sidecar-history session, so `undo` and `redo` work across
 separate invocations. History lives in `<file>.history.json` beside the
 document and is never written into the document itself.
 
+Every command also accepts the framework-wide `--json` flag. It writes one
+`wae.cli-result/v0` envelope to stdout instead of the human text, and help goes
+to stderr.
+
 ## Create, inspect and compare
 
 | Command | Description |
@@ -27,6 +31,7 @@ document and is never written into the document itself.
 | `open-eda list <file>` | List sheets, components, nets, wires and buses |
 | `open-eda symbols <file>` | Group placed components by derived library id with pin, footprint and missing-footprint counts |
 | `open-eda connectivity <file>` | Print the connectivity report |
+| `open-eda trace <file> <from> <to>` | Trace the read-only connection path between two `REF.PIN` pins |
 | `open-eda stats <file>` | Print deterministic per-sheet and design-wide counts |
 | `open-eda diff <before> <after>` | Compare two documents structurally |
 | `open-eda annotate <file>` | Renumber references per prefix by sheet and placement order |
@@ -34,6 +39,17 @@ document and is never written into the document itself.
 | `open-eda undo <file>` / `open-eda redo <file>` | Walk the sidecar history |
 | `open-eda capabilities` | Print the machine-readable capability matrix |
 | `open-eda gui` | Open the studio window |
+
+### Pin trace
+
+`trace <file> <from> <to>` takes two `REF.PIN` arguments and prints `connected`,
+`via` and the hop list (`pin`, `wire`, `junction`, `label`, `sheet-port`). Hops
+name the sheet and the 0-based index or object name. `via` is `direct` for the
+same pin, `label` when the path needs a label hop, `wire` when nets, wires and
+junctions already connect the pins, and `none` when they do not. A disconnected
+pair is a successful query (exit `0`); an unknown reference or pin is exit `1`.
+`--json` returns the same report as `open-eda-trace`. The command never writes
+the document and never opens a child document.
 
 ## Components
 

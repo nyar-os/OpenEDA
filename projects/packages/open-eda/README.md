@@ -67,7 +67,7 @@ pnpm exec open-eda export blinker.oeda --format svg --out blinker.svg
 | Annotations | `addLabel`, `listLabels`, `updateLabel`, `removeLabel`, `addText`, `listTexts`, `updateText`, `moveText`, `deleteText`, `addNoConnect`, `listNoConnects`, `deleteNoConnect` |
 | Sheets | `addSheet`, `listSheets`, `renameSheet`, `deleteSheet`, `addHierarchy`, `listHierarchy`, `addHierarchyPort`, `removeHierarchyPort`, `removeHierarchy` |
 | Design data | `annotate`, `setProperties`, `addVariant`, `listVariants`, `removeVariant`, `setReferencePrefix`, `removeReferencePrefix`, `listReferencePrefixes`, `setComponentClass`, `listComponentClasses`, `stats`, `compareNetlist` |
-| Reports | `listObjects`, `listComponents`, `listNets`, `listSymbols`, `connectivity`, `inspect`, `checkHierarchy` |
+| Reports | `listObjects`, `listComponents`, `listNets`, `listSymbols`, `connectivity`, `tracePins`, `inspect`, `checkHierarchy` |
 | Output | `save`, `export`, `undo`, `redo`, `close` |
 
 `inspect` runs `erc`, `electrical`, `nets`, `connectivity`, `footprints` and
