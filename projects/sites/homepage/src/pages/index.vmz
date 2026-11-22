@@ -28,47 +28,76 @@
                     <span class="sheet__rev">EXPORT</span>
                 </div>
                 <div class="sheet__draw">
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="-2.70 6.38 95.40 81.62" role="img" aria-label="Exported OpenEDA schematic">
-                        <rect x="-2.70" y="6.38" width="95.40" height="81.62" fill="#ffffff" stroke="#1f2933" stroke-width="0.4"></rect>
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="-5.24 7.38 125.48 74.62" role="img" aria-label="Exported OpenEDA schematic">
+                        <rect x="-5.24" y="7.38" width="125.48" height="74.62" fill="#ffffff" stroke="#1f2933" stroke-width="0.4"></rect>
                         <g data-sheet="sheet-1">
-                            <line x1="20.00" y1="48.38" x2="20.00" y2="36.00" stroke="#0f766e" stroke-width="0.5"></line>
-                            <line x1="20.00" y1="36.00" x2="27.30" y2="36.00" stroke="#0f766e" stroke-width="0.5"></line>
-                            <line x1="20.00" y1="63.62" x2="20.00" y2="70.00" stroke="#0f766e" stroke-width="0.5"></line>
-                            <line x1="20.00" y1="70.00" x2="46.00" y2="70.00" stroke="#0f766e" stroke-width="0.5"></line>
-                            <line x1="46.00" y1="70.00" x2="46.00" y2="47.62" stroke="#0f766e" stroke-width="0.5"></line>
-                            <line x1="52.70" y1="36.00" x2="54.00" y2="36.00" stroke="#0f766e" stroke-width="0.5"></line>
-                            <line x1="54.00" y1="36.00" x2="54.00" y2="24.00" stroke="#0f766e" stroke-width="0.5"></line>
-                            <line x1="54.00" y1="24.00" x2="57.30" y2="24.00" stroke="#0f766e" stroke-width="0.5"></line>
-                            <line x1="52.70" y1="44.00" x2="54.00" y2="44.00" stroke="#0f766e" stroke-width="0.5"></line>
-                            <line x1="54.00" y1="44.00" x2="54.00" y2="56.00" stroke="#0f766e" stroke-width="0.5"></line>
-                            <line x1="54.00" y1="56.00" x2="57.30" y2="56.00" stroke="#0f766e" stroke-width="0.5"></line>
-                            <text x="8.00" y="78.00" font-family="monospace" font-size="3.2" text-anchor="start">Demo schematic</text>
-                            <g transform="rotate(0.00 40.00 40.00)" data-ref="U1">
-                                <rect x="27.30" y="32.38" width="25.40" height="15.24" fill="#f6faff" stroke="#1f6feb" stroke-width="0.5"></rect>
-                                <text x="40.00" y="39.40" font-family="monospace" font-size="3.2" text-anchor="middle">U1</text>
-                                <text x="40.00" y="43.00" font-family="monospace" font-size="2.6" text-anchor="middle">MCU</text>
-                            </g>
-                            <g transform="rotate(0.00 70.00 24.00)" data-ref="R1">
-                                <rect x="57.30" y="16.38" width="25.40" height="15.24" fill="#f6faff" stroke="#1f6feb" stroke-width="0.5"></rect>
-                                <text x="70.00" y="23.40" font-family="monospace" font-size="3.2" text-anchor="middle">R1</text>
-                                <text x="70.00" y="27.00" font-family="monospace" font-size="2.6" text-anchor="middle">10k</text>
-                            </g>
-                            <g transform="rotate(0.00 70.00 56.00)" data-ref="R2">
-                                <rect x="57.30" y="48.38" width="25.40" height="15.24" fill="#f6faff" stroke="#1f6feb" stroke-width="0.5"></rect>
-                                <text x="70.00" y="55.40" font-family="monospace" font-size="3.2" text-anchor="middle">R2</text>
-                                <text x="70.00" y="59.00" font-family="monospace" font-size="2.6" text-anchor="middle">330</text>
-                            </g>
-                            <g transform="rotate(0.00 20.00 56.00)" data-ref="C1">
-                                <rect x="7.30" y="48.38" width="25.40" height="15.24" fill="#f6faff" stroke="#1f6feb" stroke-width="0.5"></rect>
-                                <text x="20.00" y="55.40" font-family="monospace" font-size="3.2" text-anchor="middle">C1</text>
-                                <text x="20.00" y="59.00" font-family="monospace" font-size="2.6" text-anchor="middle">100n</text>
-                            </g>
+                          <line x1="35.24" y1="38.73" x2="44.76" y2="38.73" stroke="#0f766e" stroke-width="0.5"></line>
+                          <line x1="4.76" y1="38.73" x2="4.76" y2="64.00" stroke="#0f766e" stroke-width="0.5"></line>
+                          <line x1="4.76" y1="64.00" x2="44.76" y2="64.00" stroke="#0f766e" stroke-width="0.5"></line>
+                          <line x1="44.76" y1="64.00" x2="44.76" y2="41.27" stroke="#0f766e" stroke-width="0.5"></line>
+                          <line x1="75.24" y1="38.73" x2="77.50" y2="38.73" stroke="#0f766e" stroke-width="0.5"></line>
+                          <line x1="77.50" y1="38.73" x2="77.50" y2="25.00" stroke="#0f766e" stroke-width="0.5"></line>
+                          <line x1="77.50" y1="25.00" x2="79.76" y2="25.00" stroke="#0f766e" stroke-width="0.5"></line>
+                          <line x1="75.24" y1="41.27" x2="77.50" y2="41.27" stroke="#0f766e" stroke-width="0.5"></line>
+                          <line x1="77.50" y1="41.27" x2="77.50" y2="55.00" stroke="#0f766e" stroke-width="0.5"></line>
+                          <line x1="77.50" y1="55.00" x2="79.76" y2="55.00" stroke="#0f766e" stroke-width="0.5"></line>
+                          <text x="4.76" y="72.00" font-family="monospace" font-size="3.2" text-anchor="start">Demo schematic</text>
+                          <g transform="rotate(0.00 60.00 40.00)" data-ref="U1">
+                            <rect x="47.30" y="32.38" width="25.40" height="15.24" fill="#f6faff" stroke="#1f6feb" stroke-width="0.5"></rect>
+                            <line x1="47.30" y1="38.73" x2="44.76" y2="38.73" stroke="#1f6feb" stroke-width="0.35"></line>
+                            <circle cx="44.76" cy="38.73" r="0.45" fill="#1f6feb"></circle>
+                            <text x="48.20" y="39.43" font-family="monospace" font-size="2.0" text-anchor="start" fill="#334155">VCC</text>
+                            <line x1="47.30" y1="41.27" x2="44.76" y2="41.27" stroke="#1f6feb" stroke-width="0.35"></line>
+                            <circle cx="44.76" cy="41.27" r="0.45" fill="#1f6feb"></circle>
+                            <text x="48.20" y="41.97" font-family="monospace" font-size="2.0" text-anchor="start" fill="#334155">GND</text>
+                            <line x1="72.70" y1="38.73" x2="75.24" y2="38.73" stroke="#1f6feb" stroke-width="0.35"></line>
+                            <circle cx="75.24" cy="38.73" r="0.45" fill="#1f6feb"></circle>
+                            <text x="71.80" y="39.43" font-family="monospace" font-size="2.0" text-anchor="end" fill="#334155">IO1</text>
+                            <line x1="72.70" y1="41.27" x2="75.24" y2="41.27" stroke="#1f6feb" stroke-width="0.35"></line>
+                            <circle cx="75.24" cy="41.27" r="0.45" fill="#1f6feb"></circle>
+                            <text x="71.80" y="41.97" font-family="monospace" font-size="2.0" text-anchor="end" fill="#334155">IO2</text>
+                            <text x="60.00" y="39.40" font-family="monospace" font-size="3.2" text-anchor="middle">U1</text>
+                            <text x="60.00" y="43.00" font-family="monospace" font-size="2.6" text-anchor="middle">MCU</text>
+                          </g>
+                          <g transform="rotate(0.00 95.00 25.00)" data-ref="R1">
+                            <rect x="82.30" y="17.38" width="25.40" height="15.24" fill="#f6faff" stroke="#1f6feb" stroke-width="0.5"></rect>
+                            <line x1="82.30" y1="25.00" x2="79.76" y2="25.00" stroke="#1f6feb" stroke-width="0.35"></line>
+                            <circle cx="79.76" cy="25.00" r="0.45" fill="#1f6feb"></circle>
+                            <text x="83.20" y="25.70" font-family="monospace" font-size="2.0" text-anchor="start" fill="#334155">1</text>
+                            <line x1="107.70" y1="25.00" x2="110.24" y2="25.00" stroke="#1f6feb" stroke-width="0.35"></line>
+                            <circle cx="110.24" cy="25.00" r="0.45" fill="#1f6feb"></circle>
+                            <text x="106.80" y="25.70" font-family="monospace" font-size="2.0" text-anchor="end" fill="#334155">2</text>
+                            <text x="95.00" y="24.40" font-family="monospace" font-size="3.2" text-anchor="middle">R1</text>
+                            <text x="95.00" y="28.00" font-family="monospace" font-size="2.6" text-anchor="middle">10k</text>
+                          </g>
+                          <g transform="rotate(0.00 95.00 55.00)" data-ref="R2">
+                            <rect x="82.30" y="47.38" width="25.40" height="15.24" fill="#f6faff" stroke="#1f6feb" stroke-width="0.5"></rect>
+                            <line x1="82.30" y1="55.00" x2="79.76" y2="55.00" stroke="#1f6feb" stroke-width="0.35"></line>
+                            <circle cx="79.76" cy="55.00" r="0.45" fill="#1f6feb"></circle>
+                            <text x="83.20" y="55.70" font-family="monospace" font-size="2.0" text-anchor="start" fill="#334155">1</text>
+                            <line x1="107.70" y1="55.00" x2="110.24" y2="55.00" stroke="#1f6feb" stroke-width="0.35"></line>
+                            <circle cx="110.24" cy="55.00" r="0.45" fill="#1f6feb"></circle>
+                            <text x="106.80" y="55.70" font-family="monospace" font-size="2.0" text-anchor="end" fill="#334155">2</text>
+                            <text x="95.00" y="54.40" font-family="monospace" font-size="3.2" text-anchor="middle">R2</text>
+                            <text x="95.00" y="58.00" font-family="monospace" font-size="2.6" text-anchor="middle">330</text>
+                          </g>
+                          <g transform="rotate(0.00 20.00 38.73)" data-ref="C1">
+                            <rect x="7.30" y="31.11" width="25.40" height="15.24" fill="#f6faff" stroke="#1f6feb" stroke-width="0.5"></rect>
+                            <line x1="7.30" y1="38.73" x2="4.76" y2="38.73" stroke="#1f6feb" stroke-width="0.35"></line>
+                            <circle cx="4.76" cy="38.73" r="0.45" fill="#1f6feb"></circle>
+                            <text x="8.20" y="39.43" font-family="monospace" font-size="2.0" text-anchor="start" fill="#334155">1</text>
+                            <line x1="32.70" y1="38.73" x2="35.24" y2="38.73" stroke="#1f6feb" stroke-width="0.35"></line>
+                            <circle cx="35.24" cy="38.73" r="0.45" fill="#1f6feb"></circle>
+                            <text x="31.80" y="39.43" font-family="monospace" font-size="2.0" text-anchor="end" fill="#334155">2</text>
+                            <text x="20.00" y="38.13" font-family="monospace" font-size="3.2" text-anchor="middle">C1</text>
+                            <text x="20.00" y="41.73" font-family="monospace" font-size="2.6" text-anchor="middle">100n</text>
+                          </g>
                         </g>
                     </svg>
                 </div>
                 <div class="sheet__foot">
                     <span>open-eda export demo.oeda --format svg</span>
-                    <span>4 symbols · 11 wires · 2965 B</span>
+                    <span>4 symbols · 10 wires · 5605 B</span>
                 </div>
             </div>
         </section>
