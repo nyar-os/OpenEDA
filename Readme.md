@@ -26,7 +26,7 @@ their ports are read and written back as declarations; the child sheet file is
 not opened. A separate read-only reader reports the symbols a KiCad `.kicad_sym`
 library declares, with their units and pins, and the `kicad_sym` export writes
 the placed components' library symbols as an importable KiCad symbol library. Editing
-covers components, nets (derive, disconnect, delete), design-level buses
+covers components, nets (derive, rename, merge, disconnect, delete), design-level buses
 (declare, list, remove), wires (add, update, split, list, delete), bulk
 translate of selected components and wires, junctions and text (move and delete by index),
 no-connect flags (add, delete, and mark one pin as deliberately open),
@@ -232,6 +232,7 @@ open-eda net connect blinker.oeda --net VCC --nodes R1.1,C1.1
 open-eda net disconnect blinker.oeda --net VCC --nodes C1.1
 open-eda net derive blinker.oeda
 open-eda net rename blinker.oeda --id VCC --name VIN
+open-eda net merge blinker.oeda --target VCC --source VIN
 open-eda net delete blinker.oeda --net VIN
 open-eda wire split blinker.oeda --id wire-1 --x 55 --y 30
 open-eda translate blinker.oeda --dx 10 --dy 0 --refs R1,C1 --wires wire-1

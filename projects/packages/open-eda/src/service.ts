@@ -42,6 +42,8 @@ import type {
     KicadImportResult,
     KicadNetImportResult,
     KicadSymbolImportResult,
+    MergeNetsInput,
+    MergeNetsResult,
     MoveComponentInput,
     Net,
     NetClassInput,
@@ -173,6 +175,9 @@ export interface DeleteNetResult extends EditResult, HistoryFlags {
     readonly deleted: string;
     readonly detached: number;
 }
+
+/** Result of {@link mergeNets}. */
+export interface MergeNetsEditResult extends EditResult, HistoryFlags, MergeNetsResult {}
 
 /** Result of {@link addBus}. */
 export interface BusResult extends EditResult, HistoryFlags {
@@ -667,6 +672,16 @@ export function disconnectNet(handle: number, input: DisconnectNetInput): Discon
 export function deleteNet(handle: number, input: DeleteNetInput): DeleteNetResult {
     return decode<DeleteNetResult>(() =>
         binding('design.deleteNet').design_delete_net(handle, JSON.stringify({ sheet: input.sheet, net: input.net })),
+    );
+}
+
+/** Merges one net into another and repoints the wires that named it. */
+export function mergeNets(handle: number, input: MergeNetsInput): MergeNetsEditResult {
+    return decode<MergeNetsEditResult>(() =>
+        binding('design.mergeNets').design_merge_nets(
+            handle,
+            JSON.stringify({ sheet: input.sheet, target: input.target, source: input.source }),
+        ),
     );
 }
 

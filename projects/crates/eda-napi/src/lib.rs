@@ -24,8 +24,9 @@ use std::{
 use open_eda_model::{
     AddBusRequest, AddComponentRequest, AddJunctionRequest, AddNoConnectRequest, AddTextRequest, AddWireRequest,
     ComponentClassRequest, ConnectNetRequest, CreateRequest, DeleteNetRequest, DisconnectNetRequest, InspectOptions,
-    MoveComponentRequest, NetClassRequest, ReferencePrefixRequest, RenameNetRequest, ServiceError, SetFootprintRequest,
-    SetPinTypeRequest, SplitWireRequest, TranslateRequest, UpdateComponentRequest, UpdateDesignRequest, UpdateWireRequest,
+    MergeNetsRequest, MoveComponentRequest, NetClassRequest, ReferencePrefixRequest, RenameNetRequest, ServiceError,
+    SetFootprintRequest, SetPinTypeRequest, SplitWireRequest, TranslateRequest, UpdateComponentRequest, UpdateDesignRequest,
+    UpdateWireRequest,
 };
 use serde_json::{Value, json};
 use wae::{
@@ -617,6 +618,15 @@ fn design_rename_net(ctx: CallContext) -> Result<JsValue> {
     let handle = handle(&ctx, 0)?;
     let request: RenameNetRequest = decode(serde_json::from_str(&text(&ctx, 1)?))?;
     let report = open_eda_model::rename_net(handle, request).map_err(fail)?;
+    respond(&ctx, &report)
+}
+
+/// Merges one net into another on the same sheet.
+#[function]
+fn design_merge_nets(ctx: CallContext) -> Result<JsValue> {
+    let handle = handle(&ctx, 0)?;
+    let request: MergeNetsRequest = decode(serde_json::from_str(&text(&ctx, 1)?))?;
+    let report = open_eda_model::merge_nets(handle, request).map_err(fail)?;
     respond(&ctx, &report)
 }
 
@@ -1531,6 +1541,7 @@ register_module![
     design_update_component,
     design_set_component_footprint,
     design_rename_net,
+    design_merge_nets,
     design_delete_wire,
     design_derive_nets,
     design_disconnect_net,

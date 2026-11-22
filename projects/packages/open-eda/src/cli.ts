@@ -919,6 +919,46 @@ netCommand
     });
 
 netCommand
+    .command('merge', 'cli.cmd.net-merge')
+    .option('--target <net>', 'cli.opt.target')
+    .option('--source <net>', 'cli.opt.source')
+    .option('--sheet <sheet>', 'cli.opt.sheet')
+    .actionCtx(async (options, _args, ctx) => {
+        const file = input(options);
+        if (file === undefined) {
+            ctx.fail('open-eda.cli.file-required', { message: 'a design document is required' });
+            return 2;
+        }
+        const target = text(options, 'target');
+        const source = text(options, 'source');
+        if (
+            target === undefined ||
+            target.trim().length === 0 ||
+            source === undefined ||
+            source.trim().length === 0
+        ) {
+            ctx.fail('open-eda.cli.arguments-invalid', { message: '`--target` and `--source` are required' });
+            return 2;
+        }
+        const { net: merged, saved } = await withDesign(file, async (design) => {
+            const merged = await design.mergeNets({ sheet: text(options, 'sheet'), target, source });
+            return { net: merged, saved: await savedReport(design) };
+        });
+        ctx.emitResult(
+            {
+                ...saved,
+                revision: saved.revision,
+                net: merged.net,
+                merged: merged.source,
+                movedNodes: merged.movedNodes,
+                repointedWires: merged.repointedWires,
+            },
+            `merged net ${merged.source} into ${merged.net.name} (${merged.movedNodes} nodes, ${merged.repointedWires} wires) in ${file} revision=${saved.revision}`,
+        );
+        return 0;
+    });
+
+netCommand
     .command('derive', 'cli.cmd.net-derive')
     .option('--sheet <sheet>', 'cli.opt.sheet')
     .actionCtx(async (options, _args, ctx) => {

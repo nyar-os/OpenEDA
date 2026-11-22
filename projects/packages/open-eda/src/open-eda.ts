@@ -49,6 +49,8 @@ import type {
     KicadImportResult,
     KicadNetImportResult,
     KicadSymbolImportResult,
+    MergeNetsInput,
+    MergeNetsResult,
     MoveComponentInput,
     Net,
     NetClass,
@@ -550,6 +552,16 @@ function attach(opened: service.DesignHandle, options: AttachOptions): Design {
         async deleteNet(input: DeleteNetInput): Promise<void> {
             const result = await mutate(() => service.deleteNet(handle, input));
             current = result.design;
+        },
+        async mergeNets(input: MergeNetsInput): Promise<MergeNetsResult> {
+            const result = await mutate(() => service.mergeNets(handle, input));
+            current = result.design;
+            return {
+                net: result.net,
+                source: result.source,
+                movedNodes: result.movedNodes,
+                repointedWires: result.repointedWires,
+            };
         },
         async addBus(input: BusInput): Promise<Bus> {
             const result = await mutate(() => service.addBus(handle, input));

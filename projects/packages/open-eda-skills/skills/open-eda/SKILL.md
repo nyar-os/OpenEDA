@@ -21,7 +21,7 @@ per open handle, and the CLI mirrors it in a `<file>.history.json` sidecar so
 add/rename/delete, component move, update and delete, deterministic reference
 annotation, BOM variants with do-not-populate lists, no-connect flags that can
 mark a pin as deliberately open, wire add, update, split, list and delete, bulk
-translate of selected components and wires, net derive, disconnect and
+translate of selected components and wires, net derive, rename, merge, disconnect and
 delete, and junction/text move and delete work in place. Design-level net classes
 declare trace width, clearance and via attributes and assign declared nets and
 buses to them. Reference prefix rules declare the expected designator prefix per
@@ -67,6 +67,7 @@ open-eda net derive <file.oeda> [--sheet <sheet>]
 open-eda net disconnect <file.oeda> --net <name> [--nodes <ref.pin>,<ref.pin>] [--sheet <sheet>]
 open-eda net delete <file.oeda> --net <name> [--sheet <sheet>]
 open-eda net rename <file.oeda> --id <net> --name <new-name> [--sheet <sheet>]
+open-eda net merge <file.oeda> --target <net> --source <net> [--sheet <sheet>]
 open-eda bus add <file.oeda> --name <name> --width <n> [--aliases D,E]
 open-eda bus list <file.oeda>
 open-eda bus remove <file.oeda> --id <bus>

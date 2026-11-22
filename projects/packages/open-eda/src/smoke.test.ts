@@ -271,6 +271,16 @@ test('history, sheets and deep edits stay referentially sound', { skip: withoutA
             design.translate({ references: ['R9'], dx: 1, dy: 0 }),
             (error: unknown) => error instanceof OpenEDAError && error.code === 'object/not-found',
         );
+        const merged = await design.mergeNets({ target: 'VIN', source: 'GND' });
+        assert.equal(merged.net.name, 'VIN');
+        assert.equal(merged.source, 'GND');
+        assert.equal(merged.movedNodes, 2);
+        assert.equal(merged.repointedWires, 0);
+        assert.deepEqual(
+            merged.net.nodes.map((node) => `${node.ref}.${node.pin}`),
+            ['R1.1', 'C1.1', 'R1.2', 'C1.2'],
+        );
+        assert.equal((await design.listNets()).length, 1);
 
         const bus = await design.addBus({ name: 'DATA', width: 4 });
         assert.deepEqual(bus, { id: 'bus-1', name: 'DATA', width: 4 });

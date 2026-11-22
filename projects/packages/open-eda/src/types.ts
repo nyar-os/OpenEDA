@@ -744,6 +744,27 @@ export interface DeleteNetInput {
     readonly net: string;
 }
 
+/** Result of `design.mergeNets()`. */
+export interface MergeNetsResult {
+    /** Net that survived the merge, with the absorbed nodes appended. */
+    readonly net: Net;
+    /** Name of the absorbed net. */
+    readonly source: string;
+    /** Nodes appended to the target; nodes it already reached are not counted. */
+    readonly movedNodes: number;
+    /** Wires repointed from the absorbed name to the target. */
+    readonly repointedWires: number;
+}
+
+/** Input of `design.mergeNets()`; both nets must be on the same sheet. */
+export interface MergeNetsInput {
+    readonly sheet?: SheetId;
+    /** Net that survives the merge, by id or name. */
+    readonly target: string;
+    /** Net absorbed into the target, by id or name. */
+    readonly source: string;
+}
+
 /** Counts returned by `design.deriveNets()`. */
 export interface DeriveNetsResult {
     /** Wire groups that received a net in this call. */
@@ -1195,6 +1216,8 @@ export interface Design {
     disconnectNet(input: DisconnectNetInput): Promise<Net>;
     /** Deletes a net and detaches the wires that named it. */
     deleteNet(input: DeleteNetInput): Promise<void>;
+    /** Merges one net into another, appending its nodes and repointing its wires. */
+    mergeNets(input: MergeNetsInput): Promise<MergeNetsResult>;
     /** Declares a design-level bus; a duplicate name is refused. */
     addBus(input: BusInput): Promise<Bus>;
     /** Removes one declared bus by id or name. */

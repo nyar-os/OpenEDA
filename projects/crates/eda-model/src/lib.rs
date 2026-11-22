@@ -814,6 +814,19 @@ pub struct RenameNetRequest {
     pub name: String,
 }
 
+/// Request of [`merge_nets`].
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MergeNetsRequest {
+    /// Target sheet id or name; the first sheet is used when omitted.
+    #[serde(default)]
+    pub sheet: Option<String>,
+    /// Net that survives the merge, by id or name.
+    pub target: String,
+    /// Net absorbed into the target, by id or name.
+    pub source: String,
+}
+
 /// Request of [`disconnect_net`].
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -2204,6 +2217,68 @@ pub fn rename_net(handle: u64, request: RenameNetRequest) -> Result<Value, Servi
         let mut payload = Map::new();
         payload.insert("net".to_string(), json!(net));
         payload.insert("previousName".to_string(), json!(previous));
+        Ok(payload)
+    })
+}
+
+/// Merges one net into another on the same sheet.
+///
+/// The target keeps its identity, name and nodes. Every node the source reaches
+/// is appended to the target unless it is already there, wires that named the
+/// source are repointed to the target, net-class assignments that listed the
+/// source follow the target, and the source net is removed. Merging a net into
+/// itself is rejected. The payload reports the surviving `net`, the absorbed
+/// `source` name and the counts of `movedNodes` and `repointedWires`.
+pub fn merge_nets(handle: u64, request: MergeNetsRequest) -> Result<Value, ServiceError> {
+    mutate(handle, |design| {
+        let sheet_position = sheet_index(design, request.sheet.as_deref())?;
+        let sheet = &mut design.sheets[sheet_position];
+        let target = sheet
+            .nets
+            .iter()
+            .position(|net| net.id == request.target || net.name == request.target)
+            .ok_or_else(|| not_found(format!("no net `{}` is declared on this sheet", request.target)))?;
+        let source = sheet
+            .nets
+            .iter()
+            .position(|net| net.id == request.source || net.name == request.source)
+            .ok_or_else(|| not_found(format!("no net `{}` is declared on this sheet", request.source)))?;
+        if target == source {
+            return Err(ServiceError::new("session/argument-invalid", "a net cannot be merged into itself"));
+        }
+        let source_name = sheet.nets[source].name.clone();
+        let target_name = sheet.nets[target].name.clone();
+        let source_nodes = sheet.nets[source].nodes.clone();
+        let mut moved_nodes = 0usize;
+        for node in source_nodes {
+            if !sheet.nets[target].nodes.contains(&node) {
+                sheet.nets[target].nodes.push(node);
+                moved_nodes += 1;
+            }
+        }
+        let mut repointed_wires = 0usize;
+        if source_name != target_name {
+            for wire in &mut sheet.wires {
+                if wire.net.as_deref() == Some(source_name.as_str()) {
+                    wire.net = Some(target_name.clone());
+                    repointed_wires += 1;
+                }
+            }
+        }
+        let merged = sheet.nets[target].clone();
+        sheet.nets.remove(source);
+        for net_class in &mut design.rules.net_classes {
+            if net_class.nets.iter().any(|name| name == &source_name) {
+                net_class.nets.retain(|name| name != &source_name && name != &target_name);
+                net_class.nets.push(target_name.clone());
+            }
+        }
+        design.revision += 1;
+        let mut payload = Map::new();
+        payload.insert("net".to_string(), json!(merged));
+        payload.insert("source".to_string(), json!(source_name));
+        payload.insert("movedNodes".to_string(), json!(moved_nodes));
+        payload.insert("repointedWires".to_string(), json!(repointed_wires));
         Ok(payload)
     })
 }
@@ -8327,6 +8402,74 @@ mod tests {
         let listing = list(handle).expect("list");
         assert_eq!(listing["nets"].as_array().expect("nets").len(), 0);
         assert_eq!(listing["wires"][0]["net"], Value::Null);
+        close(handle).expect("close");
+    }
+
+    #[test]
+    fn merge_nets_absorbs_nodes_wires_and_class_assignments() {
+        let created = create(CreateRequest::default()).expect("create");
+        let handle = created["handle"].as_u64().expect("handle");
+        for reference in ["R1", "C1"] {
+            add_component(
+                handle,
+                AddComponentRequest {
+                    sheet: None,
+                    reference: reference.to_string(),
+                    value: "10k".to_string(),
+                    x: 0.0,
+                    y: 0.0,
+                    rotation: 0.0,
+                    pins: vec!["1".to_string(), "2".to_string()],
+                },
+            )
+            .expect("add component");
+        }
+        connect_net(handle, ConnectNetRequest { sheet: None, net: "VCC".to_string(), nodes: vec!["R1.1".to_string()] })
+            .expect("VCC");
+        connect_net(
+            handle,
+            ConnectNetRequest { sheet: None, net: "VIN".to_string(), nodes: vec!["C1.1".to_string(), "R1.1".to_string()] },
+        )
+        .expect("VIN");
+        wire(handle, Some("VIN"), [0.0, 0.0], [10.0, 0.0]);
+        add_net_class(
+            handle,
+            NetClassRequest {
+                name: "Power".to_string(),
+                width: 0.5,
+                clearance: 0.0,
+                via: 0.0,
+                nets: vec!["VIN".to_string()],
+                buses: Vec::new(),
+            },
+        )
+        .expect("add net class");
+
+        let merged = merge_nets(handle, MergeNetsRequest { sheet: None, target: "VCC".to_string(), source: "VIN".to_string() })
+            .expect("merge");
+        assert_eq!(merged["net"]["id"], "net-1");
+        assert_eq!(merged["net"]["name"], "VCC");
+        assert_eq!(merged["source"], "VIN");
+        assert_eq!(merged["movedNodes"], 1);
+        assert_eq!(merged["repointedWires"], 1);
+
+        let nets = list_nets(handle, None).expect("list nets");
+        assert_eq!(nets["nets"].as_array().expect("nets").len(), 1);
+        let nodes: Vec<&str> =
+            nets["nets"][0]["nodes"].as_array().expect("nodes").iter().filter_map(|node| node["ref"].as_str()).collect();
+        assert_eq!(nodes, ["R1", "C1"]);
+        let listed = list_wires(handle, None).expect("list wires");
+        assert_eq!(listed["wires"][0]["net"], "VCC");
+        let classes = list_net_classes(handle).expect("list classes");
+        assert_eq!(classes["netClasses"][0]["nets"], json!(["VCC"]));
+
+        let itself = merge_nets(handle, MergeNetsRequest { sheet: None, target: "VCC".to_string(), source: "VCC".to_string() })
+            .expect_err("same net");
+        assert_eq!(itself.code, "session/argument-invalid");
+        let missing =
+            merge_nets(handle, MergeNetsRequest { sheet: None, target: "VCC".to_string(), source: "GND".to_string() })
+                .expect_err("unknown source");
+        assert_eq!(missing.code, "object/not-found");
         close(handle).expect("close");
     }
 
