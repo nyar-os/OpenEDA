@@ -230,6 +230,7 @@ mod tests {
             junctions,
             no_connects: Vec::new(),
             texts: Vec::new(),
+            labels: Vec::new(),
         }
     }
 

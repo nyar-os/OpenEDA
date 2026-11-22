@@ -25,6 +25,8 @@ import type {
     DesignObjects,
     DesignSummary,
     ExportReport,
+    LabelJustify,
+    LabelScope,
     ExportTarget,
     InspectCheck,
     InspectOptions,
@@ -2052,6 +2054,175 @@ textCommand
         ctx.emitResult(
             { ...saved, revision: saved.revision, text: annotation },
             `moved text ${index} to (${x}, ${y}) in ${file} revision=${saved.revision}`,
+        );
+        return 0;
+    });
+
+const labelCommand = cli.command('label', 'cli.cmd.label');
+labelCommand
+    .command('add', 'cli.cmd.label-add')
+    .option('--text <text>', 'cli.opt.text')
+    .option('--x <number>', 'cli.opt.x')
+    .option('--y <number>', 'cli.opt.y')
+    .option('--scope <scope>', 'cli.opt.scope')
+    .option('--rotation <number>', 'cli.opt.rotation')
+    .option('--justify <justify>', 'cli.opt.justify')
+    .option('--sheet <sheet>', 'cli.opt.sheet')
+    .actionCtx(async (options, _args, ctx) => {
+        const file = input(options);
+        if (file === undefined) {
+            ctx.fail('open-eda.cli.file-required', { message: 'a design document is required' });
+            return 2;
+        }
+        const content = text(options, 'text');
+        const x = number(options, 'x');
+        const y = number(options, 'y');
+        const scope = text(options, 'scope');
+        const rotation = number(options, 'rotation');
+        const justify = text(options, 'justify');
+        if (
+            content === undefined ||
+            content.trim().length === 0 ||
+            x === undefined ||
+            Number.isNaN(x) ||
+            y === undefined ||
+            Number.isNaN(y) ||
+            (scope !== undefined && !['local', 'global', 'hierarchical'].includes(scope)) ||
+            (rotation !== undefined && Number.isNaN(rotation)) ||
+            (justify !== undefined && !['left', 'right', 'center'].includes(justify))
+        ) {
+            ctx.fail('open-eda.cli.arguments-invalid', {
+                message:
+                    '`--text`, `--x` and `--y` are required; `--scope` must be local, global or hierarchical and `--justify` left, right or center',
+            });
+            return 2;
+        }
+        const { label, saved } = await withDesign(file, async (design) => {
+            const label = await design.addLabel({
+                sheet: text(options, 'sheet'),
+                text: content,
+                x,
+                y,
+                scope: scope as LabelScope | undefined,
+                rotation,
+                justify: justify as LabelJustify | undefined,
+            });
+            return { label, saved: await savedReport(design) };
+        });
+        ctx.emitResult(
+            { ...saved, revision: saved.revision, label },
+            `added label ${label.id} "${label.text}" scope=${label.scope} at (${label.x}, ${label.y}) in ${file} revision=${saved.revision}`,
+        );
+        return 0;
+    });
+
+labelCommand
+    .command('list', 'cli.cmd.label-list')
+    .option('--sheet <sheet>', 'cli.opt.sheet')
+    .actionCtx(async (options, _args, ctx) => {
+        const file = input(options);
+        if (file === undefined) {
+            ctx.fail('open-eda.cli.file-required', { message: 'a design document is required' });
+            return 2;
+        }
+        const report = await withDesign(file, async (design) => {
+            const sheet = text(options, 'sheet');
+            return design.listLabels(sheet === undefined ? undefined : { sheet });
+        });
+        const lines = [`labels sheet=${report.sheetId} revision=${report.revision} count=${report.labels.length}`];
+        for (const label of report.labels) {
+            lines.push(`  ${label.id} "${label.text}" scope=${label.scope} at (${label.x}, ${label.y})`);
+        }
+        ctx.emitResult(report, lines.join('\n'));
+        return 0;
+    });
+
+labelCommand
+    .command('update', 'cli.cmd.label-update')
+    .option('--id <label>', 'cli.opt.label-id')
+    .option('--text <text>', 'cli.opt.text')
+    .option('--x <number>', 'cli.opt.x')
+    .option('--y <number>', 'cli.opt.y')
+    .option('--scope <scope>', 'cli.opt.scope')
+    .option('--rotation <number>', 'cli.opt.rotation')
+    .option('--justify <justify>', 'cli.opt.justify')
+    .option('--sheet <sheet>', 'cli.opt.sheet')
+    .actionCtx(async (options, _args, ctx) => {
+        const file = input(options);
+        if (file === undefined) {
+            ctx.fail('open-eda.cli.file-required', { message: 'a design document is required' });
+            return 2;
+        }
+        const id = text(options, 'id');
+        const content = text(options, 'text');
+        const x = number(options, 'x');
+        const y = number(options, 'y');
+        const scope = text(options, 'scope');
+        const rotation = number(options, 'rotation');
+        const justify = text(options, 'justify');
+        if (
+            id === undefined ||
+            id.trim().length === 0 ||
+            (content === undefined &&
+                x === undefined &&
+                y === undefined &&
+                scope === undefined &&
+                rotation === undefined &&
+                justify === undefined) ||
+            (x !== undefined && Number.isNaN(x)) ||
+            (y !== undefined && Number.isNaN(y)) ||
+            (scope !== undefined && !['local', 'global', 'hierarchical'].includes(scope)) ||
+            (rotation !== undefined && Number.isNaN(rotation)) ||
+            (justify !== undefined && !['left', 'right', 'center'].includes(justify))
+        ) {
+            ctx.fail('open-eda.cli.arguments-invalid', {
+                message:
+                    '`--id` is required and at least one of `--text`, `--x`, `--y`, `--scope`, `--rotation` or `--justify` must be given',
+            });
+            return 2;
+        }
+        const result = await withDesign(file, async (design) => {
+            const updated = await design.updateLabel({
+                sheet: text(options, 'sheet'),
+                id,
+                text: content,
+                x,
+                y,
+                scope: scope as LabelScope | undefined,
+                rotation,
+                justify: justify as LabelJustify | undefined,
+            });
+            return { updated, saved: await savedReport(design) };
+        });
+        ctx.emitResult(
+            { ...result.saved, revision: result.saved.revision, label: result.updated.label },
+            `updated label ${result.updated.label.id} in ${file} revision=${result.saved.revision}`,
+        );
+        return 0;
+    });
+
+labelCommand
+    .command('delete', 'cli.cmd.label-delete')
+    .option('--id <label>', 'cli.opt.label-id')
+    .option('--sheet <sheet>', 'cli.opt.sheet')
+    .actionCtx(async (options, _args, ctx) => {
+        const file = input(options);
+        if (file === undefined) {
+            ctx.fail('open-eda.cli.file-required', { message: 'a design document is required' });
+            return 2;
+        }
+        const id = text(options, 'id');
+        if (id === undefined || id.trim().length === 0) {
+            ctx.fail('open-eda.cli.arguments-invalid', { message: '`--id` is required' });
+            return 2;
+        }
+        const saved = await withDesign(file, async (design) => {
+            await design.removeLabel(id, { sheet: text(options, 'sheet') });
+            return savedReport(design);
+        });
+        ctx.emitResult(
+            { ...saved, revision: saved.revision, deleted: id },
+            `deleted label ${id} from ${file} revision=${saved.revision}`,
         );
         return 0;
     });

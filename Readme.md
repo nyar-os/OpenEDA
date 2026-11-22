@@ -65,10 +65,11 @@ each occurrence adds a `{"code": "kicad/unsupported-element", "detail": "..."}`
 entry to the import losses. The title-block `title`, `date`, `rev` and
 `company` fields are part of the subset; other title-block fields, such as
 numbered comments, add a loss entry. Pin electrical roles are read from the
-library symbols; an unknown type adds a loss entry and leaves that pin untyped. Global and hierarchical labels are
-imported as sheet-local net labels and each occurrence adds a
+library symbols; an unknown type adds a loss entry and leaves that pin untyped. Global and hierarchical labels keep
+their scope on a native net label (the label carries `global` or `hierarchical`),
+and the net they name still stays sheet-local; each occurrence therefore also adds a
 `{"code": "kicad/label-scope", "detail": "..."}` entry, because the document
-does not model cross-sheet label scope. Junctions, no-connect flags and text
+does not merge nets across sheets. Junctions, no-connect flags and text
 annotations are part of the subset and round-trip without a loss entry. A
 hierarchical sheet symbol keeps its name, child file, placement, size and ports
 (`input`, `output`, `bidirectional`, `tri_state` or `passive`); the model stores
@@ -365,12 +366,14 @@ entry. It never writes a file.
 The JSON writer emits a deterministic, read-only document projection tagged
 `open-eda-projection` with the design header (id, title, revision, rev,
 company, date and units) and, per sheet, its components (including typed pins),
-nets, wires, junctions, no-connect flags and text annotations, plus the
+nets, wires, junctions, no-connect flags, text annotations and net labels with
+their scope, plus the
 `hierarchy` list of sheet symbols and ports; internal allocation counters are
 not part of it.
 The KiCad writer emits a KiCad 6/7 S-expression with a `lib_symbols` section,
 one symbol per component, one `wire` per segment, one `junction` per connection
-dot, one `text` per annotation, one `label` per net, one `sheet` symbol with its
+dot, one `text` per annotation, one `label`/`global_label`/`hierarchical_label`
+per net label (and one `label` per net that no label already names), one `sheet` symbol with its
 properties and `pin` ports per hierarchical sheet, and a `title_block` when a
 drawing property is set. Library pins carry their native electrical role
 (`passive` when untyped);
@@ -419,8 +422,10 @@ served by the desktop window and talks to the same operations over JSON-RPC.
   declarations; it never creates, opens or rewrites the child sheet file,
   and it does not check that a port matches a hierarchical label in that child.
   Bus wires, arcs and the contents of a child sheet file are reported as import losses instead of being reconstructed; global
-  and hierarchical labels are flattened to sheet-local nets and reported as
-  `kicad/label-scope`.
+  and hierarchical labels keep their scope as label objects, but their nets stay
+  sheet-local and each occurrence is reported as `kicad/label-scope`.
+- Net labels are annotations. It never derives, renames or merges a net from a
+  label, and a global or hierarchical label does not connect nets across sheets.
 - It models buses as design-level name, width and alias declarations. It does not
   draw bus wires or infer bus membership from schematic geometry.
 - It does not draw an interactive schematic or board, route, or check clearance.

@@ -315,7 +315,7 @@ export interface ConnectivityNet {
     readonly dangling: boolean;
 }
 
-/** Wire-group and junction totals of one sheet. */
+/** Wire-group, junction and label totals of one sheet. */
 export interface ConnectivitySheetCounts {
     readonly wires: {
         readonly segments: number;
@@ -324,6 +324,12 @@ export interface ConnectivitySheetCounts {
         readonly conflicts: number;
     };
     readonly junctions: { readonly total: number; readonly floating: number };
+    readonly labels: {
+        readonly total: number;
+        readonly local: number;
+        readonly global: number;
+        readonly hierarchical: number;
+    };
 }
 
 /** One pin no net reaches. */
@@ -357,6 +363,8 @@ export interface ConnectivityReport {
         readonly unassignedWireGroups: number;
         readonly conflictingWireGroups: number;
         readonly floatingJunctions: number;
+        /** Net labels across the design. */
+        readonly labels: number;
     };
 }
 
@@ -379,6 +387,84 @@ export interface TextLabel {
     readonly text: string;
     readonly x: number;
     readonly y: number;
+}
+
+/** Cross-sheet scope of a net label. */
+export type LabelScope = 'local' | 'global' | 'hierarchical';
+
+/** Horizontal justification of a net label. */
+export type LabelJustify = 'left' | 'right' | 'center';
+
+/**
+ * One net label placed on a sheet.
+ *
+ * A label is an annotation, not a net: it announces a net name at a point
+ * without creating, renaming or merging the declared nets on the sheet.
+ */
+export interface NetLabel {
+    readonly id: ObjectId;
+    readonly text: string;
+    readonly x: number;
+    readonly y: number;
+    readonly scope: LabelScope;
+    readonly rotation: number;
+    readonly justify: LabelJustify;
+}
+
+/** Input of `design.addLabel()`. */
+export interface LabelInput {
+    readonly sheet?: SheetId;
+    readonly text: string;
+    readonly x: number;
+    readonly y: number;
+    /** Cross-sheet scope; `local` when omitted. */
+    readonly scope?: LabelScope;
+    readonly rotation?: number;
+    readonly justify?: LabelJustify;
+}
+
+/**
+ * Input of `design.updateLabel()`.
+ *
+ * At least one of `text`, `x`, `y`, `scope`, `rotation` or `justify` must be
+ * present; omitted fields keep their current value.
+ */
+export interface LabelUpdateInput {
+    readonly sheet?: SheetId;
+    readonly id: ObjectId;
+    readonly text?: string;
+    readonly x?: number;
+    readonly y?: number;
+    readonly scope?: LabelScope;
+    readonly rotation?: number;
+    readonly justify?: LabelJustify;
+}
+
+/** Result of `design.listLabels()`. */
+export interface LabelListResult {
+    readonly revision: number;
+    readonly sheetId: SheetId;
+    /** Net labels in document order. */
+    readonly labels: readonly NetLabel[];
+}
+
+/** Result of `design.updateLabel()`. */
+export interface LabelUpdateResult {
+    readonly revision: number;
+    readonly design: DesignSummary;
+    readonly canUndo: boolean;
+    readonly canRedo: boolean;
+    readonly label: NetLabel;
+}
+
+/** Result of `design.removeLabel()`. */
+export interface LabelDeleteResult {
+    readonly revision: number;
+    readonly design: DesignSummary;
+    readonly canUndo: boolean;
+    readonly canRedo: boolean;
+    readonly label: NetLabel;
+    readonly remaining: number;
 }
 
 /** Input of `design.addBus()`. */
@@ -1232,6 +1318,8 @@ export interface Sheet {
     readonly junctions: readonly Junction[];
     readonly no_connects: readonly NoConnect[];
     readonly texts: readonly TextLabel[];
+    /** Net labels; absent in documents written before labels existed. */
+    readonly labels?: readonly NetLabel[];
 }
 
 /** Input of `OpenEDA.diff()`. */

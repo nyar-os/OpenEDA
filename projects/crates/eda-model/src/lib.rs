@@ -453,6 +453,54 @@ pub struct TextLabel {
     pub y: f64,
 }
 
+/// Cross-sheet scope of one net label.
+///
+/// The names match the KiCad label nodes (`label`, `global_label`,
+/// `hierarchical_label`). The model stores the scope as a label attribute; it
+/// does not merge nets across sheets, so a global label still names a net on the
+/// sheet that carries it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LabelScope {
+    /// Ordinary sheet-local net label.
+    Local,
+    /// Label intended to name a net across the whole design.
+    Global,
+    /// Label intended to cross a hierarchical sheet boundary.
+    Hierarchical,
+}
+
+/// One net label placed on a schematic sheet.
+///
+/// A label is an annotation, not a net: its text is an independent statement of
+/// the intended net name at that point. The model keeps it separate from the
+/// declared [`Net`] list so a designer can label a wire before deriving or
+/// renaming the net, and so import never silently rewrites a label into a net.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct NetLabel {
+    /// Stable object identity, for example `label-1`.
+    pub id: String,
+    /// Label text, the net name it announces.
+    pub text: String,
+    /// Placement X coordinate in design units.
+    pub x: f64,
+    /// Placement Y coordinate in design units.
+    pub y: f64,
+    /// Cross-sheet scope of the label.
+    pub scope: LabelScope,
+    /// Rotation in degrees; absent when the label is horizontal.
+    #[serde(default)]
+    pub rotation: f64,
+    /// Horizontal justification, one of `left`, `right` or `center`.
+    #[serde(default = "default_justify")]
+    pub justify: String,
+}
+
+/// Default horizontal justification of a net label.
+fn default_justify() -> String {
+    "left".to_string()
+}
+
 /// Electrical direction of one hierarchical sheet port.
 ///
 /// The names match the KiCad sheet-pin vocabulary, so the same text is written
@@ -534,6 +582,9 @@ pub struct Sheet {
     /// Free text annotations drawn on this sheet; absent in older documents.
     #[serde(default)]
     pub texts: Vec<TextLabel>,
+    /// Net labels drawn on this sheet; absent in older documents.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub labels: Vec<NetLabel>,
 }
 
 /// Native design document model.
@@ -754,6 +805,62 @@ pub struct UpdateTextRequest {
     /// New placement Y coordinate; the current value is kept when omitted.
     #[serde(default)]
     pub y: Option<f64>,
+}
+
+/// Request of [`add_label`].
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AddLabelRequest {
+    /// Target sheet id or name; the first sheet is used when omitted.
+    #[serde(default)]
+    pub sheet: Option<String>,
+    /// Label text, the net name the label announces.
+    pub text: String,
+    /// Placement X coordinate.
+    pub x: f64,
+    /// Placement Y coordinate.
+    pub y: f64,
+    /// Cross-sheet scope; `local` when omitted.
+    #[serde(default)]
+    pub scope: Option<LabelScope>,
+    /// Rotation in degrees; zero when omitted.
+    #[serde(default)]
+    pub rotation: Option<f64>,
+    /// Horizontal justification, one of `left`, `right` or `center`; `left` when omitted.
+    #[serde(default)]
+    pub justify: Option<String>,
+}
+
+/// Request of [`update_label`].
+///
+/// Every field except the label identity is optional, so a request carries only
+/// what it changes. A request that changes nothing is rejected.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateLabelRequest {
+    /// Target sheet id or name; the first sheet is used when omitted.
+    #[serde(default)]
+    pub sheet: Option<String>,
+    /// Stable label identity, for example `label-1`.
+    pub id: String,
+    /// New label text; trimmed for the empty check and stored verbatim.
+    #[serde(default)]
+    pub text: Option<String>,
+    /// New placement X coordinate; the current value is kept when omitted.
+    #[serde(default)]
+    pub x: Option<f64>,
+    /// New placement Y coordinate; the current value is kept when omitted.
+    #[serde(default)]
+    pub y: Option<f64>,
+    /// New cross-sheet scope; the current value is kept when omitted.
+    #[serde(default)]
+    pub scope: Option<LabelScope>,
+    /// New rotation in degrees; the current value is kept when omitted.
+    #[serde(default)]
+    pub rotation: Option<f64>,
+    /// New horizontal justification; the current value is kept when omitted.
+    #[serde(default)]
+    pub justify: Option<String>,
 }
 
 /// Request of [`add_no_connect`].
@@ -1301,6 +1408,7 @@ pub fn create(request: CreateRequest) -> Result<Value, ServiceError> {
             junctions: Vec::new(),
             no_connects: Vec::new(),
             texts: Vec::new(),
+            labels: Vec::new(),
         }],
         buses: Vec::new(),
         variants: Vec::new(),
@@ -2928,6 +3036,234 @@ pub fn update_text(handle: u64, request: UpdateTextRequest) -> Result<Value, Ser
     })
 }
 
+/// Adds one net label to a sheet.
+///
+/// The label text is trimmed for the empty check and stored verbatim. Scope
+/// defaults to `local`, rotation to zero and justification to `left`. A label
+/// is an annotation: adding it never creates, renames or merges a net.
+pub fn add_label(handle: u64, request: AddLabelRequest) -> Result<Value, ServiceError> {
+    if request.text.trim().is_empty() {
+        return Err(ServiceError::new("session/argument-invalid", "a net label must not be empty"));
+    }
+    if !request.x.is_finite() || !request.y.is_finite() {
+        return Err(ServiceError::new("session/argument-invalid", "label coordinates must be finite numbers"));
+    }
+    let rotation = request.rotation.unwrap_or(0.0);
+    if !rotation.is_finite() {
+        return Err(ServiceError::new("session/argument-invalid", "label rotation must be a finite number"));
+    }
+    let justify = request.justify.unwrap_or_else(default_justify);
+    if !valid_justify(&justify) {
+        return Err(ServiceError::new("session/argument-invalid", "label justification must be left, right or center"));
+    }
+    mutate(handle, |design| {
+        let index = sheet_index(design, request.sheet.as_deref())?;
+        let id = free_label_id(design);
+        let label = NetLabel {
+            id,
+            text: request.text,
+            x: request.x,
+            y: request.y,
+            scope: request.scope.unwrap_or(LabelScope::Local),
+            rotation,
+            justify,
+        };
+        design.sheets[index].labels.push(label.clone());
+        design.revision += 1;
+        let mut payload = Map::new();
+        payload.insert("label".to_string(), json!(label));
+        Ok(payload)
+    })
+}
+
+/// Lists the net labels of one sheet in document order.
+pub fn list_labels(handle: u64, sheet: Option<&str>) -> Result<Value, ServiceError> {
+    with_session(handle, |session| {
+        let design = &session.design;
+        let index = sheet_index(design, sheet)?;
+        let target = &design.sheets[index];
+        Ok(json!({
+            "revision": design.revision,
+            "sheetId": target.id,
+            "labels": target.labels,
+        }))
+    })
+}
+
+/// Updates the text, placement, scope or style of one net label.
+///
+/// A request carries only what it changes and needs at least one field besides
+/// the identity. A text is trimmed for the empty check and stored verbatim, and
+/// a justification must be `left`, `right` or `center`.
+pub fn update_label(handle: u64, request: UpdateLabelRequest) -> Result<Value, ServiceError> {
+    if let Some(text) = &request.text
+        && text.trim().is_empty()
+    {
+        return Err(ServiceError::new("session/argument-invalid", "a net label must not be empty"));
+    }
+    for coordinate in request.x.iter().chain(request.y.iter()).chain(request.rotation.iter()) {
+        if !coordinate.is_finite() {
+            return Err(ServiceError::new("session/argument-invalid", "label coordinates must be finite numbers"));
+        }
+    }
+    if let Some(justify) = &request.justify
+        && !valid_justify(justify)
+    {
+        return Err(ServiceError::new("session/argument-invalid", "label justification must be left, right or center"));
+    }
+    if request.text.is_none()
+        && request.x.is_none()
+        && request.y.is_none()
+        && request.scope.is_none()
+        && request.rotation.is_none()
+        && request.justify.is_none()
+    {
+        return Err(ServiceError::new(
+            "session/argument-invalid",
+            "a label update needs `text`, `x`, `y`, `scope`, `rotation` or `justify`",
+        ));
+    }
+    mutate(handle, |design| {
+        let sheet_position = sheet_index(design, request.sheet.as_deref())?;
+        let target = &mut design.sheets[sheet_position];
+        let Some(label) = target.labels.iter_mut().find(|label| label.id == request.id)
+        else {
+            return Err(not_found(format!("no label `{}` exists on this sheet", request.id)));
+        };
+        if let Some(text) = request.text {
+            label.text = text;
+        }
+        if let Some(x) = request.x {
+            label.x = x;
+        }
+        if let Some(y) = request.y {
+            label.y = y;
+        }
+        if let Some(scope) = request.scope {
+            label.scope = scope;
+        }
+        if let Some(rotation) = request.rotation {
+            label.rotation = rotation;
+        }
+        if let Some(justify) = request.justify {
+            label.justify = justify;
+        }
+        let updated = label.clone();
+        design.revision += 1;
+        let mut payload = Map::new();
+        payload.insert("label".to_string(), json!(updated));
+        Ok(payload)
+    })
+}
+
+/// Deletes one net label by identity.
+pub fn delete_label(handle: u64, id: &str, sheet: Option<&str>) -> Result<Value, ServiceError> {
+    mutate(handle, |design| {
+        let sheet_position = sheet_index(design, sheet)?;
+        let target = &mut design.sheets[sheet_position];
+        let Some(position) = target.labels.iter().position(|label| label.id == id)
+        else {
+            return Err(not_found(format!("no label `{id}` exists on this sheet")));
+        };
+        let removed = target.labels.remove(position);
+        let remaining = target.labels.len();
+        design.revision += 1;
+        let mut payload = Map::new();
+        payload.insert("label".to_string(), json!(removed));
+        payload.insert("remaining".to_string(), json!(remaining));
+        Ok(payload)
+    })
+}
+
+/// Lists the junctions of one sheet in document order.
+pub fn list_junctions(handle: u64, sheet: Option<&str>) -> Result<Value, ServiceError> {
+    with_session(handle, |session| {
+        let design = &session.design;
+        let index = sheet_index(design, sheet)?;
+        let target = &design.sheets[index];
+        let junctions = target
+            .junctions
+            .iter()
+            .enumerate()
+            .map(|(position, junction)| json!({ "index": position, "x": junction.x, "y": junction.y }))
+            .collect::<Vec<_>>();
+        Ok(json!({
+            "revision": design.revision,
+            "sheetId": target.id,
+            "junctions": junctions,
+        }))
+    })
+}
+
+/// Lists the no-connect flags of one sheet in document order.
+pub fn list_no_connects(handle: u64, sheet: Option<&str>) -> Result<Value, ServiceError> {
+    with_session(handle, |session| {
+        let design = &session.design;
+        let index = sheet_index(design, sheet)?;
+        let target = &design.sheets[index];
+        let flags = target
+            .no_connects
+            .iter()
+            .enumerate()
+            .map(|(position, flag)| {
+                let mut entry = Map::new();
+                entry.insert("index".to_string(), json!(position));
+                entry.insert("x".to_string(), json!(flag.x));
+                entry.insert("y".to_string(), json!(flag.y));
+                if let Some(node) = &flag.node {
+                    entry.insert("node".to_string(), json!(node));
+                }
+                Value::Object(entry)
+            })
+            .collect::<Vec<_>>();
+        Ok(json!({
+            "revision": design.revision,
+            "sheetId": target.id,
+            "noConnects": flags,
+        }))
+    })
+}
+
+/// Lists every sheet with its identity, name and object counts.
+pub fn list_sheets(handle: u64) -> Result<Value, ServiceError> {
+    with_session(handle, |session| {
+        let design = &session.design;
+        let report = stats_of(design);
+        Ok(json!({
+            "revision": design.revision,
+            "sheets": report["sheets"].clone(),
+        }))
+    })
+}
+
+/// Whether a label justification is one of the supported horizontal values.
+fn valid_justify(justify: &str) -> bool {
+    matches!(justify, "left" | "right" | "center")
+}
+
+/// Stable spelling of one label scope, used by reports and writers.
+pub(crate) fn label_scope_name(scope: LabelScope) -> &'static str {
+    match scope {
+        LabelScope::Local => "local",
+        LabelScope::Global => "global",
+        LabelScope::Hierarchical => "hierarchical",
+    }
+}
+
+/// Picks a free `label-N` identity across every sheet of one design.
+fn free_label_id(design: &Design) -> String {
+    let used: HashSet<&str> =
+        design.sheets.iter().flat_map(|sheet| sheet.labels.iter().map(|label| label.id.as_str())).collect();
+    let mut counter = used.len() + 1;
+    loop {
+        let candidate = format!("label-{counter}");
+        if !used.contains(candidate.as_str()) {
+            return candidate;
+        }
+        counter += 1;
+    }
+}
+
 /// Adds one wire segment to a sheet.
 pub fn add_wire(handle: u64, request: AddWireRequest) -> Result<Value, ServiceError> {
     if !request.from.iter().chain(request.to.iter()).all(|value| value.is_finite()) {
@@ -3332,6 +3668,7 @@ pub fn add_sheet(handle: u64, name: Option<&str>) -> Result<Value, ServiceError>
             junctions: Vec::new(),
             no_connects: Vec::new(),
             texts: Vec::new(),
+            labels: Vec::new(),
         };
         design.sheets.push(sheet.clone());
         design.revision += 1;
@@ -3906,6 +4243,7 @@ fn validate_design(design: &Design) -> Result<(), ServiceError> {
     let mut references = HashSet::new();
     let mut bus_ids = HashSet::new();
     let mut bus_names = HashSet::new();
+    let mut label_ids = HashSet::new();
     for bus in &design.buses {
         if !bus_ids.insert(bus.id.clone()) {
             return Err(invalid(format!("bus id `{}` appears more than once", bus.id)));
@@ -4171,6 +4509,20 @@ fn validate_design(design: &Design) -> Result<(), ServiceError> {
         for text in &sheet.texts {
             if !text.x.is_finite() || !text.y.is_finite() {
                 return Err(invalid(format!("sheet `{}` has a text with a non-finite coordinate", sheet.id)));
+            }
+        }
+        for label in &sheet.labels {
+            if !label_ids.insert(label.id.clone()) {
+                return Err(invalid(format!("label id `{}` appears more than once", label.id)));
+            }
+            if label.text.trim().is_empty() {
+                return Err(invalid(format!("label `{}` has empty text", label.id)));
+            }
+            if !label.x.is_finite() || !label.y.is_finite() || !label.rotation.is_finite() {
+                return Err(invalid(format!("label `{}` has a non-finite coordinate", label.id)));
+            }
+            if !valid_justify(&label.justify) {
+                return Err(invalid(format!("label `{}` has justification `{}`", label.id, label.justify)));
             }
         }
     }
@@ -4934,6 +5286,7 @@ fn connectivity_report_of(design: &Design) -> Value {
     let mut unassigned_total = 0usize;
     let mut conflict_total = 0usize;
     let mut floating_junction_total = 0usize;
+    let mut label_total = 0usize;
 
     let sheets = design
         .sheets
@@ -5000,6 +5353,11 @@ fn connectivity_report_of(design: &Design) -> Value {
             conflict_total += conflicts;
             floating_junction_total += floating_junctions;
 
+            let local_labels = sheet.labels.iter().filter(|label| label.scope == LabelScope::Local).count();
+            let global_labels = sheet.labels.iter().filter(|label| label.scope == LabelScope::Global).count();
+            let hierarchical_labels = sheet.labels.iter().filter(|label| label.scope == LabelScope::Hierarchical).count();
+            label_total += sheet.labels.len();
+
             json!({
                 "id": sheet.id,
                 "name": sheet.name,
@@ -5012,6 +5370,12 @@ fn connectivity_report_of(design: &Design) -> Value {
                 },
                 "junctions": { "total": sheet.junctions.len(), "floating": floating_junctions },
                 "noConnects": sheet.no_connects.len(),
+                "labels": {
+                    "total": sheet.labels.len(),
+                    "local": local_labels,
+                    "global": global_labels,
+                    "hierarchical": hierarchical_labels,
+                },
                 "unconnectedPins": unconnected,
             })
         })
@@ -5766,17 +6130,18 @@ fn render_report(design: &Design) -> (String, usize, usize) {
     text.push_str(&format!("- Sheets: {}\n\n", design.sheets.len()));
 
     sections += 1;
-    text.push_str("## Objects\n\n| Sheet | Components | Nets | Wires | Junctions | Texts |\n");
-    text.push_str("| --- | --- | --- | --- | --- | --- |\n");
+    text.push_str("## Objects\n\n| Sheet | Components | Nets | Wires | Junctions | Labels | Texts |\n");
+    text.push_str("| --- | --- | --- | --- | --- | --- | --- |\n");
     for sheet in &design.sheets {
         text.push_str(&format!(
-            "| {} (`{}`) | {} | {} | {} | {} | {} |\n",
+            "| {} (`{}`) | {} | {} | {} | {} | {} | {} |\n",
             markdown_cell(&sheet.name),
             sheet.id,
             sheet.components.len(),
             sheet.nets.len(),
             sheet.wires.len(),
             sheet.junctions.len(),
+            sheet.labels.len(),
             sheet.texts.len()
         ));
     }
@@ -5838,6 +6203,29 @@ fn render_report(design: &Design) -> (String, usize, usize) {
         }
     }
     text.push('\n');
+
+    if design.sheets.iter().any(|sheet| !sheet.labels.is_empty()) {
+        sections += 1;
+        text.push_str("## Labels\n");
+        for sheet in &design.sheets {
+            if sheet.labels.is_empty() {
+                continue;
+            }
+            sections += 1;
+            text.push_str(&format!("\n### {} (`{}`)\n\n", markdown_cell(&sheet.name), sheet.id));
+            text.push_str("| Label | Scope | Placement |\n| --- | --- | --- |\n");
+            for label in &sheet.labels {
+                text.push_str(&format!(
+                    "| {} | {} | ({}, {}) |\n",
+                    markdown_cell(&label.text),
+                    label_scope_name(label.scope),
+                    format_number(label.x),
+                    format_number(label.y)
+                ));
+            }
+        }
+        text.push('\n');
+    }
 
     sections += 1;
     text.push_str("## Inspection\n");
@@ -5934,6 +6322,19 @@ fn render_json_projection(design: &Design) -> Result<String, ServiceError> {
                     .texts
                     .iter()
                     .map(|text| json!({ "text": text.text, "x": text.x, "y": text.y }))
+                    .collect::<Vec<_>>(),
+                "labels": sheet
+                    .labels
+                    .iter()
+                    .map(|label| json!({
+                        "id": label.id,
+                        "text": label.text,
+                        "x": label.x,
+                        "y": label.y,
+                        "scope": label.scope,
+                        "rotation": label.rotation,
+                        "justify": label.justify,
+                    }))
                     .collect::<Vec<_>>(),
             })
         })
@@ -6598,6 +6999,7 @@ mod tests {
                 junctions: Vec::new(),
                 no_connects: Vec::new(),
                 texts: Vec::new(),
+                labels: Vec::new(),
             }],
             buses: Vec::new(),
             variants: Vec::new(),
@@ -6633,6 +7035,7 @@ mod tests {
                 junctions: Vec::new(),
                 no_connects: Vec::new(),
                 texts: Vec::new(),
+                labels: Vec::new(),
             }],
             buses: Vec::new(),
             variants: Vec::new(),
@@ -6693,6 +7096,7 @@ mod tests {
                 junctions: Vec::new(),
                 no_connects: Vec::new(),
                 texts: Vec::new(),
+                labels: Vec::new(),
             }],
             buses: Vec::new(),
             variants: Vec::new(),
@@ -7413,6 +7817,7 @@ mod tests {
                 junctions: Vec::new(),
                 no_connects: Vec::new(),
                 texts: Vec::new(),
+                labels: Vec::new(),
             }],
             buses: Vec::new(),
             variants: Vec::new(),
@@ -7691,6 +8096,7 @@ mod tests {
                 junctions: vec![Junction { x: f64::NAN, y: 0.0 }],
                 no_connects: Vec::new(),
                 texts: Vec::new(),
+                labels: Vec::new(),
             }],
             buses: Vec::new(),
             variants: Vec::new(),
@@ -7875,6 +8281,7 @@ mod tests {
                 junctions: Vec::new(),
                 no_connects: Vec::new(),
                 texts: Vec::new(),
+                labels: Vec::new(),
             }],
             buses: Vec::new(),
             variants: Vec::new(),
@@ -8308,11 +8715,18 @@ mod tests {
             assert_eq!(entry["code"], "kicad/label-scope");
             let detail = entry["detail"].as_str().expect("detail");
             assert!(detail.contains("VCC") || detail.contains("SIG"));
-            assert!(detail.contains("sheet-local net label"));
+            assert!(detail.contains("sheet-local"));
         }
 
         let sheet = &imported["design"]["sheets"][0];
         assert_eq!(sheet["no_connects"], json!([{ "x": 50.0, "y": 60.0 }]));
+        assert_eq!(
+            sheet["labels"],
+            json!([
+                { "id": "label-1", "text": "VCC", "x": 10.0, "y": 20.0, "scope": "global", "rotation": 0.0, "justify": "left" },
+                { "id": "label-2", "text": "SIG", "x": 30.0, "y": 40.0, "scope": "hierarchical", "rotation": 0.0, "justify": "left" },
+            ])
+        );
         let nets = sheet["nets"].as_array().expect("nets");
         let names: Vec<&str> = nets.iter().filter_map(|net| net["name"].as_str()).collect();
         assert_eq!(names, vec!["VCC", "SIG"]);
@@ -8322,11 +8736,15 @@ mod tests {
         let design: Design = serde_json::from_value(imported["design"].clone()).expect("design");
         let rendered = kicad::render(&design);
         assert!(rendered.contains("(no_connect (at 50 60)"));
-        assert!(rendered.contains("(label \"VCC\""));
+        assert!(rendered.contains("(global_label \"VCC\" (shape passive)"));
+        assert!(rendered.contains("(hierarchical_label \"SIG\" (shape passive)"));
+        assert!(!rendered.contains("  (label \"VCC\""));
 
         let again = import_kicad_sch(&rendered).expect("reimport");
-        assert_eq!(again["losses"], json!([]));
+        assert_eq!(again["losses"].as_array().expect("losses").len(), 2);
         assert_eq!(again["design"]["sheets"][0]["no_connects"], json!([{ "x": 50.0, "y": 60.0 }]));
+        assert_eq!(again["design"]["sheets"][0]["labels"][0]["scope"], "global");
+        assert_eq!(again["design"]["sheets"][0]["labels"][1]["scope"], "hierarchical");
     }
 
     #[test]
@@ -8567,6 +8985,7 @@ mod tests {
                 junctions: Vec::new(),
                 no_connects: Vec::new(),
                 texts: Vec::new(),
+                labels: Vec::new(),
             }],
             buses: Vec::new(),
             variants: Vec::new(),
@@ -9024,6 +9443,7 @@ mod tests {
                 junctions: Vec::new(),
                 no_connects: Vec::new(),
                 texts: Vec::new(),
+                labels: Vec::new(),
             }],
             buses: Vec::new(),
             variants: Vec::new(),
@@ -9093,6 +9513,7 @@ mod tests {
                 junctions: Vec::new(),
                 no_connects: Vec::new(),
                 texts: Vec::new(),
+                labels: Vec::new(),
             }],
             buses: Vec::new(),
             variants: Vec::new(),
@@ -9148,6 +9569,7 @@ mod tests {
                 junctions: Vec::new(),
                 no_connects: Vec::new(),
                 texts: Vec::new(),
+                labels: Vec::new(),
             }],
             buses: vec![Bus { id: "bus-1".to_string(), name: "DATA".to_string(), width: 4, aliases: Vec::new() }],
             variants: Vec::new(),
@@ -9208,6 +9630,7 @@ mod tests {
                 junctions: Vec::new(),
                 no_connects: Vec::new(),
                 texts: Vec::new(),
+                labels: Vec::new(),
             }],
             buses: vec![Bus { id: "bus-1".to_string(), name: "DATA".to_string(), width: 4, aliases: vec!["D".to_string()] }],
             variants: Vec::new(),
@@ -10469,6 +10892,204 @@ mod tests {
 
         undo(handle).expect("undo move");
         assert_eq!(list_texts(handle, None).expect("list after undo")["texts"][1]["x"], 30.0);
+        close(handle).expect("close");
+    }
+
+    #[test]
+    fn labels_are_added_listed_updated_and_deleted() {
+        let created = create(CreateRequest::default()).expect("create");
+        let handle = created["handle"].as_u64().expect("handle");
+
+        let local = add_label(
+            handle,
+            AddLabelRequest {
+                sheet: None,
+                text: "VCC".to_string(),
+                x: 10.0,
+                y: 20.0,
+                scope: None,
+                rotation: None,
+                justify: None,
+            },
+        )
+        .expect("add local label");
+        assert_eq!(local["label"]["id"], "label-1");
+        assert_eq!(local["label"]["scope"], "local");
+        assert_eq!(local["label"]["rotation"], 0.0);
+        assert_eq!(local["label"]["justify"], "left");
+
+        let global = add_label(
+            handle,
+            AddLabelRequest {
+                sheet: None,
+                text: "GND".to_string(),
+                x: 30.0,
+                y: 40.0,
+                scope: Some(LabelScope::Global),
+                rotation: Some(90.0),
+                justify: Some("right".to_string()),
+            },
+        )
+        .expect("add global label");
+        assert_eq!(global["label"]["id"], "label-2");
+        assert_eq!(global["label"]["scope"], "global");
+        assert_eq!(global["label"]["rotation"], 90.0);
+        assert_eq!(global["label"]["justify"], "right");
+
+        let listed = list_labels(handle, None).expect("list labels");
+        assert_eq!(listed["sheetId"], "sheet-1");
+        assert_eq!(listed["labels"].as_array().expect("labels").len(), 2);
+        assert_eq!(listed["labels"][0]["text"], "VCC");
+        assert_eq!(listed["labels"][1]["scope"], "global");
+
+        let revised = update_label(
+            handle,
+            UpdateLabelRequest {
+                sheet: None,
+                id: "label-3".to_string(),
+                text: Some("NOPE".to_string()),
+                x: None,
+                y: None,
+                scope: None,
+                rotation: None,
+                justify: None,
+            },
+        )
+        .expect_err("missing label");
+        assert_eq!(revised.code, "object/not-found");
+
+        let updated = update_label(
+            handle,
+            UpdateLabelRequest {
+                sheet: None,
+                id: "label-1".to_string(),
+                text: Some("VDD".to_string()),
+                x: Some(11.0),
+                y: None,
+                scope: Some(LabelScope::Hierarchical),
+                rotation: Some(180.0),
+                justify: Some("center".to_string()),
+            },
+        )
+        .expect("update label");
+        assert_eq!(updated["label"]["text"], "VDD");
+        assert_eq!(updated["label"]["x"], 11.0);
+        assert_eq!(updated["label"]["y"], 20.0);
+        assert_eq!(updated["label"]["scope"], "hierarchical");
+        assert_eq!(updated["label"]["rotation"], 180.0);
+        assert_eq!(updated["label"]["justify"], "center");
+
+        assert_eq!(
+            add_label(
+                handle,
+                AddLabelRequest {
+                    sheet: None,
+                    text: "  ".to_string(),
+                    x: 0.0,
+                    y: 0.0,
+                    scope: None,
+                    rotation: None,
+                    justify: None,
+                },
+            )
+            .unwrap_err()
+            .code,
+            "session/argument-invalid"
+        );
+        assert_eq!(
+            add_label(
+                handle,
+                AddLabelRequest {
+                    sheet: None,
+                    text: "X".to_string(),
+                    x: 0.0,
+                    y: 0.0,
+                    scope: None,
+                    rotation: None,
+                    justify: Some("top".to_string()),
+                },
+            )
+            .unwrap_err()
+            .code,
+            "session/argument-invalid"
+        );
+        assert_eq!(
+            update_label(
+                handle,
+                UpdateLabelRequest {
+                    sheet: None,
+                    id: "label-1".to_string(),
+                    text: None,
+                    x: None,
+                    y: None,
+                    scope: None,
+                    rotation: None,
+                    justify: None,
+                },
+            )
+            .unwrap_err()
+            .code,
+            "session/argument-invalid"
+        );
+
+        let removed = delete_label(handle, "label-2", None).expect("delete label");
+        assert_eq!(removed["label"]["id"], "label-2");
+        assert_eq!(removed["remaining"], 1);
+        assert_eq!(list_labels(handle, None).expect("list after delete")["labels"].as_array().unwrap().len(), 1);
+
+        undo(handle).expect("undo delete");
+        assert_eq!(list_labels(handle, None).expect("list after undo")["labels"].as_array().unwrap().len(), 2);
+        close(handle).expect("close");
+    }
+
+    #[test]
+    fn stats_reports_per_sheet_counts_and_design_totals() {
+        let created = create(CreateRequest::default()).expect("create");
+        let handle = created["handle"].as_u64().expect("handle");
+        add_junction(handle, AddJunctionRequest { sheet: None, x: 1.0, y: 2.0 }).expect("junction");
+        add_no_connect(handle, AddNoConnectRequest { sheet: None, x: 3.0, y: 4.0, node: None }).expect("no connect");
+        add_text(handle, AddTextRequest { sheet: None, text: "NOTE".to_string(), x: 5.0, y: 6.0 }).expect("text");
+        add_label(
+            handle,
+            AddLabelRequest {
+                sheet: None,
+                text: "NET".to_string(),
+                x: 7.0,
+                y: 8.0,
+                scope: None,
+                rotation: None,
+                justify: None,
+            },
+        )
+        .expect("label");
+        add_sheet(handle, Some("Power")).expect("add sheet");
+        add_junction(handle, AddJunctionRequest { sheet: Some("Power".to_string()), x: 9.0, y: 10.0 })
+            .expect("junction on second sheet");
+
+        let report = stats(handle).expect("stats");
+        assert_eq!(report["format"], "open-eda-stats");
+        assert_eq!(report["version"], 1);
+        assert_eq!(report["sheets"].as_array().expect("sheets").len(), 2);
+        assert_eq!(report["sheets"][0]["id"], "sheet-1");
+        assert_eq!(report["sheets"][0]["junctions"], 1);
+        assert_eq!(report["sheets"][0]["noConnects"], 1);
+        assert_eq!(report["sheets"][0]["texts"], 1);
+        assert_eq!(report["sheets"][0]["labels"], 1);
+        assert_eq!(report["sheets"][1]["name"], "Power");
+        assert_eq!(report["sheets"][1]["junctions"], 1);
+        assert_eq!(report["totals"]["sheets"], 2);
+        assert_eq!(report["totals"]["junctions"], 2);
+        assert_eq!(report["totals"]["noConnects"], 1);
+        assert_eq!(report["totals"]["texts"], 1);
+        assert_eq!(report["totals"]["labels"], 1);
+        assert_eq!(report["totals"]["buses"], 0);
+        assert_eq!(report["totals"]["bomRows"], 0);
+
+        assert_eq!(list_junctions(handle, None).expect("junctions")["junctions"][0]["index"], 0);
+        assert_eq!(list_no_connects(handle, None).expect("no connects")["noConnects"][0]["x"], 3.0);
+        let sheets = list_sheets(handle).expect("sheets");
+        assert_eq!(sheets["sheets"][1]["name"], "Power");
+        assert_eq!(sheets["sheets"][0]["id"], "sheet-1");
         close(handle).expect("close");
     }
 }

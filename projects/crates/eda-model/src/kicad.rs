@@ -15,8 +15,8 @@ use data_format_sexpr::{Node, parse_all};
 use serde_json::{Value, json};
 
 use crate::{
-    Component, Design, HierarchicalSheet, Junction, Net, NoConnect, Node as NetNode, PinType, PortDirection, ServiceError,
-    Sheet, SheetPort, TextLabel, Wire, invalid,
+    Component, Design, HierarchicalSheet, Junction, LabelScope, Net, NetLabel, NoConnect, Node as NetNode, PinType,
+    PortDirection, ServiceError, Sheet, SheetPort, TextLabel, Wire, invalid,
 };
 
 /// The pins and pin roles one KiCad library symbol declares.
@@ -162,7 +162,12 @@ pub(crate) fn render(design: &Design) -> String {
     }
     for sheet in &design.sheets {
         for net in &sheet.nets {
-            render_label(&mut out, design, sheet, net);
+            if !sheet.labels.iter().any(|label| label.text == net.name) {
+                render_label(&mut out, design, sheet, net);
+            }
+        }
+        for (index, label) in sheet.labels.iter().enumerate() {
+            render_net_label(&mut out, design, sheet, index, label);
         }
     }
     for (index, sheet) in design.hierarchy.iter().enumerate() {
@@ -414,6 +419,30 @@ fn render_label(out: &mut String, design: &Design, sheet: &Sheet, net: &Net) {
     ));
 }
 
+/// Writes one net label node, including its cross-sheet scope.
+fn render_net_label(out: &mut String, design: &Design, sheet: &Sheet, index: usize, label: &NetLabel) {
+    let tag = match label.scope {
+        LabelScope::Local => "label",
+        LabelScope::Global => "global_label",
+        LabelScope::Hierarchical => "hierarchical_label",
+    };
+    let shape = match label.scope {
+        LabelScope::Local => "",
+        LabelScope::Global | LabelScope::Hierarchical => " (shape passive)",
+    };
+    out.push_str(&format!(
+        "  ({} {}{} (at {} {} {}) (effects (font (size 1.27 1.27)) (justify {} bottom)) (uuid \"{}\"))\n",
+        tag,
+        quote(&label.text),
+        shape,
+        num(label.x),
+        num(label.y),
+        num(label.rotation),
+        label.justify,
+        uuid_for(&format!("{}:label:{}:{}:{}", design.id, sheet.id, index, label.id))
+    ));
+}
+
 /// Uses the placement of the component behind the first node, or the origin.
 fn net_position(sheet: &Sheet, net: &Net) -> (f64, f64) {
     for node in &net.nodes {
@@ -458,6 +487,7 @@ pub(crate) fn import(text: &str) -> Result<(Design, Vec<Value>), ServiceError> {
     let mut junctions = Vec::new();
     let mut no_connects = Vec::new();
     let mut texts = Vec::new();
+    let mut labels: Vec<NetLabel> = Vec::new();
     let mut hierarchy = Vec::new();
     for node in root.children() {
         match node.head() {
@@ -471,13 +501,16 @@ pub(crate) fn import(text: &str) -> Result<(Design, Vec<Value>), ServiceError> {
             Some("text") => read_text(node, &mut texts, &mut losses),
             Some("sheet") => read_hierarchical_sheet(node, &mut hierarchy, &mut losses),
             Some("label") => {
-                let _ = read_label(node, &components, &mut nets, &mut losses);
+                let _ = read_label(node, &components, &mut nets, &mut labels, &mut losses, LabelScope::Local);
             }
             Some(tag @ ("global_label" | "hierarchical_label")) => {
-                if let Some(name) = read_label(node, &components, &mut nets, &mut losses) {
+                let scope = if tag == "global_label" { LabelScope::Global } else { LabelScope::Hierarchical };
+                if let Some(name) = read_label(node, &components, &mut nets, &mut labels, &mut losses, scope) {
                     losses.push(loss(
                         LABEL_SCOPE,
-                        format!("`{tag}` `{name}` was imported as a sheet-local net label; cross-sheet scope is not modelled"),
+                        format!(
+                            "`{tag}` `{name}` keeps its scope on the label, but its net stays sheet-local; cross-sheet nets are not merged"
+                        ),
                     ));
                 }
             }
@@ -501,6 +534,9 @@ pub(crate) fn import(text: &str) -> Result<(Design, Vec<Value>), ServiceError> {
     for (index, sheet) in hierarchy.iter_mut().enumerate() {
         sheet.id = format!("hierarchy-{}", index + 1);
     }
+    for (index, label) in labels.iter_mut().enumerate() {
+        label.id = format!("label-{}", index + 1);
+    }
 
     let design = Design {
         id: "design-1".to_string(),
@@ -522,6 +558,7 @@ pub(crate) fn import(text: &str) -> Result<(Design, Vec<Value>), ServiceError> {
             junctions,
             no_connects,
             texts,
+            labels,
         }],
         buses: Vec::new(),
         variants: Vec::new(),
@@ -662,6 +699,7 @@ pub(crate) fn import_net(text: &str) -> Result<(Design, Vec<Value>), ServiceErro
             junctions: Vec::new(),
             no_connects: Vec::new(),
             texts: Vec::new(),
+            labels: Vec::new(),
         }],
         buses: Vec::new(),
         variants: Vec::new(),
@@ -931,7 +969,14 @@ fn read_text(node: &Node, texts: &mut Vec<TextLabel>, losses: &mut Vec<Value>) {
     }
 }
 
-fn read_label(node: &Node, components: &[Component], nets: &mut Vec<Net>, losses: &mut Vec<Value>) -> Option<String> {
+fn read_label(
+    node: &Node,
+    components: &[Component],
+    nets: &mut Vec<Net>,
+    labels: &mut Vec<NetLabel>,
+    losses: &mut Vec<Value>,
+    scope: LabelScope,
+) -> Option<String> {
     let Some(name) = node.children().first().and_then(node_text)
     else {
         losses.push(loss(UNSUPPORTED_ELEMENT, "a label without a name was skipped".to_string()));
@@ -942,7 +987,16 @@ fn read_label(node: &Node, components: &[Component], nets: &mut Vec<Net>, losses
         return None;
     }
     let name = name.to_string();
-    let (x, y, _) = read_at(node).unwrap_or((0.0, 0.0, 0.0));
+    let (x, y, rotation) = read_at(node).unwrap_or((0.0, 0.0, 0.0));
+    labels.push(NetLabel {
+        id: String::new(),
+        text: name.clone(),
+        x,
+        y,
+        scope,
+        rotation,
+        justify: read_justify(node).unwrap_or_else(|| "left".to_string()),
+    });
     let index = match nets.iter().position(|net| net.name == name) {
         Some(index) => index,
         None => {
@@ -962,6 +1016,13 @@ fn read_label(node: &Node, components: &[Component], nets: &mut Vec<Net>, losses
         }
     }
     Some(name)
+}
+
+/// Reads the horizontal justification of one label, when the file sets it.
+fn read_justify(node: &Node) -> Option<String> {
+    let effects = node.find("effects")?;
+    let justify = effects.find("justify")?;
+    justify.children().iter().find_map(|child| child.as_atom().map(str::to_string))
 }
 
 /// Reads one `(no_connect (at x y) ...)` flag.

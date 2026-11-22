@@ -527,6 +527,11 @@ function attach(opened: service.DesignHandle, options: AttachOptions): Design {
             current = result.design;
             return result.text;
         },
+        async addLabel(input: LabelInput): Promise<NetLabel> {
+            const result = await mutate(() => service.addLabel(handle, input));
+            current = result.design;
+            return result.label;
+        },
         async addNoConnect(input: NoConnectInput): Promise<NoConnect> {
             const result = await mutate(() => service.addNoConnect(handle, input));
             current = result.design;
@@ -827,6 +832,37 @@ function assertUpdateTextInput(input: TextUpdateInput): void {
         if (value !== undefined && (typeof value !== 'number' || !Number.isFinite(value))) {
             throw new OpenEDAError('session/argument-invalid', `\`${key}\` must be a finite number`);
         }
+    }
+}
+
+function assertUpdateLabelInput(input: LabelUpdateInput): void {
+    if (typeof input?.id !== 'string' || input.id.length === 0) {
+        throw new OpenEDAError('session/argument-invalid', '`id` must be a non-empty string');
+    }
+    if (
+        input.text === undefined &&
+        input.x === undefined &&
+        input.y === undefined &&
+        input.scope === undefined &&
+        input.rotation === undefined &&
+        input.justify === undefined
+    ) {
+        throw new OpenEDAError(
+            'session/argument-invalid',
+            'at least one of `text`, `x`, `y`, `scope`, `rotation` or `justify` is required',
+        );
+    }
+    if (input.text !== undefined && (typeof input.text !== 'string' || input.text.trim().length === 0)) {
+        throw new OpenEDAError('session/argument-invalid', '`text` must be a non-empty string');
+    }
+    for (const key of ['x', 'y', 'rotation'] as const) {
+        const value = input[key];
+        if (value !== undefined && (typeof value !== 'number' || !Number.isFinite(value))) {
+            throw new OpenEDAError('session/argument-invalid', `\`${key}\` must be a finite number`);
+        }
+    }
+    if (input.justify !== undefined && !['left', 'right', 'center'].includes(input.justify)) {
+        throw new OpenEDAError('session/argument-invalid', '`justify` must be `left`, `right` or `center`');
     }
 }
 

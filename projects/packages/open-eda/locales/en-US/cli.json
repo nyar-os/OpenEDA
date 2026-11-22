@@ -79,8 +79,14 @@
             "text-update": "Change the content or placement of the text annotation at a 0-based index in place",
             "text-delete": "Delete the text annotation at a 0-based index in place",
             "text-move": "Move the text annotation at a 0-based index in place",
+            "label": "Edit schematic net labels",
+            "label-add": "Add one net label with an optional cross-sheet scope in place",
+            "label-list": "List the net labels of a sheet in document order",
+            "label-update": "Change the text, placement, scope or style of one net label by id in place",
+            "label-delete": "Delete one net label by id in place",
             "sheet": "Edit schematic sheets",
             "sheet-add": "Add an empty sheet to a design document in place",
+            "sheet-list": "List every sheet with its object counts",
             "sheet-rename": "Rename a sheet in place",
             "sheet-delete": "Delete an empty sheet in place",
             "hierarchy": "Edit hierarchical sheet symbols",
@@ -150,7 +156,10 @@
             "nets": "Comma-separated declared net names assigned to the class",
             "buses": "Comma-separated declared bus names or aliases assigned to the class",
             "index": "0-based position inside the sheet's junction or text list",
-            "text": "Text content of the annotation"
+            "text": "Text content of the annotation",
+            "label-id": "Net label id, for example label-1",
+            "scope": "Label scope: local, global or hierarchical (defaults to local)",
+            "justify": "Horizontal justification: left, right or center (defaults to left)"
         }
     }
 }

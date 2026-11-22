@@ -22,12 +22,12 @@ use std::{
 };
 
 use open_eda_model::{
-    AddBusRequest, AddComponentRequest, AddHierarchyPortRequest, AddHierarchyRequest, AddJunctionRequest, AddNoConnectRequest,
-    AddTextRequest, AddWireRequest, ComponentClassRequest, ConnectNetRequest, CopyComponentRequest, CreateRequest,
-    DeleteNetRequest, DisconnectNetRequest, InspectOptions, MergeNetsRequest, MoveComponentRequest, NetClassRequest,
-    ReferencePrefixRequest, RemoveComponentPropertyRequest, RemoveHierarchyPortRequest, RenameNetRequest, ServiceError,
-    SetComponentPropertyRequest, SetFootprintRequest, SetPinTypeRequest, SplitWireRequest, TranslateRequest,
-    UpdateComponentRequest, UpdateDesignRequest, UpdateTextRequest, UpdateWireRequest,
+    AddBusRequest, AddComponentRequest, AddHierarchyPortRequest, AddHierarchyRequest, AddJunctionRequest, AddLabelRequest,
+    AddNoConnectRequest, AddTextRequest, AddWireRequest, ComponentClassRequest, ConnectNetRequest, CopyComponentRequest,
+    CreateRequest, DeleteNetRequest, DisconnectNetRequest, InspectOptions, MergeNetsRequest, MoveComponentRequest,
+    NetClassRequest, ReferencePrefixRequest, RemoveComponentPropertyRequest, RemoveHierarchyPortRequest, RenameNetRequest,
+    ServiceError, SetComponentPropertyRequest, SetFootprintRequest, SetPinTypeRequest, SplitWireRequest, TranslateRequest,
+    UpdateComponentRequest, UpdateDesignRequest, UpdateLabelRequest, UpdateTextRequest, UpdateWireRequest,
 };
 use serde_json::{Value, json};
 use wae::{
@@ -810,7 +810,6 @@ fn design_copy_component(ctx: CallContext) -> Result<JsValue> {
     let report = open_eda_model::copy_component(handle, request).map_err(fail)?;
     respond(&ctx, &report)
 }
-
 fn decode<T>(result: std::result::Result<T, serde_json::Error>) -> Result<T> {
     result.map_err(|error| Error::new(format!("session/argument-invalid: {error}")))
 }
