@@ -771,6 +771,99 @@ componentCommand
     });
 
 componentCommand
+    .command('property-set', 'cli.cmd.component-property-set')
+    .option('--ref <ref>', 'cli.opt.ref')
+    .option('--key <key>', 'cli.opt.key')
+    .option('--value <value>', 'cli.opt.property-value')
+    .option('--sheet <sheet>', 'cli.opt.sheet')
+    .actionCtx(async (options, _args, ctx) => {
+        const file = input(options);
+        if (file === undefined) {
+            ctx.fail('open-eda.cli.file-required', { message: 'a design document is required' });
+            return 2;
+        }
+        const reference = text(options, 'ref');
+        const key = text(options, 'key');
+        const value = text(options, 'value');
+        if (reference === undefined || reference.trim().length === 0 || key === undefined || key.trim().length === 0) {
+            ctx.fail('open-eda.cli.arguments-invalid', { message: '`--ref` and `--key` are required' });
+            return 2;
+        }
+        if (value === undefined) {
+            ctx.fail('open-eda.cli.arguments-invalid', { message: '`--value` is required; pass an empty string to clear it' });
+            return 2;
+        }
+        const { result, saved } = await withDesign(file, async (design) => {
+            const result = await design.setComponentProperty({
+                sheet: text(options, 'sheet'),
+                reference,
+                key,
+                value,
+            });
+            return { result, saved: await savedReport(design) };
+        });
+        ctx.emitResult(
+            { ...saved, revision: saved.revision, property: { key: result.key, value: result.value } },
+            `set property ${result.key} of ${reference} in ${file} revision=${saved.revision}`,
+        );
+        return 0;
+    });
+
+componentCommand
+    .command('property-remove', 'cli.cmd.component-property-remove')
+    .option('--ref <ref>', 'cli.opt.ref')
+    .option('--key <key>', 'cli.opt.key')
+    .option('--sheet <sheet>', 'cli.opt.sheet')
+    .actionCtx(async (options, _args, ctx) => {
+        const file = input(options);
+        if (file === undefined) {
+            ctx.fail('open-eda.cli.file-required', { message: 'a design document is required' });
+            return 2;
+        }
+        const reference = text(options, 'ref');
+        const key = text(options, 'key');
+        if (reference === undefined || reference.trim().length === 0 || key === undefined || key.trim().length === 0) {
+            ctx.fail('open-eda.cli.arguments-invalid', { message: '`--ref` and `--key` are required' });
+            return 2;
+        }
+        const { saved } = await withDesign(file, async (design) => {
+            const result = await design.removeComponentProperty({
+                sheet: text(options, 'sheet'),
+                reference,
+                key,
+            });
+            return { result, saved: await savedReport(design) };
+        });
+        ctx.emitResult(
+            { ...saved, revision: saved.revision, removed: key },
+            `removed property ${key} of ${reference} in ${file} revision=${saved.revision}`,
+        );
+        return 0;
+    });
+
+componentCommand
+    .command('property-list', 'cli.cmd.component-property-list')
+    .option('--ref <ref>', 'cli.opt.ref')
+    .option('--sheet <sheet>', 'cli.opt.sheet')
+    .actionCtx(async (options, _args, ctx) => {
+        const file = input(options);
+        if (file === undefined) {
+            ctx.fail('open-eda.cli.file-required', { message: 'a design document is required' });
+            return 2;
+        }
+        const reference = text(options, 'ref');
+        if (reference === undefined || reference.trim().length === 0) {
+            ctx.fail('open-eda.cli.arguments-invalid', { message: '`--ref` is required' });
+            return 2;
+        }
+        const report = await withDesign(file, async (design) =>
+            design.listComponentProperties(reference, { sheet: text(options, 'sheet') }),
+        );
+        ctx.emitResult(report, `properties of ${reference}: ${report.properties.length}`);
+        return 0;
+    });
+
+componentCommand
     .command('pin-type', 'cli.cmd.component-pin-type')
     .option('--sheet <sheet>', 'cli.opt.sheet')
     .option('--clear', 'cli.opt.clear')

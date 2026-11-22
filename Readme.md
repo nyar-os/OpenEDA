@@ -31,7 +31,7 @@ covers components, nets (derive, rename, merge, disconnect, delete), design-leve
 translate of selected components and wires, junctions and text (move and delete by index),
 no-connect flags (add, delete, and mark one pin as deliberately open),
 sheet add/rename/delete, deterministic reference annotation, BOM variants with
-do-not-populate lists, and undo/redo. The SDK and studio keep a bounded
+do-not-populate lists, custom component key/value properties, and undo/redo. The SDK and studio keep a bounded
 32-step history per open handle. A session created with `history: 'sidecar'`
 additionally records each replaced document in `<file>.history.json`, which is
 how the CLI makes undo/redo work across separate invocations. All entry points
@@ -49,6 +49,7 @@ prints exactly which entries are supported.
 | pin electrical types | supported | per-pin roles, the `electrical` check and the KiCad library pin types |
 | reference annotation `annotate` | supported | renumbers per prefix by sheet and placement order; net nodes follow |
 | BOM variants and DNP | supported | named DNP designator lists and value overrides applied to `bom`/`bom_json` |
+| component custom properties | supported | trimmed unique keys, verbatim values; stored in `.oeda` and the JSON projection |
 | checks `erc`, `electrical`, `nets`, `connectivity`, `footprints`, `power` | supported | `drc` and `clearance` are unsupported |
 | export `net`, `net_csv`, `net_hier`, `spice`, `spice_subckt`, `svg`, `bom`, `bom_json`, `bom_html`, `pdf`, `report`, `json`, `kicad_sch`, `kicad_sym` | supported | read-only projections; `kicad_pcb` and `gbr` are unsupported |
 | import `kicad_sch` | supported | symbols, wires, junctions, no-connect flags, text, labels, hierarchical sheet symbols and ports; other constructs are reported as loss entries |
@@ -188,6 +189,9 @@ await design.addBus({ name: 'DATA', width: 4, aliases: ['D'] });
 const buses = await design.listBuses();
 await design.annotate();
 await design.addVariant({ name: 'lite', dnp: ['R1'], values: { R1: '22k' } });
+await design.setComponentProperty({ reference: 'R1', key: 'MPN', value: 'ABC-123' });
+const properties = await design.listComponentProperties('R1');
+await design.removeComponentProperty({ reference: 'R1', key: 'MPN' });
 await design.export({ format: 'bom', target: 'blinker-lite.csv', variant: 'lite' });
 
 await design.save({ target: 'blinker.oeda', overwrite: true });
@@ -226,6 +230,11 @@ open-eda annotate blinker.oeda
 open-eda variant add blinker.oeda --name lite --dnp R1 --values R1=22k
 open-eda variant list blinker.oeda
 open-eda variant remove blinker.oeda --name lite
+
+# Attach, list and remove custom component metadata
+open-eda component property-set blinker.oeda --ref R1 --key MPN --value ABC-123
+open-eda component property-list blinker.oeda --ref R1
+open-eda component property-remove blinker.oeda --ref R1 --key MPN
 
 # Connect pins to a net, then edit the objects
 open-eda net connect blinker.oeda --net VCC --nodes R1.1,C1.1
@@ -407,6 +416,9 @@ served by the desktop window and talks to the same operations over JSON-RPC.
   places a footprint. It does not run DRC or clearance checks.
 - BOM variants are model-level: they filter and rewrite BOM rows only. They do
   not change the schematic, the KiCad symbol DNP flag or any board output.
+- Component custom properties are model metadata. They round-trip through
+  `.oeda` and the JSON projection, but no exchange writer emits them yet; the
+  KiCad schematic and symbol writers keep only the fields the model maps.
 - Connectivity, electrical and power checks analyse the schematic's wires, nets
   and typed pins only; they do not model a board, copper or current flow.
 - It does not store undo history in the `.oeda` document itself; the optional

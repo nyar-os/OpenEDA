@@ -69,6 +69,9 @@ export interface NativeBinding {
     design_move_component(handle: number, requestJson: string): string;
     design_update_component(handle: number, requestJson: string): string;
     design_set_component_footprint(handle: number, requestJson: string): string;
+    design_set_component_property(handle: number, requestJson: string): string;
+    design_remove_component_property(handle: number, requestJson: string): string;
+    design_list_component_properties(handle: number, reference: string, sheet?: string): string;
     design_rename_net(handle: number, requestJson: string): string;
     design_merge_nets(handle: number, requestJson: string): string;
     design_delete_wire(handle: number, wire: string, sheet?: string): string;

@@ -390,6 +390,15 @@ pub struct Component {
     /// only reads pins listed here and ignores the rest.
     #[serde(default, rename = "pinTypes", skip_serializing_if = "BTreeMap::is_empty")]
     pub pin_types: BTreeMap<String, PinType>,
+    /// Custom key/value metadata, such as a manufacturer part number.
+    ///
+    /// Keys are unique inside the component and are stored verbatim after
+    /// trimming; values are stored exactly as passed. The map is absent from
+    /// older documents. Custom properties are model metadata: the schematics
+    /// projections keep them in the JSON document but no exchange writer emits
+    /// them yet.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub properties: BTreeMap<String, String>,
 }
 
 /// One schematic wire segment.
@@ -783,6 +792,35 @@ pub struct SetFootprintRequest {
     /// string clears the assignment.
     #[serde(default)]
     pub footprint: String,
+}
+
+/// Request of [`set_component_property`].
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetComponentPropertyRequest {
+    /// Target sheet id or name; the first sheet is used when omitted.
+    #[serde(default)]
+    pub sheet: Option<String>,
+    /// Reference designator of the placed component.
+    pub reference: String,
+    /// Property key, for example `MPN`.
+    pub key: String,
+    /// Property value; an empty string stores an empty value.
+    #[serde(default)]
+    pub value: String,
+}
+
+/// Request of [`remove_component_property`].
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoveComponentPropertyRequest {
+    /// Target sheet id or name; the first sheet is used when omitted.
+    #[serde(default)]
+    pub sheet: Option<String>,
+    /// Reference designator of the placed component.
+    pub reference: String,
+    /// Property key to remove.
+    pub key: String,
 }
 
 /// Request of [`set_pin_type`].
@@ -1886,6 +1924,7 @@ pub fn add_component(handle: u64, request: AddComponentRequest) -> Result<Value,
             rotation: request.rotation,
             pins: request.pins,
             pin_types: BTreeMap::new(),
+            properties: BTreeMap::new(),
         };
         sheet.components.push(component.clone());
         design.revision += 1;
@@ -2009,6 +2048,93 @@ pub fn set_component_footprint(handle: u64, request: SetFootprintRequest) -> Res
         let mut payload = Map::new();
         payload.insert("component".to_string(), json!(component));
         Ok(payload)
+    })
+}
+
+/// Assigns one custom key/value property of a placed component.
+///
+/// The key is trimmed and must not be empty or contain whitespace or a control
+/// character, so it stays addressable from every surface. The value is stored
+/// exactly as passed, including an empty value. Assigning the value a property
+/// already has is a no-op and adds no revision.
+pub fn set_component_property(handle: u64, request: SetComponentPropertyRequest) -> Result<Value, ServiceError> {
+    let key = request.key.trim().to_string();
+    if key.is_empty() {
+        return Err(ServiceError::new("session/argument-invalid", "a component property needs a key"));
+    }
+    if breaks_net_grammar(&key) {
+        return Err(ServiceError::new(
+            "session/argument-invalid",
+            format!("component property key `{key}` contains whitespace or a control character"),
+        ));
+    }
+    mutate(handle, |design| {
+        let index = sheet_index(design, request.sheet.as_deref())?;
+        let sheet = &mut design.sheets[index];
+        let component =
+            sheet.components.iter_mut().find(|component| component.reference == request.reference).ok_or_else(|| {
+                not_found(format!("no component with reference `{}` is placed on this sheet", request.reference))
+            })?;
+        let changed = component.properties.insert(key.clone(), request.value.clone()) != Some(request.value.clone());
+        let component = component.clone();
+        if changed {
+            design.revision += 1;
+        }
+        let mut payload = Map::new();
+        payload.insert("component".to_string(), json!(component));
+        payload.insert("key".to_string(), json!(key));
+        payload.insert("value".to_string(), json!(request.value));
+        Ok(payload)
+    })
+}
+
+/// Removes one custom property from a placed component.
+///
+/// A key the component does not carry is reported as `object/not-found`.
+pub fn remove_component_property(handle: u64, request: RemoveComponentPropertyRequest) -> Result<Value, ServiceError> {
+    let key = request.key.trim().to_string();
+    if key.is_empty() {
+        return Err(ServiceError::new("session/argument-invalid", "a component property needs a key"));
+    }
+    mutate(handle, |design| {
+        let index = sheet_index(design, request.sheet.as_deref())?;
+        let sheet = &mut design.sheets[index];
+        let component =
+            sheet.components.iter_mut().find(|component| component.reference == request.reference).ok_or_else(|| {
+                not_found(format!("no component with reference `{}` is placed on this sheet", request.reference))
+            })?;
+        if component.properties.remove(&key).is_none() {
+            return Err(not_found(format!("component `{}` has no property `{key}`", request.reference)));
+        }
+        let component = component.clone();
+        design.revision += 1;
+        let mut payload = Map::new();
+        payload.insert("component".to_string(), json!(component));
+        payload.insert("key".to_string(), json!(key));
+        Ok(payload)
+    })
+}
+
+/// Lists the custom properties of one placed component, sorted by key.
+pub fn list_component_properties(handle: u64, reference: &str, sheet: Option<&str>) -> Result<Value, ServiceError> {
+    with_session(handle, |session| {
+        let design = &session.design;
+        let index = sheet_index(design, sheet)?;
+        let target = &design.sheets[index];
+        let component = target
+            .components
+            .iter()
+            .find(|component| component.reference == reference)
+            .ok_or_else(|| not_found(format!("no component with reference `{reference}` is placed on this sheet")))?;
+        let properties =
+            component.properties.iter().map(|(key, value)| json!({ "key": key, "value": value })).collect::<Vec<_>>();
+        Ok(json!({
+            "revision": design.revision,
+            "sheetId": target.id,
+            "componentId": component.id,
+            "reference": component.reference,
+            "properties": properties,
+        }))
     })
 }
 
@@ -3583,6 +3709,17 @@ fn validate_design(design: &Design) -> Result<(), ServiceError> {
             for pin in component.pin_types.keys() {
                 if !component.pins.iter().any(|declared| declared == pin) {
                     return Err(invalid(format!("component `{}` types missing pin `{pin}`", component.reference)));
+                }
+            }
+            for key in component.properties.keys() {
+                if key.trim().is_empty() {
+                    return Err(invalid(format!("component `{}` has an empty property key", component.reference)));
+                }
+                if breaks_net_grammar(key) {
+                    return Err(invalid(format!(
+                        "component `{}` property key `{key}` contains whitespace or a control character",
+                        component.reference
+                    )));
                 }
             }
         }
@@ -6062,6 +6199,7 @@ mod tests {
                         rotation: 0.0,
                         pins: vec!["1".to_string()],
                         pin_types: BTreeMap::new(),
+                        properties: BTreeMap::new(),
                     },
                     Component {
                         id: "component-2".to_string(),
@@ -6073,6 +6211,7 @@ mod tests {
                         rotation: 0.0,
                         pins: vec!["1".to_string()],
                         pin_types: BTreeMap::new(),
+                        properties: BTreeMap::new(),
                     },
                 ],
                 nets: Vec::new(),
@@ -6151,6 +6290,7 @@ mod tests {
                     rotation: 0.0,
                     pins: vec!["1".to_string(), "2".to_string(), "3".to_string(), "4".to_string()],
                     pin_types: BTreeMap::new(),
+                    properties: BTreeMap::new(),
                 }],
                 nets: vec![
                     Net {
@@ -6887,6 +7027,7 @@ mod tests {
                     rotation: 0.0,
                     pins: vec!["1".to_string()],
                     pin_types: BTreeMap::new(),
+                    properties: BTreeMap::new(),
                 }],
                 nets: Vec::new(),
                 wires: Vec::new(),
@@ -8033,6 +8174,7 @@ mod tests {
                     rotation: 0.0,
                     pins: vec!["1".to_string(), "2".to_string()],
                     pin_types: BTreeMap::new(),
+                    properties: BTreeMap::new(),
                 }],
                 nets: vec![
                     Net {
@@ -8496,6 +8638,7 @@ mod tests {
                     rotation: 0.0,
                     pins: vec!["1".to_string(), "1".to_string(), "2".to_string()],
                     pin_types: BTreeMap::new(),
+                    properties: BTreeMap::new(),
                 }],
                 nets: vec![Net { id: "net-1".to_string(), name: "SPARE".to_string(), nodes: Vec::new() }],
                 wires: Vec::new(),
@@ -8544,6 +8687,7 @@ mod tests {
                         rotation: 0.0,
                         pins: vec!["1".to_string(), "2".to_string()],
                         pin_types: BTreeMap::new(),
+                        properties: BTreeMap::new(),
                     },
                     Component {
                         id: "component-2".to_string(),
@@ -8555,6 +8699,7 @@ mod tests {
                         rotation: 0.0,
                         pins: vec!["1.2".to_string()],
                         pin_types: BTreeMap::new(),
+                        properties: BTreeMap::new(),
                     },
                 ],
                 nets: vec![Net {
@@ -8610,6 +8755,7 @@ mod tests {
                     rotation: 0.0,
                     pins: vec!["1".to_string(), "2".to_string()],
                     pin_types: BTreeMap::new(),
+                    properties: BTreeMap::new(),
                 }],
                 nets: vec![Net {
                     id: "net-1".to_string(),
@@ -8665,6 +8811,7 @@ mod tests {
                     rotation: 0.0,
                     pins: vec!["1".to_string(), "2".to_string()],
                     pin_types: BTreeMap::new(),
+                    properties: BTreeMap::new(),
                 }],
                 nets: vec![
                     Net {
@@ -9446,6 +9593,140 @@ mod tests {
             single["issues"].as_array().expect("issues").iter().filter_map(|issue| issue["code"].as_str()).collect::<Vec<_>>();
         assert!(!codes.contains(&"power/driver-conflict"));
         assert!(codes.contains(&"power/output-driver-conflict"));
+        close(handle).expect("close");
+    }
+
+    #[test]
+    fn component_properties_are_edited_listed_and_persisted() {
+        let dir = TempDir::new("component-properties");
+        let document = dir.join("props.oeda");
+        let created = create(CreateRequest::default()).expect("create");
+        let handle = created["handle"].as_u64().expect("handle");
+        add_component(
+            handle,
+            AddComponentRequest {
+                sheet: None,
+                reference: "R1".to_string(),
+                value: "10k".to_string(),
+                x: 0.0,
+                y: 0.0,
+                rotation: 0.0,
+                pins: vec!["1".to_string(), "2".to_string()],
+            },
+        )
+        .expect("add R1");
+
+        let added = set_component_property(
+            handle,
+            SetComponentPropertyRequest {
+                sheet: None,
+                reference: "R1".to_string(),
+                key: "MPN".to_string(),
+                value: "ABC-123".to_string(),
+            },
+        )
+        .expect("set MPN");
+        assert_eq!(added["component"]["properties"]["MPN"], "ABC-123");
+        assert_eq!(added["key"], "MPN");
+        let revision = added["revision"].as_u64().expect("revision");
+        let unchanged = set_component_property(
+            handle,
+            SetComponentPropertyRequest {
+                sheet: None,
+                reference: "R1".to_string(),
+                key: "MPN".to_string(),
+                value: "ABC-123".to_string(),
+            },
+        )
+        .expect("repeat MPN");
+        assert_eq!(unchanged["revision"], revision, "an unchanged property adds no revision");
+
+        set_component_property(
+            handle,
+            SetComponentPropertyRequest {
+                sheet: None,
+                reference: "R1".to_string(),
+                key: "Description".to_string(),
+                value: "10k resistor".to_string(),
+            },
+        )
+        .expect("set Description");
+        let listed = list_component_properties(handle, "R1", None).expect("list properties");
+        assert_eq!(
+            listed["properties"],
+            json!([
+                { "key": "Description", "value": "10k resistor" },
+                { "key": "MPN", "value": "ABC-123" },
+            ])
+        );
+        assert_eq!(listed["componentId"], "component-1");
+        assert_eq!(listed["sheetId"], "sheet-1");
+
+        assert_eq!(
+            set_component_property(
+                handle,
+                SetComponentPropertyRequest {
+                    sheet: None,
+                    reference: "R1".to_string(),
+                    key: "Bad Key".to_string(),
+                    value: "x".to_string(),
+                },
+            )
+            .unwrap_err()
+            .code,
+            "session/argument-invalid"
+        );
+        assert_eq!(
+            set_component_property(
+                handle,
+                SetComponentPropertyRequest {
+                    sheet: None,
+                    reference: "R1".to_string(),
+                    key: String::new(),
+                    value: "x".to_string(),
+                },
+            )
+            .unwrap_err()
+            .code,
+            "session/argument-invalid"
+        );
+        assert_eq!(
+            set_component_property(
+                handle,
+                SetComponentPropertyRequest {
+                    sheet: None,
+                    reference: "R9".to_string(),
+                    key: "MPN".to_string(),
+                    value: "x".to_string(),
+                },
+            )
+            .unwrap_err()
+            .code,
+            "object/not-found"
+        );
+
+        save(handle, &document, true).expect("save");
+        let opened = open(&document).expect("open");
+        let reopened = opened["handle"].as_u64().expect("handle");
+        let persisted = list_component_properties(reopened, "R1", None).expect("list reopened");
+        assert_eq!(persisted["properties"][1]["value"], "ABC-123");
+        remove_component_property(
+            reopened,
+            RemoveComponentPropertyRequest { sheet: None, reference: "R1".to_string(), key: "Description".to_string() },
+        )
+        .expect("remove Description");
+        assert_eq!(
+            remove_component_property(
+                reopened,
+                RemoveComponentPropertyRequest { sheet: None, reference: "R1".to_string(), key: "Description".to_string() },
+            )
+            .unwrap_err()
+            .code,
+            "object/not-found"
+        );
+        let listed = list_component_properties(reopened, "R1", None).expect("list after remove");
+        assert_eq!(listed["properties"], json!([{ "key": "MPN", "value": "ABC-123" }]));
+        close(reopened).expect("close reopened");
         close(handle).expect("close");
     }
 }

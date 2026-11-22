@@ -658,6 +658,7 @@ mod tests {
             rotation: 0.0,
             pins: vec!["1".to_string(), "2".to_string()],
             pin_types: BTreeMap::new(),
+            properties: BTreeMap::new(),
         }
     }
 

@@ -235,6 +235,8 @@ export interface Component {
     readonly pins: readonly string[];
     /** Electrical role of the typed pins, keyed by pin name; absent when no pin is typed. */
     readonly pinTypes?: Readonly<Record<string, PinType>>;
+    /** Custom metadata such as a manufacturer part number, keyed by property name; absent when none is set. */
+    readonly properties?: Readonly<Record<string, string>>;
 }
 
 /** One end of a net. */
@@ -601,6 +603,51 @@ export interface SetPinTypeResult {
     readonly reference: string;
     readonly pin: string;
     readonly pinType: PinType | null;
+}
+
+/** One custom key/value property of a placed component. */
+export interface ComponentProperty {
+    readonly key: string;
+    readonly value: string;
+}
+
+/** Input of `design.setComponentProperty()`. */
+export interface SetComponentPropertyInput {
+    readonly sheet?: SheetId;
+    readonly reference: string;
+    /** Property key; trimmed and must not contain whitespace. */
+    readonly key: string;
+    /** Property value; an empty string is stored as an empty value. */
+    readonly value: string;
+}
+
+/** Input of `design.removeComponentProperty()`. */
+export interface RemoveComponentPropertyInput {
+    readonly sheet?: SheetId;
+    readonly reference: string;
+    readonly key: string;
+}
+
+/** Result of `design.setComponentProperty()` and `design.removeComponentProperty()`. */
+export interface ComponentPropertyResult {
+    readonly revision: number;
+    readonly design: DesignSummary;
+    readonly canUndo: boolean;
+    readonly canRedo: boolean;
+    readonly component: Component;
+    readonly key: string;
+    /** Value that was assigned; absent when a property was removed. */
+    readonly value?: string;
+}
+
+/** Result of `design.listComponentProperties()`. */
+export interface ComponentPropertyListResult {
+    readonly revision: number;
+    readonly sheetId: SheetId;
+    readonly componentId: ObjectId;
+    readonly reference: string;
+    /** Properties sorted by key. */
+    readonly properties: readonly ComponentProperty[];
 }
 
 /** Input of `design.connectNet()`. */
@@ -1206,6 +1253,15 @@ export interface Design {
     updateComponent(input: UpdateComponentInput): Promise<Component>;
     /** Assigns or clears the footprint of one component; the BOM and KiCad writer use it verbatim. */
     setFootprint(input: SetFootprintInput): Promise<Component>;
+    /** Assigns one custom key/value property of a component; an unchanged value adds no revision. */
+    setComponentProperty(input: SetComponentPropertyInput): Promise<ComponentPropertyResult>;
+    /** Removes one custom property of a component; an absent key reports `object/not-found`. */
+    removeComponentProperty(input: RemoveComponentPropertyInput): Promise<ComponentPropertyResult>;
+    /** Lists the custom properties of one component, sorted by key. */
+    listComponentProperties(
+        reference: string,
+        options?: { readonly sheet?: SheetId },
+    ): Promise<ComponentPropertyListResult>;
     /** Renames a net; wires that named it follow the new name. */
     renameNet(input: RenameNetInput): Promise<Net>;
     /** Deletes one wire segment. */

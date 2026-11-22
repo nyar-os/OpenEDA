@@ -22,6 +22,8 @@ import type {
     ComponentClassInput,
     ComponentClassResult,
     ComponentInput,
+    ComponentPropertyListResult,
+    ComponentPropertyResult,
     ConnectNetInput,
     ConnectivityReport,
     DeleteNetInput,
@@ -62,9 +64,11 @@ import type {
     PinType,
     ReferencePrefixInput,
     ReferencePrefixRule,
+    RemoveComponentPropertyInput,
     RenameNetInput,
     SaveOptions,
     SaveReport,
+    SetComponentPropertyInput,
     SetFootprintInput,
     SetPinTypeInput,
     SetPinTypeResult,
@@ -530,6 +534,27 @@ function attach(opened: service.DesignHandle, options: AttachOptions): Design {
             current = result.design;
             return result.component;
         },
+        async setComponentProperty(input: SetComponentPropertyInput): Promise<ComponentPropertyResult> {
+            assertComponentPropertyInput(input);
+            const result = await mutate(() => service.setComponentProperty(handle, input));
+            current = result.design;
+            return result;
+        },
+        async removeComponentProperty(input: RemoveComponentPropertyInput): Promise<ComponentPropertyResult> {
+            assertComponentPropertyInput(input);
+            const result = await mutate(() => service.removeComponentProperty(handle, input));
+            current = result.design;
+            return result;
+        },
+        async listComponentProperties(
+            reference: string,
+            options?: { readonly sheet?: string },
+        ): Promise<ComponentPropertyListResult> {
+            if (typeof reference !== 'string' || reference.trim().length === 0) {
+                throw new OpenEDAError('session/argument-invalid', '`reference` must be a non-empty string');
+            }
+            return service.listComponentProperties(handle, reference, options?.sheet);
+        },
         async renameNet(input: RenameNetInput): Promise<Net> {
             const result = await mutate(() => service.renameNet(handle, input));
             current = result.design;
@@ -708,7 +733,23 @@ function assertCreateOptions(options: DesignCreateOptions): void {
     }
 }
 
-function assertPinTypeInput(input: SetPinTypeInput): void {    for (const key of ['reference', 'pin'] as const) {
+function assertComponentPropertyInput(input: SetComponentPropertyInput | RemoveComponentPropertyInput): void {
+    if (typeof input?.reference !== 'string' || input.reference.trim().length === 0) {
+        throw new OpenEDAError('session/argument-invalid', '`reference` must be a non-empty string');
+    }
+    if (typeof input.key !== 'string' || input.key.trim().length === 0) {
+        throw new OpenEDAError('session/argument-invalid', '`key` must be a non-empty string');
+    }
+    if (/\s/.test(input.key.trim())) {
+        throw new OpenEDAError('session/argument-invalid', '`key` must not contain whitespace');
+    }
+    if ('value' in input && typeof input.value !== 'string') {
+        throw new OpenEDAError('session/argument-invalid', '`value` must be a string');
+    }
+}
+
+function assertPinTypeInput(input: SetPinTypeInput): void {
+    for (const key of ['reference', 'pin'] as const) {
         const value = input?.[key];
         if (typeof value !== 'string' || value.trim().length === 0) {
             throw new OpenEDAError('session/argument-invalid', `\`${key}\` must be a non-empty string`);

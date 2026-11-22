@@ -574,6 +574,7 @@ pub(crate) fn import_net(text: &str) -> Result<(Design, Vec<Value>), ServiceErro
                 rotation: 0.0,
                 pins: Vec::new(),
                 pin_types: BTreeMap::new(),
+                properties: BTreeMap::new(),
             });
         }
     }
@@ -877,7 +878,18 @@ fn read_symbol(
         losses.push(loss(MISSING_REFERENCE, format!("a symbol without a reference property was named `{fallback}`")));
         reference = fallback.to_string();
     }
-    Some(Component { id: String::new(), reference, value, footprint, x, y, rotation, pins, pin_types })
+    Some(Component {
+        id: String::new(),
+        reference,
+        value,
+        footprint,
+        x,
+        y,
+        rotation,
+        pins,
+        pin_types,
+        properties: BTreeMap::new(),
+    })
 }
 
 fn read_wire(node: &Node, losses: &mut Vec<Value>) -> Option<([f64; 2], [f64; 2])> {
@@ -1288,6 +1300,7 @@ mod tests {
             rotation: 0.0,
             pins: vec!["1".to_string(), "2".to_string()],
             pin_types: Default::default(),
+            properties: Default::default(),
         };
         assert_eq!(lib_id_for(&numeric), "open-eda:2pin");
         let named = Component { pins: vec!["A".to_string(), "K".to_string()], ..numeric.clone() };

@@ -409,6 +409,53 @@ test('pin electrical types drive the electrical check', { skip: withoutAddon }, 
     }
 });
 
+test('component custom properties persist and stay addressable', { skip: withoutAddon }, async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'open-eda-component-properties-'));
+    const document = path.join(directory, 'properties.oeda');
+    const eda = new OpenEDA();
+    try {
+        const design = await eda.create({ title: 'Properties' });
+        await design.addComponent({ reference: 'R1', value: '10k', x: 0, y: 0, pins: ['1', '2'] });
+        const first = await design.setComponentProperty({ reference: 'R1', key: 'MPN', value: 'ABC-123' });
+        assert.equal(first.key, 'MPN');
+        assert.equal(first.value, 'ABC-123');
+        assert.equal(first.component.properties?.MPN, 'ABC-123');
+        const unchanged = await design.setComponentProperty({ reference: 'R1', key: 'MPN', value: 'ABC-123' });
+        assert.equal(unchanged.revision, first.revision);
+        await design.setComponentProperty({ reference: 'R1', key: 'Description', value: '10k resistor' });
+        const listed = await design.listComponentProperties('R1');
+        assert.deepEqual(listed.properties, [
+            { key: 'Description', value: '10k resistor' },
+            { key: 'MPN', value: 'ABC-123' },
+        ]);
+        await assert.rejects(
+            design.setComponentProperty({ reference: 'R1', key: 'Bad Key', value: 'x' }),
+            (error: unknown) => error instanceof OpenEDAError && error.code === 'session/argument-invalid',
+        );
+        await assert.rejects(
+            design.setComponentProperty({ reference: 'R9', key: 'MPN', value: 'x' }),
+            (error: unknown) => error instanceof OpenEDAError && error.code === 'object/not-found',
+        );
+        await design.save({ target: document, overwrite: true });
+        await design.close();
+
+        const reopened = await eda.open({ path: document });
+        const persisted = await reopened.listComponentProperties('R1');
+        assert.equal(persisted.properties.find((property) => property.key === 'MPN')?.value, 'ABC-123');
+        const removed = await reopened.removeComponentProperty({ reference: 'R1', key: 'Description' });
+        assert.equal(removed.key, 'Description');
+        assert.equal(removed.component.properties?.Description, undefined);
+        await assert.rejects(
+            reopened.removeComponentProperty({ reference: 'R1', key: 'Description' }),
+            (error: unknown) => error instanceof OpenEDAError && error.code === 'object/not-found',
+        );
+        await reopened.close();
+    } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+        await eda.dispose();
+    }
+});
+
 test('drawing properties update, persist and reach the KiCad title block', { skip: withoutAddon }, async () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'open-eda-properties-'));
     const document = path.join(directory, 'title.oeda');

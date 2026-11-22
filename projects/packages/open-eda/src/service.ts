@@ -17,6 +17,8 @@ import type {
     ComponentClassListResult,
     ComponentClassResult,
     ComponentInput,
+    ComponentPropertyListResult,
+    ComponentPropertyResult,
     ConnectNetInput,
     ConnectivityReport,
     DeleteNetInput,
@@ -55,8 +57,10 @@ import type {
     ReferencePrefixInput,
     ReferencePrefixListResult,
     ReferencePrefixResult,
+    RemoveComponentPropertyInput,
     RenameNetInput,
     SaveReport,
+    SetComponentPropertyInput,
     SetFootprintInput,
     SetPinTypeInput,
     SetPinTypeResult,
@@ -598,9 +602,47 @@ export function setComponentFootprint(handle: number, input: SetFootprintInput):
     );
 }
 
+/** Assigns one custom key/value property of a placed component. */
+export function setComponentProperty(handle: number, input: SetComponentPropertyInput): ComponentPropertyResult {
+    return decode<ComponentPropertyResult>(() =>
+        binding('design.setComponentProperty').design_set_component_property(
+            handle,
+            JSON.stringify({
+                sheet: input.sheet,
+                reference: input.reference,
+                key: input.key,
+                value: input.value,
+            }),
+        ),
+    );
+}
+
+/** Removes one custom property of a placed component. */
+export function removeComponentProperty(
+    handle: number,
+    input: RemoveComponentPropertyInput,
+): ComponentPropertyResult {
+    return decode<ComponentPropertyResult>(() =>
+        binding('design.removeComponentProperty').design_remove_component_property(
+            handle,
+            JSON.stringify({ sheet: input.sheet, reference: input.reference, key: input.key }),
+        ),
+    );
+}
+
+/** Lists the custom properties of one placed component, sorted by key. */
+export function listComponentProperties(
+    handle: number,
+    reference: string,
+    sheet?: string,
+): ComponentPropertyListResult {
+    return decode<ComponentPropertyListResult>(() =>
+        binding('design.listComponentProperties').design_list_component_properties(handle, reference, sheet),
+    );
+}
+
 /** Renames one net and every wire that named it. */
-export function renameNet(handle: number, input: RenameNetInput): NetResult {
-    return decode<NetResult>(() =>
+export function renameNet(handle: number, input: RenameNetInput): NetResult {    return decode<NetResult>(() =>
         binding('design.renameNet').design_rename_net(
             handle,
             JSON.stringify({ sheet: input.sheet, net: input.net, name: input.name }),

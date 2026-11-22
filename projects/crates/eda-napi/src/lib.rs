@@ -24,9 +24,9 @@ use std::{
 use open_eda_model::{
     AddBusRequest, AddComponentRequest, AddJunctionRequest, AddNoConnectRequest, AddTextRequest, AddWireRequest,
     ComponentClassRequest, ConnectNetRequest, CreateRequest, DeleteNetRequest, DisconnectNetRequest, InspectOptions,
-    MergeNetsRequest, MoveComponentRequest, NetClassRequest, ReferencePrefixRequest, RenameNetRequest, ServiceError,
-    SetFootprintRequest, SetPinTypeRequest, SplitWireRequest, TranslateRequest, UpdateComponentRequest, UpdateDesignRequest,
-    UpdateWireRequest,
+    MergeNetsRequest, MoveComponentRequest, NetClassRequest, ReferencePrefixRequest, RemoveComponentPropertyRequest,
+    RenameNetRequest, ServiceError, SetComponentPropertyRequest, SetFootprintRequest, SetPinTypeRequest, SplitWireRequest,
+    TranslateRequest, UpdateComponentRequest, UpdateDesignRequest, UpdateWireRequest,
 };
 use serde_json::{Value, json};
 use wae::{
@@ -609,6 +609,34 @@ fn design_set_component_footprint(ctx: CallContext) -> Result<JsValue> {
     let handle = handle(&ctx, 0)?;
     let request: SetFootprintRequest = decode(serde_json::from_str(&text(&ctx, 1)?))?;
     let report = open_eda_model::set_component_footprint(handle, request).map_err(fail)?;
+    respond(&ctx, &report)
+}
+
+/// Assigns one custom key/value property of a placed component.
+#[function]
+fn design_set_component_property(ctx: CallContext) -> Result<JsValue> {
+    let handle = handle(&ctx, 0)?;
+    let request: SetComponentPropertyRequest = decode(serde_json::from_str(&text(&ctx, 1)?))?;
+    let report = open_eda_model::set_component_property(handle, request).map_err(fail)?;
+    respond(&ctx, &report)
+}
+
+/// Removes one custom property of a placed component.
+#[function]
+fn design_remove_component_property(ctx: CallContext) -> Result<JsValue> {
+    let handle = handle(&ctx, 0)?;
+    let request: RemoveComponentPropertyRequest = decode(serde_json::from_str(&text(&ctx, 1)?))?;
+    let report = open_eda_model::remove_component_property(handle, request).map_err(fail)?;
+    respond(&ctx, &report)
+}
+
+/// Lists the custom properties of one placed component.
+#[function]
+fn design_list_component_properties(ctx: CallContext) -> Result<JsValue> {
+    let handle = handle(&ctx, 0)?;
+    let reference = text(&ctx, 1)?;
+    let sheet = optional_text(&ctx, 2)?;
+    let report = open_eda_model::list_component_properties(handle, &reference, sheet.as_deref()).map_err(fail)?;
     respond(&ctx, &report)
 }
 
@@ -1540,6 +1568,9 @@ register_module![
     design_move_component,
     design_update_component,
     design_set_component_footprint,
+    design_set_component_property,
+    design_remove_component_property,
+    design_list_component_properties,
     design_rename_net,
     design_merge_nets,
     design_delete_wire,
