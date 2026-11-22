@@ -20,8 +20,9 @@ path goes through the same schematic model, so an edit, a check and an export
 always describe the same revision.
 
 OpenEDA is **not** a board editor, a router, a field solver or a simulator. Board
-layout, DRC, clearance, Gerber and KiCad board exchange report
-`capability/not-implemented` instead of pretending to work. The SPICE writer
+layout, DRC, Gerber and KiCad board exchange report `capability/not-implemented`
+instead of pretending to work. The `clearance` check compares schematic
+component bodies; it does not analyse copper or board geometry. The SPICE writer
 emits a netlist; it does not run a simulation.
 
 ## 🚀 Getting started
@@ -90,8 +91,8 @@ extension may be listed while remaining `unsupported`.
   junctions, no-connect flags, text, net labels with local/global/hierarchical
   scope and hierarchical sheet symbols share one revision counter.
 - **Checks that state their result.** ERC, electrical-role, net, connectivity,
-  footprint and power checks return stable finding codes; severities and waivers
-  are part of the report.
+  footprint, component-clearance and power checks return stable finding codes;
+  severities and waivers are part of the report.
 - **Deterministic exchange.** KiCad schematic and symbol import/export,
   netlist/net CSV/hierarchical netlist, SPICE and subcircuits, SVG, BOM
   (CSV/JSON/HTML), PDF, Markdown and JSON projections, with a loss ledger for

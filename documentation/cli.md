@@ -27,7 +27,7 @@ to stderr.
 | `open-eda create --out <file.oeda> [--title <text>] [--rev <text>] [--company <text>] [--date <text>] [--template <name>] [--overwrite]` | Create a native design document |
 | `open-eda open <file>` | Validate and report that the document opens |
 | `open-eda design set <file> [--title <text>] [--rev <text>] [--company <text>] [--date <text>]` | Update title-block properties; an empty value clears a field |
-| `open-eda inspect <file> [--checks erc,electrical,nets,connectivity,footprints,power] [--severity <code>=<level>] [--waive <code>[@<object>]]` | Run the supported checks |
+| `open-eda inspect <file> [--checks erc,electrical,nets,connectivity,footprints,power,references,clearance] [--severity <code>=<level>] [--waive <code>[@<object>]]` | Run the supported checks |
 | `open-eda list <file>` | List sheets, components, nets, wires and buses |
 | `open-eda symbols <file>` | Group placed components by derived library id with pin, footprint and missing-footprint counts |
 | `open-eda connectivity <file>` | Print the connectivity report |

@@ -70,9 +70,10 @@ pnpm exec open-eda export blinker.oeda --format svg --out blinker.svg
 | Reports | `listObjects`, `listComponents`, `listNets`, `listSymbols`, `connectivity`, `tracePins`, `inspect`, `checkHierarchy` |
 | Output | `save`, `export`, `undo`, `redo`, `close` |
 
-`inspect` runs `erc`, `electrical`, `nets`, `connectivity`, `footprints` and
-`power`, with per-code `severity` overrides and `waivers`; `checkHierarchy`
-separately walks the declared hierarchy and reports `hierarchy/*` issues.
+`inspect` runs `erc`, `electrical`, `nets`, `connectivity`, `footprints`,
+`clearance`, `power` and `references`, with per-code `severity` overrides and
+`waivers`; `checkHierarchy` separately walks the declared hierarchy and reports
+`hierarchy/*` issues.
 `export` writes `net`, `net_csv`, `net_hier`, `spice`, `spice_subckt`, `svg`, `bom`, `bom_json`,
 `bom_html`, `pdf`, `report`, `json`, `kicad_sch` and `kicad_sym`.
 `importKicadSch` reads the supported KiCad schematic subset and returns a loss
@@ -80,7 +81,8 @@ ledger for everything else.
 
 ## Constraints
 
-- No board model, routing, DRC or clearance analysis.
+- No board model, routing or DRC analysis; the `clearance` check compares
+  schematic component bodies only.
 - No simulation; the SPICE output is a netlist only.
 - No bus wires, arcs or child-sheet content in the KiCad subset.
 - No automatic footprint assignment or validation.

@@ -48,7 +48,8 @@ const INSPECT_CHECKS: &[&str] =
     &["erc", "electrical", "drc", "nets", "connectivity", "footprints", "clearance", "power", "references"];
 
 /// Rule checks this build actually runs.
-const SUPPORTED_CHECKS: &[&str] = &["erc", "electrical", "nets", "connectivity", "footprints", "power", "references"];
+const SUPPORTED_CHECKS: &[&str] =
+    &["erc", "electrical", "nets", "connectivity", "footprints", "clearance", "power", "references"];
 
 /// Render targets declared for preview surfaces.
 const RENDER_FORMATS: &[&str] = &["svg", "png", "pdf"];
@@ -5065,6 +5066,19 @@ fn breaks_net_grammar(text: &str) -> bool {
     text.chars().any(|character| character.is_whitespace() || character.is_control())
 }
 
+/// Whether two component bodies overlap in their interior.
+///
+/// The body is the axis-aligned rectangle the SVG preview draws: centred on the
+/// placement with [`COMPONENT_HALF_WIDTH`] and [`COMPONENT_HALF_HEIGHT`] as the
+/// half extents. Rotation is deliberately ignored so the check and the preview
+/// agree. Strict comparisons keep rectangles that only touch an edge apart.
+fn component_bodies_overlap(left: &Component, right: &Component) -> bool {
+    (left.x - COMPONENT_HALF_WIDTH) < (right.x + COMPONENT_HALF_WIDTH)
+        && (right.x - COMPONENT_HALF_WIDTH) < (left.x + COMPONENT_HALF_WIDTH)
+        && (left.y - COMPONENT_HALF_HEIGHT) < (right.y + COMPONENT_HALF_HEIGHT)
+        && (right.y - COMPONENT_HALF_HEIGHT) < (left.y + COMPONENT_HALF_HEIGHT)
+}
+
 fn inspect_design(design: &Design, checks: &[String]) -> Vec<Value> {
     let mut issues = CheckReport::new();
     if checks.iter().any(|check| check == "erc") {
@@ -5491,6 +5505,33 @@ fn inspect_design(design: &Design, checks: &[String]) -> Vec<Value> {
                         true,
                         format!("component `{}` has no value, so it cannot be matched to a footprint", component.reference),
                     ));
+                }
+            }
+        }
+    }
+    if checks.iter().any(|check| check == "clearance") {
+        for sheet in &design.sheets {
+            let mut components: Vec<&Component> = sheet.components.iter().collect();
+            components.sort_by(|left, right| left.reference.cmp(&right.reference).then_with(|| left.id.cmp(&right.id)));
+            for (index, left) in components.iter().enumerate() {
+                for right in &components[index + 1..] {
+                    if component_bodies_overlap(left, right) {
+                        issues.push(
+                            issue(
+                                "clearance/component-overlap",
+                                "warning",
+                                design.revision,
+                                &sheet.id,
+                                &left.id,
+                                true,
+                                format!(
+                                    "components `{}` and `{}` have overlapping bodies; the preview draws both as axis-aligned boxes centred on their placement",
+                                    left.reference, right.reference
+                                ),
+                            )
+                            .with_detail("references", format!("{},{}", left.reference, right.reference)),
+                        );
+                    }
                 }
             }
         }
@@ -7566,3 +7607,7 @@ mod trace_tests;
 #[cfg(test)]
 #[path = "../tests/unit/pins.rs"]
 mod pin_tests;
+
+#[cfg(test)]
+#[path = "../tests/unit/clearance.rs"]
+mod clearance_tests;

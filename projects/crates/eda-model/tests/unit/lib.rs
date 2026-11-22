@@ -50,7 +50,7 @@ fn capability_matrix_reports_only_the_implemented_entries() {
     assert_eq!(matrix["checks"]["power"], "supported");
     assert_eq!(matrix["checks"]["hierarchy"], "supported");
     assert_eq!(matrix["checks"]["drc"], "unsupported");
-    assert_eq!(matrix["checks"]["clearance"], "unsupported");
+    assert_eq!(matrix["checks"]["clearance"], "supported");
     assert_eq!(matrix["renderers"]["svg"], "supported");
     assert_eq!(matrix["renderers"]["png"], "unsupported");
     assert_eq!(matrix["renderers"]["pdf"], "unsupported");

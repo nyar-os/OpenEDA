@@ -23,7 +23,7 @@ answer about the document, such as a pin-to-pin path.
 | BOM variants and DNP | supported | named DNP designator lists and value overrides applied to `bom`, `bom_json` and `bom_html` |
 | net classes | supported | name, width, clearance, via and net/bus assignment lists |
 | component custom properties | supported | trimmed unique keys, verbatim values; stored in `.oeda`, the JSON projection and KiCad symbol properties |
-| checks `erc`, `electrical`, `nets`, `connectivity`, `footprints`, `power`, `hierarchy` | supported | `drc` and `clearance` are unsupported; `hierarchy` is a separate read-only entry, not an `inspect --checks` value |
+| checks `erc`, `electrical`, `nets`, `connectivity`, `footprints`, `power`, `references`, `clearance` | supported | `drc` is unsupported; `clearance` compares schematic component bodies; `hierarchy` is a separate read-only entry, not an `inspect --checks` value |
 | design `stats` | supported | deterministic per-sheet and design-wide counts; tagged `open-eda-stats` |
 | pin trace `trace` | supported | read-only shortest hop path between two `REF.PIN` pins; tagged `open-eda-trace`; reported as `queries.trace`, not as an `inspect --checks` check |
 | read-only listings `component list`, `net list`, `bus list`, `net-class list`, `wire list`, `label list`, `text list`, `sheet list` | supported | document order with 0-based indices where the model edits by index |
@@ -37,7 +37,7 @@ answer about the document, such as a pin-to-pin path.
 | export `kicad_sym` | supported | one library symbol per derived library id, with pins and roles; no symbol body is invented |
 | KiCad board, Gerber, drill, STEP | unsupported | declared in the capability matrix only |
 | interactive schematic/board renderer | unsupported | the preview is an SVG projection |
-| DRC and clearance | unsupported | `capability/not-implemented` |
+| DRC | unsupported | `capability/not-implemented` |
 | board layout, routing, simulation | unsupported | not modelled |
 
 ## Design model semantics
@@ -106,6 +106,14 @@ net with a logic output.
 
 `nets` reports `net-bus-member-collision` and `net-bus-alias-collision` so the
 netlist never writes one `NET` line twice.
+
+`clearance` treats each component body as the axis-aligned rectangle the SVG
+preview draws: centred on the placement, with `COMPONENT_HALF_WIDTH` and
+`COMPONENT_HALF_HEIGHT` as the half extents. Rotation is ignored, so a rotated
+component is still compared as an axis-aligned box. Two bodies that only share
+an edge are not an overlap. One `clearance/component-overlap` finding (warning,
+non-blocking) is reported per overlapping pair of one sheet, in reference order,
+and names both references; components on different sheets are never compared.
 
 Inspection accepts per-code severity overrides (`error`, `warning`, `info`,
 `off`) and waivers by code, optionally narrowed to one object or sheet. Accepted
@@ -215,7 +223,8 @@ Every file is written through a temporary file and a rename.
 ## Unsupported boundaries
 
 - No KiCad board, Gerber, drill or STEP import or export.
-- No board model, copper, routing, DRC or clearance analysis.
+- No board model, copper, routing or DRC analysis; the `clearance` check compares
+  schematic component bodies, not copper or board geometry.
 - No schematic simulation; the SPICE output is a netlist only.
 - No bus wires, arcs or child-sheet content in the KiCad subset; they are
   reported as losses.
@@ -237,6 +246,8 @@ Every file is written through a temporary file and a rename.
 - `projects/crates/eda-model/tests/unit/kicad.rs` — parser and writer subset.
 - `projects/crates/eda-model/tests/unit/diff.rs` — structural comparison.
 - `projects/crates/eda-model/tests/unit/connectivity.rs` — net and pin analysis.
+- `projects/crates/eda-model/tests/unit/clearance.rs` — component-body overlap
+  pairs, edge contact, rotation, sheets, severity and waivers.
 - `projects/crates/eda-model/tests/unit/pins.rs` — pin add, remove and rename
   validation, reference-safe removal, net/no-connect rewrites, history and
   save/reopen persistence.

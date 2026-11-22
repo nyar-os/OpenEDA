@@ -114,7 +114,7 @@
             "date": "Drawing date text, for example 2026-11-22",
             "template": "Template the design starts from (only blank is implemented)",
             "overwrite": "Replace the output file when it already exists",
-            "checks": "Comma-separated checks: erc, electrical, nets, connectivity, footprints, power, references (drc and clearance are unsupported)",
+            "checks": "Comma-separated checks: erc, electrical, nets, connectivity, footprints, clearance, power, references (drc is unsupported)",
             "component-class": "Component class name, for example resistor",
             "prefix": "Expected reference designator prefix, one to eight uppercase letters, for example R or TP",
             "severity": "Comma-separated finding overrides in code=level form, level error, warning, info or off",
