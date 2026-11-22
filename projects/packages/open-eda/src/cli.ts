@@ -1406,6 +1406,45 @@ wireCommand
     });
 
 wireCommand
+    .command('split', 'cli.cmd.wire-split')
+    .option('--id <wire>', 'cli.opt.wire')
+    .option('--x <number>', 'cli.opt.x')
+    .option('--y <number>', 'cli.opt.y')
+    .option('--sheet <sheet>', 'cli.opt.sheet')
+    .actionCtx(async (options, _args, ctx) => {
+        const file = input(options);
+        if (file === undefined) {
+            ctx.fail('open-eda.cli.file-required', { message: 'a design document is required' });
+            return 2;
+        }
+        const id = text(options, 'id');
+        const x = number(options, 'x');
+        const y = number(options, 'y');
+        if (
+            id === undefined ||
+            id.trim().length === 0 ||
+            x === undefined ||
+            Number.isNaN(x) ||
+            y === undefined ||
+            Number.isNaN(y)
+        ) {
+            ctx.fail('open-eda.cli.arguments-invalid', {
+                message: '`--id`, `--x` and `--y` are required; coordinates must be finite numbers',
+            });
+            return 2;
+        }
+        const { first, second, saved } = await withDesign(file, async (design) => {
+            const split = await design.splitWire({ sheet: text(options, 'sheet'), id, x, y });
+            return { ...split, saved: await savedReport(design) };
+        });
+        ctx.emitResult(
+            { ...saved, revision: saved.revision, first, second },
+            `split ${id} into ${first.id} and ${second.id} in ${file} revision=${saved.revision}`,
+        );
+        return 0;
+    });
+
+wireCommand
     .command('list', 'cli.cmd.wire-list')
     .option('--sheet <sheet>', 'cli.opt.sheet')
     .actionCtx(async (options, _args, ctx) => {

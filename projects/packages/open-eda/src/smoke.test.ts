@@ -250,6 +250,14 @@ test('history, sheets and deep edits stay referentially sound', { skip: withoutA
         const renamed = await design.renameNet({ net: 'VCC', name: 'VIN' });
         assert.equal(renamed.name, 'VIN');
         assert.equal((await design.listObjects()).wires[0]?.net, 'VIN');
+        const split = await design.splitWire({ id: 'wire-1', x: 20, y: 10 });
+        assert.equal(split.first.id, 'wire-1');
+        assert.deepEqual(split.first.to, [20, 10]);
+        assert.equal(split.second.id, 'wire-2');
+        assert.deepEqual(split.second.from, [20, 10]);
+        assert.deepEqual(split.second.to, [30, 10]);
+        assert.equal(split.second.net, 'VIN');
+        assert.equal((await design.listWires()).length, 2);
 
         const bus = await design.addBus({ name: 'DATA', width: 4 });
         assert.deepEqual(bus, { id: 'bus-1', name: 'DATA', width: 4 });
@@ -280,6 +288,7 @@ test('history, sheets and deep edits stay referentially sound', { skip: withoutA
             (error: unknown) => error instanceof OpenEDAError && error.code === 'sheet/last-sheet',
         );
 
+        await design.deleteWire('wire-2');
         await design.deleteWire('wire-1');
         assert.equal(design.summary.counts.wires, 0);
         await design.deleteComponent('C1');

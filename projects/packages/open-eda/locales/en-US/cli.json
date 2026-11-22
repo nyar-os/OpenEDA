@@ -57,6 +57,7 @@
             "wire": "Edit wire segments",
             "wire-add": "Draw a wire segment between two points in place",
             "wire-update": "Change the endpoints or net of a wire segment in place",
+            "wire-split": "Split a wire segment into two at a point on the segment",
             "wire-list": "List the wire segments drawn on a sheet",
             "wire-delete": "Delete a wire segment in place",
             "junction": "Edit schematic junctions",

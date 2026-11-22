@@ -661,6 +661,21 @@ pub struct UpdateWireRequest {
     pub to: Option<[f64; 2]>,
 }
 
+/// Request of [`split_wire`].
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SplitWireRequest {
+    /// Target sheet id or name; the first sheet is used when omitted.
+    #[serde(default)]
+    pub sheet: Option<String>,
+    /// Stable wire identity, for example `wire-1`.
+    pub id: String,
+    /// Split point X coordinate, on the segment.
+    pub x: f64,
+    /// Split point Y coordinate, on the segment.
+    pub y: f64,
+}
+
 /// Request of [`add_junction`].
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -2515,6 +2530,60 @@ pub fn update_wire(handle: u64, request: UpdateWireRequest) -> Result<Value, Ser
         design.revision += 1;
         let mut payload = Map::new();
         payload.insert("wire".to_string(), json!(updated));
+        Ok(payload)
+    })
+}
+
+/// Splits one wire segment into two at a point on the segment.
+///
+/// The original segment keeps its identity and now ends at the split point; a
+/// new segment starts there and keeps the old endpoint and net assignment. The
+/// point must lie on the segment and strictly between its endpoints, so a split
+/// always yields two non-zero-length segments. The payload reports both
+/// segments as `first` (the original id) and `second` (the new id).
+pub fn split_wire(handle: u64, request: SplitWireRequest) -> Result<Value, ServiceError> {
+    if !request.x.is_finite() || !request.y.is_finite() {
+        return Err(ServiceError::new("session/argument-invalid", "wire coordinates must be finite numbers"));
+    }
+    mutate(handle, |design| {
+        let index = sheet_index(design, request.sheet.as_deref())?;
+        let sheet = &mut design.sheets[index];
+        let position = sheet
+            .wires
+            .iter()
+            .position(|wire| wire.id == request.id)
+            .ok_or_else(|| not_found(format!("no wire `{}` is drawn on this sheet", request.id)))?;
+        let original = sheet.wires[position].clone();
+        let [x0, y0] = original.from;
+        let [x1, y1] = original.to;
+        let delta_x = x1 - x0;
+        let delta_y = y1 - y0;
+        let length_squared = delta_x * delta_x + delta_y * delta_y;
+        if length_squared == 0.0 {
+            return Err(ServiceError::new("session/argument-invalid", "a zero-length wire cannot be split"));
+        }
+        let length = length_squared.sqrt();
+        let along = ((request.x - x0) * delta_x + (request.y - y0) * delta_y) / length_squared;
+        let perpendicular = (((request.x - x0) * delta_y - (request.y - y0) * delta_x) / length).abs();
+        let tolerance = 1.0e-9 * length.max(1.0);
+        if perpendicular > tolerance || along <= 1.0e-9 || along >= 1.0 - 1.0e-9 {
+            return Err(ServiceError::new(
+                "session/argument-invalid",
+                "the split point must lie on the segment and strictly between its endpoints",
+            ));
+        }
+        let point = [request.x, request.y];
+        let end = original.to;
+        let mut used: HashSet<String> = sheet.wires.iter().map(|wire| wire.id.clone()).collect();
+        let second_id = next_id(&mut design.next_wire, "wire", &mut used);
+        sheet.wires[position].to = point;
+        let second = Wire { id: second_id, net: original.net, from: point, to: end };
+        sheet.wires.push(second.clone());
+        let first = sheet.wires[position].clone();
+        design.revision += 1;
+        let mut payload = Map::new();
+        payload.insert("first".to_string(), json!(first));
+        payload.insert("second".to_string(), json!(second));
         Ok(payload)
     })
 }
@@ -6313,6 +6382,47 @@ mod tests {
         )
         .expect_err("non-finite point");
         assert_eq!(infinite.code, "session/argument-invalid");
+        close(handle).expect("close");
+    }
+
+    #[test]
+    fn wires_split_at_a_point_on_the_segment() {
+        let created = create(CreateRequest::default()).expect("create");
+        let handle = created["handle"].as_u64().expect("handle");
+        add_wire(handle, AddWireRequest { sheet: None, net: Some("VCC".to_string()), from: [0.0, 0.0], to: [10.0, 0.0] })
+            .expect("add wire");
+
+        let split =
+            split_wire(handle, SplitWireRequest { sheet: None, id: "wire-1".to_string(), x: 4.0, y: 0.0 }).expect("split wire");
+        assert_eq!(split["first"]["id"], "wire-1");
+        assert_eq!(split["first"]["to"], json!([4.0, 0.0]));
+        assert_eq!(split["second"]["id"], "wire-2");
+        assert_eq!(split["second"]["from"], json!([4.0, 0.0]));
+        assert_eq!(split["second"]["to"], json!([10.0, 0.0]));
+        assert_eq!(split["second"]["net"], "VCC");
+        assert_eq!(split["revision"], 3);
+
+        let listed = list_wires(handle, None).expect("list wires");
+        assert_eq!(listed["wires"].as_array().expect("wires").len(), 2);
+        assert_eq!(listed["wires"][1]["id"], "wire-2");
+
+        let endpoint = split_wire(handle, SplitWireRequest { sheet: None, id: "wire-2".to_string(), x: 10.0, y: 0.0 })
+            .expect_err("endpoint");
+        assert_eq!(endpoint.code, "session/argument-invalid");
+        let off_segment = split_wire(handle, SplitWireRequest { sheet: None, id: "wire-2".to_string(), x: 6.0, y: 1.0 })
+            .expect_err("off segment");
+        assert_eq!(off_segment.code, "session/argument-invalid");
+        let infinite = split_wire(handle, SplitWireRequest { sheet: None, id: "wire-2".to_string(), x: f64::INFINITY, y: 0.0 })
+            .expect_err("non-finite point");
+        assert_eq!(infinite.code, "session/argument-invalid");
+        let missing = split_wire(handle, SplitWireRequest { sheet: None, id: "wire-9".to_string(), x: 6.0, y: 0.0 })
+            .expect_err("unknown wire");
+        assert_eq!(missing.code, "object/not-found");
+
+        let second_split = split_wire(handle, SplitWireRequest { sheet: None, id: "wire-2".to_string(), x: 7.0, y: 0.0 })
+            .expect("split the second segment");
+        assert_eq!(second_split["second"]["id"], "wire-3");
+        assert_eq!(list_wires(handle, None).expect("list")["wires"].as_array().expect("wires").len(), 3);
         close(handle).expect("close");
     }
 

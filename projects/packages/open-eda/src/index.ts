@@ -39,6 +39,7 @@ export type {
     NetListResult,
     NetResult,
     SheetResult,
+    SplitWireEditResult,
     TextResult,
     WireResult,
 } from './service.js';

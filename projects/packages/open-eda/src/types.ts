@@ -619,6 +619,25 @@ export interface WireInput {
     readonly to: readonly [number, number];
 }
 
+/** Result of `design.splitWire()`: the original segment and the new one. */
+export interface SplitWireResult {
+    /** Original segment, now ending at the split point and keeping its identity. */
+    readonly first: Wire;
+    /** New segment running from the split point to the old endpoint. */
+    readonly second: Wire;
+}
+
+/** Input of `design.splitWire()`. */
+export interface SplitWireInput {
+    readonly sheet?: SheetId;
+    /** Stable wire identity, for example `wire-1`. */
+    readonly id: ObjectId;
+    /** Split point X coordinate, on the segment. */
+    readonly x: number;
+    /** Split point Y coordinate, on the segment. */
+    readonly y: number;
+}
+
 /** Input of `design.updateWire()`. An empty `net` clears the assignment. */
 export interface UpdateWireInput {
     readonly sheet?: SheetId;
@@ -1123,6 +1142,8 @@ export interface Design {
     addWire(input: WireInput): Promise<Wire>;
     /** Updates the endpoints or net of one wire segment. */
     updateWire(input: UpdateWireInput): Promise<Wire>;
+    /** Splits one wire segment into two at a point on the segment. */
+    splitWire(input: SplitWireInput): Promise<SplitWireResult>;
     /** Lists the wires drawn on a sheet. */
     listWires(options?: { readonly sheet?: SheetId }): Promise<readonly Wire[]>;
     /** Adds one junction (connection dot). */

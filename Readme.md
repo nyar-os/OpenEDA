@@ -27,7 +27,7 @@ not opened. A separate read-only reader reports the symbols a KiCad `.kicad_sym`
 library declares, with their units and pins, and the `kicad_sym` export writes
 the placed components' library symbols as an importable KiCad symbol library. Editing
 covers components, nets (derive, disconnect, delete), design-level buses
-(declare, list, remove), wires (add, update, list, delete), junctions and text
+(declare, list, remove), wires (add, update, split, list, delete), junctions and text
 (move and delete by index),
 no-connect flags (add, delete, and mark one pin as deliberately open),
 sheet add/rename/delete, deterministic reference annotation, BOM variants with
@@ -233,6 +233,7 @@ open-eda net disconnect blinker.oeda --net VCC --nodes C1.1
 open-eda net derive blinker.oeda
 open-eda net rename blinker.oeda --id VCC --name VIN
 open-eda net delete blinker.oeda --net VIN
+open-eda wire split blinker.oeda --id wire-1 --x 55 --y 30
 open-eda bus add blinker.oeda --name DATA --width 4 --aliases D
 open-eda bus list blinker.oeda
 open-eda bus remove blinker.oeda --id DATA

@@ -25,7 +25,7 @@ use open_eda_model::{
     AddBusRequest, AddComponentRequest, AddJunctionRequest, AddNoConnectRequest, AddTextRequest, AddWireRequest,
     ComponentClassRequest, ConnectNetRequest, CreateRequest, DeleteNetRequest, DisconnectNetRequest, InspectOptions,
     MoveComponentRequest, NetClassRequest, ReferencePrefixRequest, RenameNetRequest, ServiceError, SetFootprintRequest,
-    SetPinTypeRequest, UpdateComponentRequest, UpdateDesignRequest, UpdateWireRequest,
+    SetPinTypeRequest, SplitWireRequest, UpdateComponentRequest, UpdateDesignRequest, UpdateWireRequest,
 };
 use serde_json::{Value, json};
 use wae::{
@@ -318,6 +318,15 @@ fn design_update_wire(ctx: CallContext) -> Result<JsValue> {
     let handle = handle(&ctx, 0)?;
     let request: UpdateWireRequest = decode(serde_json::from_str(&text(&ctx, 1)?))?;
     let report = open_eda_model::update_wire(handle, request).map_err(fail)?;
+    respond(&ctx, &report)
+}
+
+/// Splits one wire segment into two at a point on the segment.
+#[function]
+fn design_split_wire(ctx: CallContext) -> Result<JsValue> {
+    let handle = handle(&ctx, 0)?;
+    let request: SplitWireRequest = decode(serde_json::from_str(&text(&ctx, 1)?))?;
+    let report = open_eda_model::split_wire(handle, request).map_err(fail)?;
     respond(&ctx, &report)
 }
 
@@ -1479,6 +1488,7 @@ register_module![
     design_connect_net,
     design_add_wire,
     design_update_wire,
+    design_split_wire,
     design_list_wires,
     design_add_junction,
     design_add_text,

@@ -59,6 +59,8 @@ import type {
     SetPinTypeInput,
     SetPinTypeResult,
     Sheet,
+    SplitWireInput,
+    SplitWireResult,
     SymbolLibraryResult,
     TextInput,
     TextLabel,
@@ -109,6 +111,9 @@ export interface NetResult extends EditResult, HistoryFlags {
 export interface WireResult extends EditResult, HistoryFlags {
     readonly wire: Wire;
 }
+
+/** Result of {@link splitWire}. */
+export interface SplitWireEditResult extends EditResult, HistoryFlags, SplitWireResult {}
 
 /** Result of {@link listWires}. */
 export interface WireListResult extends EditResult {
@@ -464,6 +469,16 @@ export function updateWire(handle: number, input: UpdateWireInput): WireResult {
                 from: input.from === undefined ? undefined : [input.from[0], input.from[1]],
                 to: input.to === undefined ? undefined : [input.to[0], input.to[1]],
             }),
+        ),
+    );
+}
+
+/** Splits one wire segment into two at a point on the segment. */
+export function splitWire(handle: number, input: SplitWireInput): SplitWireEditResult {
+    return decode<SplitWireEditResult>(() =>
+        binding('design.splitWire').design_split_wire(
+            handle,
+            JSON.stringify({ sheet: input.sheet, id: input.id, x: input.x, y: input.y }),
         ),
     );
 }

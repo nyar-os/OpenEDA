@@ -67,6 +67,8 @@ import type {
     SetPinTypeInput,
     SetPinTypeResult,
     Sheet,
+    SplitWireInput,
+    SplitWireResult,
     SymbolLibraryResult,
     TextInput,
     TextLabel,
@@ -476,6 +478,11 @@ function attach(opened: service.DesignHandle, options: AttachOptions): Design {
             const result = await mutate(() => service.updateWire(handle, input));
             current = result.design;
             return result.wire;
+        },
+        async splitWire(input: SplitWireInput): Promise<SplitWireResult> {
+            const result = await mutate(() => service.splitWire(handle, input));
+            current = result.design;
+            return { first: result.first, second: result.second };
         },
         async listWires(listOptions?: { readonly sheet?: string }): Promise<readonly Wire[]> {
             return service.listWires(handle, listOptions?.sheet).wires;
