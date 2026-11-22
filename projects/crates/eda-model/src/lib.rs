@@ -158,6 +158,12 @@ const HISTORY_LIMIT: usize = 32;
 const COMPONENT_HALF_WIDTH: f64 = 12.7;
 /// Component box half height, in design units, used by the SVG projection.
 const COMPONENT_HALF_HEIGHT: f64 = 7.62;
+/// Vertical pitch between adjacent symbol pins, in design units.
+const PIN_PITCH: f64 = 2.54;
+/// Length of the pin stub drawn outside the symbol body, in design units.
+const PIN_LENGTH: f64 = 2.54;
+/// Font size of the pin names printed inside the symbol body.
+const PIN_NAME_SIZE: f64 = 2.0;
 
 /// Stable failure of one design operation.
 #[derive(Debug)]
@@ -6902,6 +6908,86 @@ struct SvgProjection {
     height: f64,
 }
 
+/// One pin of a rendered schematic symbol.
+struct PinShape {
+    /// Pin name printed inside the body.
+    name: String,
+    /// Outer end of the stub, where a wire connects.
+    end: [f64; 2],
+    /// Point where the stub meets the body.
+    root: [f64; 2],
+    /// Whether the pin sits on the left side of the body.
+    left: bool,
+}
+
+/// Half height of a component body; it grows so every pin keeps one pitch of
+/// clearance inside the outline.
+fn component_half_height(component: &Component) -> f64 {
+    let rows = component.pins.len().div_ceil(2) as f64;
+    COMPONENT_HALF_HEIGHT.max(rows * PIN_PITCH / 2.0 + PIN_PITCH)
+}
+
+/// Pins of one symbol, split over the left and right sides on a fixed pitch.
+///
+/// The model stores pin names only, so the projection owns this layout. Left
+/// pins take the first half of the list, right pins the rest, and every stub is
+/// [`PIN_LENGTH`] long so wires can attach to [`PinShape::end`] without
+/// overlapping the body.
+fn component_pins(component: &Component) -> Vec<PinShape> {
+    let count = component.pins.len();
+    if count == 0 {
+        return Vec::new();
+    }
+    let left_count = count.div_ceil(2);
+    let right_count = count - left_count;
+    let mut pins = Vec::with_capacity(count);
+    for (index, name) in component.pins.iter().enumerate() {
+        let left = index < left_count;
+        let side_index = if left { index } else { index - left_count };
+        let side_count = if left { left_count } else { right_count };
+        let offset = (side_index as f64 - (side_count as f64 - 1.0) / 2.0) * PIN_PITCH;
+        let y = component.y + offset;
+        let root_x = if left { component.x - COMPONENT_HALF_WIDTH } else { component.x + COMPONENT_HALF_WIDTH };
+        let end_x = if left { root_x - PIN_LENGTH } else { root_x + PIN_LENGTH };
+        pins.push(PinShape { name: name.clone(), end: [end_x, y], root: [root_x, y], left });
+    }
+    pins
+}
+
+/// Rotates one point around the component origin.
+fn rotate_about(component: &Component, point: [f64; 2]) -> [f64; 2] {
+    let angle = component.rotation.to_radians();
+    let (sin, cos) = (angle.sin(), angle.cos());
+    let dx = point[0] - component.x;
+    let dy = point[1] - component.y;
+    [component.x + dx * cos - dy * sin, component.y + dx * sin + dy * cos]
+}
+
+/// Axis-aligned bounds of a component body and its pins, after rotation.
+fn component_extents(component: &Component) -> ([f64; 2], [f64; 2]) {
+    let half_height = component_half_height(component);
+    let mut points = vec![
+        [component.x - COMPONENT_HALF_WIDTH, component.y - half_height],
+        [component.x + COMPONENT_HALF_WIDTH, component.y - half_height],
+        [component.x + COMPONENT_HALF_WIDTH, component.y + half_height],
+        [component.x - COMPONENT_HALF_WIDTH, component.y + half_height],
+    ];
+    for pin in component_pins(component) {
+        points.push(pin.root);
+        points.push(pin.end);
+    }
+    let mut min = [f64::INFINITY, f64::INFINITY];
+    let mut max = [f64::NEG_INFINITY, f64::NEG_INFINITY];
+    for point in points {
+        let point = rotate_about(component, point);
+        min[0] = min[0].min(point[0]);
+        min[1] = min[1].min(point[1]);
+        max[0] = max[0].max(point[0]);
+        max[1] = max[1].max(point[1]);
+    }
+    (min, max)
+}
+
 fn render_svg(design: &Design) -> String {
     let sheets: Vec<&Sheet> = design.sheets.iter().collect();
     svg_projection(&sheets).document
@@ -6920,10 +7006,11 @@ fn svg_projection(sheets: &[&Sheet]) -> SvgProjection {
     for sheet in sheets {
         for component in &sheet.components {
             any = true;
-            min_x = min_x.min(component.x - COMPONENT_HALF_WIDTH);
-            max_x = max_x.max(component.x + COMPONENT_HALF_WIDTH);
-            min_y = min_y.min(component.y - COMPONENT_HALF_HEIGHT);
-            max_y = max_y.max(component.y + COMPONENT_HALF_HEIGHT);
+            let (min, max) = component_extents(component);
+            min_x = min_x.min(min[0]);
+            max_x = max_x.max(max[0]);
+            min_y = min_y.min(min[1]);
+            max_y = max_y.max(max[1]);
         }
         for wire in &sheet.wires {
             any = true;
@@ -6943,9 +7030,10 @@ fn svg_projection(sheets: &[&Sheet]) -> SvgProjection {
         }
         for text in &sheet.texts {
             any = true;
+            let width = text.text.chars().count() as f64 * 3.2 * 0.6;
             min_x = min_x.min(text.x);
-            max_x = max_x.max(text.x);
-            min_y = min_y.min(text.y);
+            max_x = max_x.max(text.x + width);
+            min_y = min_y.min(text.y - 3.2);
             max_y = max_y.max(text.y);
         }
     }
@@ -7006,10 +7094,27 @@ fn svg_projection(sheets: &[&Sheet]) -> SvgProjection {
             svg.push_str(&format!(
                 "      <rect x=\"{:.2}\" y=\"{:.2}\" width=\"{:.2}\" height=\"{:.2}\" fill=\"#f6faff\" stroke=\"#1f6feb\" stroke-width=\"0.5\"/>\n",
                 component.x - COMPONENT_HALF_WIDTH,
-                component.y - COMPONENT_HALF_HEIGHT,
+                component.y - component_half_height(component),
                 COMPONENT_HALF_WIDTH * 2.0,
-                COMPONENT_HALF_HEIGHT * 2.0
+                component_half_height(component) * 2.0
             ));
+            for pin in component_pins(component) {
+                svg.push_str(&format!(
+                    "      <line x1=\"{:.2}\" y1=\"{:.2}\" x2=\"{:.2}\" y2=\"{:.2}\" stroke=\"#1f6feb\" stroke-width=\"0.35\"/>\n",
+                    pin.root[0], pin.root[1], pin.end[0], pin.end[1]
+                ));
+                svg.push_str(&format!(
+                    "      <circle cx=\"{:.2}\" cy=\"{:.2}\" r=\"0.45\" fill=\"#1f6feb\"/>\n",
+                    pin.end[0], pin.end[1]
+                ));
+                let (x, anchor) = if pin.left { (pin.root[0] + 0.9, "start") } else { (pin.root[0] - 0.9, "end") };
+                svg.push_str(&format!(
+                    "      <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"{PIN_NAME_SIZE:.1}\" text-anchor=\"{anchor}\" fill=\"#334155\">{}</text>\n",
+                    x,
+                    pin.root[1] + 0.7,
+                    escape_xml(&pin.name)
+                ));
+            }
             svg.push_str(&format!(
                 "      <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"3.2\" text-anchor=\"middle\">{}</text>\n",
                 component.x,
@@ -7553,10 +7658,11 @@ fn render_pdf(design: &Design) -> String {
     for sheet in &design.sheets {
         for component in &sheet.components {
             any = true;
-            min_x = min_x.min(component.x - COMPONENT_HALF_WIDTH);
-            max_x = max_x.max(component.x + COMPONENT_HALF_WIDTH);
-            min_y = min_y.min(component.y - COMPONENT_HALF_HEIGHT);
-            max_y = max_y.max(component.y + COMPONENT_HALF_HEIGHT);
+            let (min, max) = component_extents(component);
+            min_x = min_x.min(min[0]);
+            max_x = max_x.max(max[0]);
+            min_y = min_y.min(min[1]);
+            max_y = max_y.max(max[1]);
         }
         for wire in &sheet.wires {
             any = true;
@@ -7602,11 +7708,45 @@ fn render_pdf(design: &Design) -> String {
             ));
         }
         for component in &sheet.components {
-            let x = map_x(component.x - COMPONENT_HALF_WIDTH);
-            let y = map_y(component.y + COMPONENT_HALF_HEIGHT);
-            let width = COMPONENT_HALF_WIDTH * 2.0 * scale;
-            let height = COMPONENT_HALF_HEIGHT * 2.0 * scale;
-            content.push_str(&format!("0.7 w {x:.2} {y:.2} {width:.2} {height:.2} re S\n"));
+            let half_height = component_half_height(component);
+            let corners = [
+                [component.x - COMPONENT_HALF_WIDTH, component.y - half_height],
+                [component.x + COMPONENT_HALF_WIDTH, component.y - half_height],
+                [component.x + COMPONENT_HALF_WIDTH, component.y + half_height],
+                [component.x - COMPONENT_HALF_WIDTH, component.y + half_height],
+            ];
+            let mut path = String::new();
+            for (index, corner) in corners.iter().enumerate() {
+                let point = rotate_about(component, *corner);
+                if index == 0 {
+                    path.push_str(&format!("{:.2} {:.2} m", map_x(point[0]), map_y(point[1])));
+                }
+                else {
+                    path.push_str(&format!(" {:.2} {:.2} l", map_x(point[0]), map_y(point[1])));
+                }
+            }
+            content.push_str(&format!("0.7 w {path} h S\n"));
+            for pin in component_pins(component) {
+                let root = rotate_about(component, pin.root);
+                let end = rotate_about(component, pin.end);
+                content.push_str(&format!(
+                    "0.5 w {:.2} {:.2} m {:.2} {:.2} l S\n",
+                    map_x(root[0]),
+                    map_y(root[1]),
+                    map_x(end[0]),
+                    map_y(end[1])
+                ));
+                let name_at =
+                    rotate_about(component, [if pin.left { pin.root[0] + 0.9 } else { pin.root[0] - 0.9 }, pin.root[1] + 0.7]);
+                let x =
+                    if pin.left { map_x(name_at[0]) } else { map_x(name_at[0]) - pdf_text_width(&pin.name, label_size * 0.7) };
+                content.push_str(&format!(
+                    "BT /F1 {:.2} Tf {x:.2} {:.2} Td {} Tj ET\n",
+                    label_size * 0.7,
+                    map_y(name_at[1]),
+                    pdf_text(&pin.name)
+                ));
+            }
             content.push_str(&format!(
                 "BT /F1 {label_size:.2} Tf {:.2} {:.2} Td {} Tj ET\n",
                 map_x(component.x),
@@ -7650,6 +7790,11 @@ fn render_pdf(design: &Design) -> String {
     }
     pdf.push_str(&format!("trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n", objects.len() + 1));
     pdf
+}
+
+/// Approximate width of a PDF text run in points.
+fn pdf_text_width(text: &str, size: f64) -> f64 {
+    text.chars().count() as f64 * size * 0.5
 }
 
 /// Escapes a string for a PDF literal string, dropping characters the byte

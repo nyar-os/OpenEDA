@@ -36,7 +36,7 @@ answer about the document, such as a pin-to-pin path.
 | import `kicad_sym` | supported | read-only symbol declarations: unit count and each pin's number, name, role and unit |
 | export `kicad_sym` | supported | one library symbol per derived library id, with pins and roles; no symbol body is invented |
 | KiCad board, Gerber, drill, STEP | unsupported | declared in the capability matrix only |
-| interactive schematic/board renderer | unsupported | the preview is an SVG projection |
+| interactive schematic/board renderer | unsupported | the preview is an SVG/PDF projection that draws component bodies, pin stubs on a 2.54 pitch, wires, junctions, labels and text |
 | DRC | unsupported | `capability/not-implemented` |
 | board layout, routing, simulation | unsupported | not modelled |
 

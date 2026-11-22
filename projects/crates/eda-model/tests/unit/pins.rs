@@ -280,3 +280,26 @@ fn pin_edits_persist_across_save_and_reopen() {
     assert_eq!(components["components"][0]["pins"], json!(["1", "B"]));
     close(again_handle).expect("close");
 }
+
+#[test]
+fn svg_projection_draws_pin_stubs_and_names() {
+    let created = create(CreateRequest::default()).expect("create");
+    let handle = created["handle"].as_u64().expect("handle");
+    add_resistor(handle, "U1", &["VCC", "GND", "IO1", "IO2"], None);
+
+    let directory = TempDir::new("svg-pins");
+    let target = directory.join("pins.svg");
+    export(handle, "svg", &target).expect("export svg");
+    let svg = fs::read_to_string(&target).expect("read svg");
+
+    // The body spans 27.3 … 52.7 and every stub adds 2.54, so wires can end at 24.76 / 55.24.
+    assert!(svg.contains("x2=\"24.76\""), "the left pin stub is drawn; got {svg}");
+    assert!(svg.contains("x2=\"55.24\""), "the right pin stub is drawn; got {svg}");
+    assert!(svg.contains(">VCC</text>"), "left pin names are drawn; got {svg}");
+    assert!(svg.contains(">IO2</text>"), "right pin names are drawn; got {svg}");
+    // Four pins split two per side on a 2.54 pitch around y = 30.
+    assert!(svg.contains("y1=\"28.73\"") && svg.contains("y1=\"31.27\""), "pins use the fixed pitch; got {svg}");
+    let view_box = svg.split("viewBox=\"").nth(1).expect("viewBox").split('"').next().expect("viewBox value");
+    let min_x: f64 = view_box.split_whitespace().next().expect("min x").parse().expect("number");
+    assert!(min_x <= 24.76, "the view box covers the left stubs; got {view_box}");
+}

@@ -20,11 +20,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     })?;
     let handle = created["handle"].as_u64().expect("handle");
 
+    // Pin stubs are 2.54 long, so wire endpoints below land exactly on the
+    // rendered connection points instead of stopping at the body outline.
     let parts = [
-        ("U1", "MCU", 40.0, 40.0, vec!["VCC".to_string(), "GND".to_string(), "IO1".to_string(), "IO2".to_string()]),
-        ("R1", "10k", 70.0, 24.0, vec!["1".to_string(), "2".to_string()]),
-        ("R2", "330", 70.0, 56.0, vec!["1".to_string(), "2".to_string()]),
-        ("C1", "100n", 20.0, 56.0, vec!["1".to_string(), "2".to_string()]),
+        ("U1", "MCU", 60.0, 40.0, vec!["VCC".to_string(), "GND".to_string(), "IO1".to_string(), "IO2".to_string()]),
+        ("R1", "10k", 95.0, 25.0, vec!["1".to_string(), "2".to_string()]),
+        ("R2", "330", 95.0, 55.0, vec!["1".to_string(), "2".to_string()]),
+        ("C1", "100n", 20.0, 38.73, vec!["1".to_string(), "2".to_string()]),
     ];
     for (reference, value, x, y, pins) in parts {
         add_component(
@@ -34,22 +36,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let wires = [
-        ([20.0, 48.38], [20.0, 36.0], Some("VCC")),
-        ([20.0, 36.0], [27.3, 36.0], Some("VCC")),
-        ([20.0, 63.62], [20.0, 70.0], Some("GND")),
-        ([20.0, 70.0], [46.0, 70.0], Some("GND")),
-        ([46.0, 70.0], [46.0, 47.62], Some("GND")),
-        ([52.7, 36.0], [54.0, 36.0], Some("IO1")),
-        ([54.0, 36.0], [54.0, 24.0], Some("IO1")),
-        ([54.0, 24.0], [57.3, 24.0], Some("IO1")),
-        ([52.7, 44.0], [54.0, 44.0], Some("IO2")),
-        ([54.0, 44.0], [54.0, 56.0], Some("IO2")),
-        ([54.0, 56.0], [57.3, 56.0], Some("IO2")),
+        ([35.24, 38.73], [44.76, 38.73], Some("VCC")),
+        ([4.76, 38.73], [4.76, 64.0], Some("GND")),
+        ([4.76, 64.0], [44.76, 64.0], Some("GND")),
+        ([44.76, 64.0], [44.76, 41.27], Some("GND")),
+        ([75.24, 38.73], [77.5, 38.73], Some("IO1")),
+        ([77.5, 38.73], [77.5, 25.0], Some("IO1")),
+        ([77.5, 25.0], [79.76, 25.0], Some("IO1")),
+        ([75.24, 41.27], [77.5, 41.27], Some("IO2")),
+        ([77.5, 41.27], [77.5, 55.0], Some("IO2")),
+        ([77.5, 55.0], [79.76, 55.0], Some("IO2")),
     ];
     for (from, to, net) in wires {
         add_wire(handle, AddWireRequest { sheet: None, net: net.map(str::to_string), from, to })?;
     }
-    add_text(handle, AddTextRequest { sheet: None, text: "Demo schematic".into(), x: 8.0, y: 78.0 })?;
+    add_text(handle, AddTextRequest { sheet: None, text: "Demo schematic".into(), x: 4.76, y: 72.0 })?;
 
     for format in ["svg", "pdf"] {
         let target = out.join(format!("demo-schematic.{format}"));
