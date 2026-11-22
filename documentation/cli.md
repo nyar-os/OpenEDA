@@ -34,7 +34,7 @@ to stderr.
 | `open-eda trace <file> <from> <to>` | Trace the read-only connection path between two `REF.PIN` pins |
 | `open-eda stats <file>` | Print deterministic per-sheet and design-wide counts |
 | `open-eda diff <before> <after>` | Compare two documents structurally |
-| `open-eda annotate <file>` | Renumber references per prefix by sheet and placement order |
+| `open-eda annotate <file>` | Renumber references per leading prefix by sheet, then `y` and `x`; report `count`/`changed`, `changes` and skipped references |
 | `open-eda translate <file> --dx <n> --dy <n> [--refs <list>] [--wires <list>]` | Move selected components and wires |
 | `open-eda undo <file>` / `open-eda redo <file>` | Walk the sidecar history |
 | `open-eda capabilities` | Print the machine-readable capability matrix |

@@ -1313,7 +1313,9 @@ pub struct Waiver {
 /// `add_junction`/`delete_junction` and `add_no_connect`/`delete_no_connect`
 /// exist and are covered by tests. Component pins are editable too:
 /// `edits.pins` is `supported` because [`add_pin`], [`remove_pin`] and
-/// [`rename_pin`] exist and are covered by tests.
+/// [`rename_pin`] exist and are covered by tests. Reference annotation is an
+/// editing surface as well: `edits.annotate` is `supported` because [`annotate`]
+/// exists and is covered by tests.
 ///
 /// Read-only queries live under `queries`, next to `checks`: `queries.trace`
 /// reports the pin-to-pin path query of [`trace_pins`]. It is a query, not a
@@ -1356,6 +1358,7 @@ pub fn capabilities() -> Value {
         "junctions": level("edit.junctions".to_string()),
         "noConnects": level("edit.noConnects".to_string()),
         "pins": level("edit.pins".to_string()),
+        "annotate": level("edit.annotate".to_string()),
     });
 
     let mut queries = Map::new();
@@ -1400,6 +1403,7 @@ fn capability_matrix() -> CapabilityMatrix {
     matrix.insert(Capability::new("edit.junctions", "edit", Support::Supported));
     matrix.insert(Capability::new("edit.noConnects", "edit", Support::Supported));
     matrix.insert(Capability::new("edit.pins", "edit", Support::Supported));
+    matrix.insert(Capability::new("edit.annotate", "edit", Support::Supported));
     matrix.insert(Capability::new("query.trace", "query", Support::Supported));
     matrix
 }
@@ -2717,10 +2721,17 @@ pub fn rename_pin(handle: u64, request: RenamePinRequest) -> Result<Value, Servi
 
 /// Renumbers every component reference designator deterministically.
 ///
-/// Components are visited sheet by sheet, then top to bottom and left to right,
-/// and numbered per reference prefix starting at 1. Net nodes follow their
-/// component, so connectivity is preserved. A design that is already annotated
-/// keeps its revision.
+/// Components are grouped by the letters at the start of their reference. Each
+/// group is visited sheet by sheet, then top to bottom (`y`) and left to right
+/// (`x`), and numbered from 1, so a designator becomes `<prefix><n>`. Net nodes,
+/// no-connect pin attachments and BOM variants follow their component, and a
+/// component-class assignment is keyed by the stable component id so it stays
+/// attached.
+///
+/// A reference without leading letters is skipped and reported under `skipped`
+/// instead of being guessed into a prefix. The whole call is one revision: when
+/// every designator already matches its number the revision and undo history
+/// stay untouched and `count`, `changed` and `annotated` are zero.
 pub fn annotate(handle: u64) -> Result<Value, ServiceError> {
     mutate(handle, |design| {
         let mut targets: Vec<(usize, usize)> = Vec::new();
@@ -2742,9 +2753,18 @@ pub fn annotate(handle: u64) -> Result<Value, ServiceError> {
         let mut counters: BTreeMap<String, u64> = BTreeMap::new();
         let mut renames: HashMap<String, String> = HashMap::new();
         let mut changes = Vec::new();
+        let mut skipped = Vec::new();
         for (sheet_index, component_index) in targets {
             let component = &design.sheets[sheet_index].components[component_index];
             let prefix = designator_prefix(&component.reference);
+            if prefix.is_empty() {
+                skipped.push(json!({
+                    "sheetId": design.sheets[sheet_index].id,
+                    "componentId": component.id,
+                    "reference": component.reference,
+                }));
+                continue;
+            }
             let counter = counters.entry(prefix.clone()).or_insert(0);
             *counter += 1;
             let next = format!("{prefix}{counter}");
@@ -2772,6 +2792,13 @@ pub fn annotate(handle: u64) -> Result<Value, ServiceError> {
                     }
                 }
             }
+            for no_connect in &mut sheet.no_connects {
+                if let Some(node) = &mut no_connect.node
+                    && let Some(next) = renames.get(&node.reference)
+                {
+                    node.reference = next.clone();
+                }
+            }
         }
         for variant in &mut design.variants {
             for reference in &mut variant.dnp {
@@ -2789,18 +2816,21 @@ pub fn annotate(handle: u64) -> Result<Value, ServiceError> {
         if !changes.is_empty() {
             design.revision += 1;
         }
+        let changed = changes.len();
         let mut payload = Map::new();
-        payload.insert("annotated".to_string(), json!(renames.len()));
+        payload.insert("count".to_string(), json!(changed));
+        payload.insert("changed".to_string(), json!(changed));
+        payload.insert("annotated".to_string(), json!(changed));
         payload.insert("changes".to_string(), json!(changes));
+        payload.insert("skipped".to_string(), json!(skipped));
         Ok(payload)
     })
 }
 
-/// Letters at the start of a reference designator; a designator without one
-/// belongs to the generic `U` group.
+/// ASCII letters at the start of a reference designator, or an empty string when
+/// the reference does not start with a letter.
 fn designator_prefix(reference: &str) -> String {
-    let prefix: String = reference.chars().take_while(|character| character.is_ascii_alphabetic()).collect();
-    if prefix.is_empty() { "U".to_string() } else { prefix }
+    reference.chars().take_while(|character| character.is_ascii_alphabetic()).collect()
 }
 
 /// Connects nodes to a named net, creating the net when it does not exist.

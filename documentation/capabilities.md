@@ -19,7 +19,7 @@ answer about the document, such as a pin-to-pin path.
 | `.oeda` create/open/save/edit | supported | sheets, components, nets, buses, wires, junctions, no-connect flags, text, net labels with scope, title block, undo/redo |
 | design compare `diff` | supported | read-only report of added, removed and modified sheets, components, nets, wires, buses and BOM variants |
 | pin electrical types | supported | per-pin roles, the `electrical` check and the KiCad library pin types |
-| reference annotation `annotate` | supported | renumbers per prefix by sheet and placement order; net nodes follow |
+| reference annotation `annotate` | supported | renumbers per leading-letter prefix by sheet, then `y` and `x`; a reference without a prefix is skipped and reported under `skipped`; net nodes, no-connect attachments and BOM variants follow; one revision, none when unchanged |
 | BOM variants and DNP | supported | named DNP designator lists and value overrides applied to `bom`, `bom_json` and `bom_html` |
 | net classes | supported | name, width, clearance, via and net/bus assignment lists |
 | component custom properties | supported | trimmed unique keys, verbatim values; stored in `.oeda`, the JSON projection and KiCad symbol properties |
@@ -49,6 +49,32 @@ nodes are `REF.PIN`. Net names, references and pin names must not break the
 `NET` line or `REF.PIN` grammar the writers emit; `erc/reference-illegal`,
 `erc/pin-name-illegal` and `erc/net-name-illegal` fail inspection instead of
 producing an ambiguous file.
+
+### Reference annotation
+
+`annotate` (`design.annotate()` in the SDK, `open-eda annotate <file>`) is the
+one editing call that rewrites reference designators. Components are grouped by
+the ASCII letters at the start of their reference (`R`, `C`, `U`, `TP`); each
+group is walked sheet by sheet, then top to bottom (`y`) and left to right
+(`x`), and numbered from 1. The new reference is the group prefix plus that
+number, so `R?`/`R3`/`R7` become `R1`/`R2`/`R3` while `C` and `U` count
+independently. Characters after the prefix are replaced, so `TP_A` becomes
+`TP1`.
+
+Net nodes, no-connect pin attachments and BOM variant `dnp`/`values` entries
+follow their component. Component-class assignments are keyed by the stable
+component id and therefore stay attached. A reference that does not start with a
+letter is skipped, left untouched and listed under `skipped` with its sheet,
+component id and current reference; that is not an error. Duplicate references
+are refused when they are created (`object/duplicate`) and an illegal reference
+is reported by the `references` check (`erc/reference-illegal`), so annotation
+never has to invent a prefix for one.
+
+The report is `{count, changed, annotated, changes, skipped}`: `changes` lists
+every `from`/`to` pair in deterministic order, and `count`, `changed` and
+`annotated` all hold the number of designators that moved. An already annotated
+design reports zero, adds no revision and records no history step. A call that
+does move designators adds exactly one revision and one history entry.
 
 ### Labels, buses and hierarchy
 
@@ -253,8 +279,8 @@ Every file is written through a temporary file and a rename.
 ## Tests
 
 - `projects/crates/eda-model/tests/unit/lib.rs` — create, edit, inspect, save
-  and reopen, writers, statistics, labels, variants, properties and KiCad
-  round-trips.
+  and reopen, writers, statistics, annotation, labels, variants, properties and
+  KiCad round-trips.
 - `projects/crates/eda-model/tests/unit/kicad.rs` — parser and writer subset.
 - `projects/crates/eda-model/tests/unit/diff.rs` — structural comparison.
 - `projects/crates/eda-model/tests/unit/connectivity.rs` — net and pin analysis.

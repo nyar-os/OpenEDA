@@ -117,6 +117,7 @@ export interface DesignCapabilities {
         readonly junctions: SupportLevel;
         readonly noConnects: SupportLevel;
         readonly pins: SupportLevel;
+        readonly annotate: SupportLevel;
     };
     /** Read-only queries that are not rule checks, such as the pin trace. */
     readonly queries: { readonly trace: SupportLevel };
@@ -631,6 +632,13 @@ export interface AnnotateChange {
     readonly to: string;
 }
 
+/** One component `design.annotate()` left untouched because its reference has no prefix. */
+export interface AnnotateSkipped {
+    readonly sheetId: SheetId;
+    readonly componentId: ObjectId;
+    readonly reference: string;
+}
+
 /** Result of `design.annotate()`. */
 export interface AnnotateResult {
     readonly revision: number;
@@ -639,7 +647,13 @@ export interface AnnotateResult {
     readonly canRedo: boolean;
     /** Designators that changed; zero when the design was already annotated. */
     readonly annotated: number;
+    /** Same value as `annotated`, reported under the `count` field. */
+    readonly count: number;
+    /** Same value as `annotated`, reported under the `changed` field. */
+    readonly changed: number;
     readonly changes: readonly AnnotateChange[];
+    /** Components skipped because their reference does not start with a letter. */
+    readonly skipped: readonly AnnotateSkipped[];
 }
 
 /** One BOM variant: designators that are not populated plus value overrides. */

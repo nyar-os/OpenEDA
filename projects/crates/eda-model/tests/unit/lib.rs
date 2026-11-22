@@ -74,6 +74,7 @@ fn capability_matrix_reports_only_the_implemented_entries() {
     assert_eq!(matrix["edits"]["junctions"], "supported");
     assert_eq!(matrix["edits"]["noConnects"], "supported");
     assert_eq!(matrix["edits"]["pins"], "supported");
+    assert_eq!(matrix["edits"]["annotate"], "supported");
     assert_eq!(matrix["queries"]["trace"], "supported");
 }
 
@@ -3714,6 +3715,152 @@ fn annotate_renumbers_by_placement_and_updates_net_nodes() {
 }
 
 #[test]
+fn annotate_orders_four_components_top_to_bottom_and_left_to_right() {
+    let created = create(CreateRequest::default()).expect("create");
+    let handle = created["handle"].as_u64().expect("handle");
+    for (reference, x, y) in [("R9", 30.0, 20.0), ("R3", 10.0, 10.0), ("R7", 20.0, 10.0), ("R1", 10.0, 20.0)] {
+        add_component(
+            handle,
+            AddComponentRequest {
+                sheet: None,
+                reference: reference.to_string(),
+                value: "10k".to_string(),
+                x,
+                y,
+                rotation: 0.0,
+                pins: vec!["1".to_string()],
+            },
+        )
+        .expect("add");
+    }
+
+    let report = annotate(handle).expect("annotate");
+    assert_eq!(report["count"], 4);
+    assert_eq!(report["changed"], 4);
+    let changes = report["changes"].as_array().expect("changes");
+    let moves = changes
+        .iter()
+        .map(|change| (change["from"].as_str().expect("from"), change["to"].as_str().expect("to")))
+        .collect::<Vec<_>>();
+    assert_eq!(moves, vec![("R3", "R1"), ("R7", "R2"), ("R1", "R3"), ("R9", "R4")]);
+    assert_eq!(report["skipped"], json!([]));
+
+    let listed = list(handle).expect("list");
+    let references = listed["components"]
+        .as_array()
+        .expect("components")
+        .iter()
+        .map(|component| component["ref"].as_str().expect("ref"))
+        .collect::<Vec<_>>();
+    assert_eq!(references, vec!["R4", "R1", "R2", "R3"]);
+    close(handle).expect("close");
+}
+
+#[test]
+fn annotate_counts_each_prefix_independently() {
+    let created = create(CreateRequest::default()).expect("create");
+    let handle = created["handle"].as_u64().expect("handle");
+    for (reference, x, y) in
+        [("C2", 10.0, 10.0), ("R5", 20.0, 10.0), ("C1", 30.0, 10.0), ("U7", 10.0, 20.0), ("R2", 20.0, 20.0)]
+    {
+        add_component(
+            handle,
+            AddComponentRequest {
+                sheet: None,
+                reference: reference.to_string(),
+                value: "10k".to_string(),
+                x,
+                y,
+                rotation: 0.0,
+                pins: vec!["1".to_string()],
+            },
+        )
+        .expect("add");
+    }
+
+    let report = annotate(handle).expect("annotate");
+    assert_eq!(report["count"], 4);
+    let listed = list(handle).expect("list");
+    let references = listed["components"]
+        .as_array()
+        .expect("components")
+        .iter()
+        .map(|component| component["ref"].as_str().expect("ref"))
+        .collect::<Vec<_>>();
+    assert_eq!(references, vec!["C1", "R1", "C2", "U1", "R2"]);
+    close(handle).expect("close");
+}
+
+#[test]
+fn annotate_reports_no_change_for_an_ordered_design() {
+    let created = create(CreateRequest::default()).expect("create");
+    let handle = created["handle"].as_u64().expect("handle");
+    for (reference, x, y) in [("R1", 10.0, 10.0), ("R2", 20.0, 10.0), ("C1", 10.0, 20.0)] {
+        add_component(
+            handle,
+            AddComponentRequest {
+                sheet: None,
+                reference: reference.to_string(),
+                value: "10k".to_string(),
+                x,
+                y,
+                rotation: 0.0,
+                pins: vec!["1".to_string()],
+            },
+        )
+        .expect("add");
+    }
+    let before = summary(handle).expect("summary")["revision"].as_u64().expect("revision");
+
+    let report = annotate(handle).expect("annotate");
+    assert_eq!(report["count"], 0);
+    assert_eq!(report["changed"], 0);
+    assert_eq!(report["annotated"], 0);
+    assert_eq!(report["changes"], json!([]));
+    assert_eq!(report["skipped"], json!([]));
+    assert_eq!(report["revision"], before);
+    close(handle).expect("close");
+}
+
+#[test]
+fn annotate_skips_references_without_a_prefix() {
+    let created = create(CreateRequest::default()).expect("create");
+    let handle = created["handle"].as_u64().expect("handle");
+    for (reference, x) in [("123", 10.0), ("R2", 20.0), ("R1", 30.0)] {
+        add_component(
+            handle,
+            AddComponentRequest {
+                sheet: None,
+                reference: reference.to_string(),
+                value: "10k".to_string(),
+                x,
+                y: 0.0,
+                rotation: 0.0,
+                pins: vec!["1".to_string()],
+            },
+        )
+        .expect("add");
+    }
+
+    let report = annotate(handle).expect("annotate");
+    assert_eq!(report["count"], 2);
+    let skipped = report["skipped"].as_array().expect("skipped");
+    assert_eq!(skipped.len(), 1);
+    assert_eq!(skipped[0]["reference"], "123");
+    assert_eq!(skipped[0]["sheetId"], "sheet-1");
+    assert_eq!(skipped[0]["componentId"], "component-1");
+    let listed = list(handle).expect("list");
+    let references = listed["components"]
+        .as_array()
+        .expect("components")
+        .iter()
+        .map(|component| component["ref"].as_str().expect("ref"))
+        .collect::<Vec<_>>();
+    assert_eq!(references, vec!["123", "R1", "R2"]);
+    close(handle).expect("close");
+}
+
+#[test]
 fn variants_filter_and_override_bom_rows_and_persist() {
     let dir = TempDir::new("variants");
     let document = dir.join("variants.oeda");
@@ -3822,10 +3969,23 @@ fn annotation_rewrites_variant_references() {
         },
     )
     .expect("add variant");
+    add_no_connect(
+        handle,
+        AddNoConnectRequest {
+            sheet: None,
+            x: 10.0,
+            y: 0.0,
+            node: Some(Node { reference: "R2".to_string(), pin: "1".to_string() }),
+        },
+    )
+    .expect("add no-connect");
     annotate(handle).expect("annotate");
     let variant = &list_variants(handle).expect("list")["variants"][0];
     assert_eq!(variant["dnp"], json!(["R1"]));
     assert_eq!(variant["values"]["R2"], "22k");
+    let flags = list_no_connects(handle, None).expect("list no-connects");
+    assert_eq!(flags["noConnects"][0]["node"]["ref"], "R1");
+    assert_eq!(flags["noConnects"][0]["node"]["pin"], "1");
     close(handle).expect("close");
 }
 

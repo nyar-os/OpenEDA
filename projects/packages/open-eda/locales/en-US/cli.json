@@ -6,7 +6,7 @@
             "create": "Create a native design document and save it to a project file",
             "open": "Open a design document and print its committed revision and sheets",
             "diff": "Compare two design documents and report added, removed and modified sheets, components, nets and buses",
-            "annotate": "Renumber every component reference designator by sheet and placement order",
+            "annotate": "Renumber component reference designators by leading prefix and placement order, skipping references without a prefix",
             "translate": "Translate selected components and wires of a sheet by an offset",
             "list": "List components, nets and wires of a design document",
             "symbols": "List the symbol library a design document uses, with pin counts and missing footprints",

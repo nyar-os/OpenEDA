@@ -452,8 +452,17 @@ cli.command('annotate', 'cli.cmd.annotate').actionCtx(async (options, _args, ctx
         return { result, saved: await savedReport(design) };
     });
     ctx.emitResult(
-        { ...saved, revision: saved.revision, annotated: result.annotated, changes: result.changes },
-        `annotated ${result.annotated} component(s) in ${file} revision=${saved.revision}`,
+        {
+            ...saved,
+            revision: saved.revision,
+            annotated: result.annotated,
+            count: result.count,
+            changed: result.changed,
+            changes: result.changes,
+            skipped: result.skipped,
+        },
+        `annotated ${result.changed} component(s) in ${file} revision=${saved.revision}` +
+            (result.skipped.length > 0 ? `, skipped ${result.skipped.length} without a prefix` : ''),
     );
     return 0;
 });

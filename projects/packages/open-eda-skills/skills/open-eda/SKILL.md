@@ -212,10 +212,12 @@ because a netlist does not carry them. The same entry points are
 ## Reference annotation
 
 `open-eda annotate <file.oeda>` renumbers every reference designator: sheets in
-document order, components top to bottom and left to right, each prefix from 1.
-Net nodes are rewritten to the new references, and the command reports every
-`from`/`to` change. An already annotated design adds no revision. References
-without leading letters join the `U` group; the numerals in `TP_A` are replaced.
+document order, components top to bottom and left to right, each leading-letter
+prefix from 1. Net nodes, no-connect pin attachments and BOM variants are
+rewritten to the new references, and the command reports every `from`/`to`
+change plus `count`/`changed`. An already annotated design adds no revision.
+References without leading letters are skipped, left untouched and listed under
+`skipped`; the numerals in `TP_A` are replaced.
 
 ## Reference prefix rules
 
