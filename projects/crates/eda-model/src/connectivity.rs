@@ -154,7 +154,7 @@ fn wire_id(sheet: &Sheet, index: usize) -> String {
 }
 
 /// Whether two points coincide within [`TOLERANCE`].
-fn point_eq(a: [f64; 2], b: [f64; 2]) -> bool {
+pub(crate) fn point_eq(a: [f64; 2], b: [f64; 2]) -> bool {
     (a[0] - b[0]).abs() <= TOLERANCE && (a[1] - b[1]).abs() <= TOLERANCE
 }
 
@@ -176,7 +176,7 @@ fn on_segment(point: [f64; 2], start: [f64; 2], end: [f64; 2]) -> bool {
 }
 
 /// Whether `point` lies on `wire`.
-fn on_wire(point: [f64; 2], wire: &Wire) -> bool {
+pub(crate) fn on_wire(point: [f64; 2], wire: &Wire) -> bool {
     on_segment(point, wire.from, wire.to)
 }
 
@@ -200,7 +200,7 @@ pub fn endpoint_attached(sheet: &Sheet, wire: &Wire, point: [f64; 2]) -> bool {
 
 /// Whether two wires join: coincident endpoints, or one endpoint on the other
 /// segment (a T-junction). Interior crossings are not connections.
-fn connected(first: &Wire, second: &Wire) -> bool {
+pub(crate) fn connected(first: &Wire, second: &Wire) -> bool {
     point_eq(first.from, second.from)
         || point_eq(first.from, second.to)
         || point_eq(first.to, second.from)

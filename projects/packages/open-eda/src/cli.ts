@@ -38,6 +38,7 @@ import type {
     PortDirection,
     SaveReport,
     SymbolLibraryResult,
+    TraceReport,
 } from './types.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -139,6 +140,9 @@ function describeCapabilities(matrix: DesignCapabilities): string {
     const edits = Object.entries(matrix.edits)
         .filter(([, level]) => level === 'supported')
         .map(([name]) => name);
+    const queries = Object.entries(matrix.queries)
+        .filter(([, level]) => level === 'supported')
+        .map(([name]) => name);
     return [
         `engine: ${matrix.engine.package} ${matrix.engine.version}`,
         `import formats: ${formats.length > 0 ? formats.join(', ') : 'none supported'}`,
@@ -146,6 +150,7 @@ function describeCapabilities(matrix: DesignCapabilities): string {
         `export targets: ${targets.length > 0 ? targets.join(', ') : 'none supported'}`,
         `checks: ${checks.length > 0 ? checks.join(', ') : 'none supported'}`,
         `edits: ${edits.length > 0 ? edits.join(', ') : 'none supported'}`,
+        `queries: ${queries.length > 0 ? queries.join(', ') : 'none supported'}`,
         `project: import=${matrix.project.import} edit=${matrix.project.edit} export=${matrix.project.export}`,
     ].join('\n');
 }
@@ -379,6 +384,18 @@ function describeConnectivity(report: ConnectivityReport): string {    const tot
     return lines.join('\n');
 }
 
+function describeTrace(report: TraceReport): string {
+    const sheets = report.sheets.length > 0 ? report.sheets.join(', ') : '-';
+    const lines = [
+        `trace ${report.from} -> ${report.to} connected=${report.connected} via=${report.via} hops=${report.hops.length} sheets=${sheets}`,
+    ];
+    for (const hop of report.hops) {
+        const identity = hop.index !== undefined ? `#${hop.index}` : (hop.name ?? '-');
+        lines.push(`  [${hop.sheet}] ${hop.type} ${identity}: ${hop.detail}`);
+    }
+    return lines.join('\n');
+}
+
 /** Saves the already-mutated design and reports what the file now holds. */
 async function savedReport(design: Design): Promise<SaveReport> {
     return design.save();
@@ -548,6 +565,25 @@ cli.command('connectivity', 'cli.cmd.connectivity').actionCtx(async (options, _a
     }
     const report = await withDesign(file, (design) => design.connectivity());
     ctx.emitResult(report, describeConnectivity(report));
+    return 0;
+});
+
+cli.command('trace', 'cli.cmd.trace').actionCtx(async (options, _args, ctx) => {
+    const file = input(options);
+    const from = options._?.[1];
+    const to = options._?.[2];
+    if (file === undefined) {
+        ctx.fail('open-eda.cli.file-required', { message: 'a design document is required' });
+        return 2;
+    }
+    if (from === undefined || to === undefined) {
+        ctx.fail('open-eda.cli.arguments-invalid', {
+            message: '`<from>` and `<to>` REF.PIN arguments are required',
+        });
+        return 2;
+    }
+    const report = await withDesign(file, (design) => design.tracePins(from, to));
+    ctx.emitResult(report, describeTrace(report));
     return 0;
 });
 

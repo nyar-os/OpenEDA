@@ -20,7 +20,7 @@ mod diff;
 mod kicad;
 
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque},
     fmt, fs,
     path::{Component as PathComponent, Path, PathBuf},
     sync::{
@@ -119,6 +119,11 @@ const HIERARCHY_REPORT_FORMAT: &str = "open-eda-hierarchy";
 const HIERARCHY_REPORT_VERSION: u64 = 1;
 /// Deepest child document the hierarchy check opens; the root document is depth 0.
 const HIERARCHY_MAX_DEPTH: usize = 32;
+
+/// Tag written into the read-only pin trace report.
+const TRACE_REPORT_FORMAT: &str = "open-eda-trace";
+/// Version written into the read-only pin trace report.
+const TRACE_REPORT_VERSION: u64 = 1;
 
 /// Loss code reported when a SPICE element pin has no net and gets an NC node.
 const SPICE_OPEN_PIN: &str = "spice/open-pin";
@@ -1259,6 +1264,10 @@ pub struct Waiver {
 /// reports `edits.junctions` and `edits.noConnects` as `supported` because
 /// `add_junction`/`delete_junction` and `add_no_connect`/`delete_no_connect`
 /// exist and are covered by tests.
+///
+/// Read-only queries live under `queries`, next to `checks`: `queries.trace`
+/// reports the pin-to-pin path query of [`trace_pins`]. It is a query, not a
+/// rule check, so it never appears in the `inspect --checks` value.
 pub fn capabilities() -> Value {
     let matrix = capability_matrix();
     let level = |id: String| if matrix.supports(&id) { "supported" } else { "unsupported" };
@@ -1298,6 +1307,9 @@ pub fn capabilities() -> Value {
         "noConnects": level("edit.noConnects".to_string()),
     });
 
+    let mut queries = Map::new();
+    queries.insert("trace".to_string(), Value::String(level("query.trace".to_string()).to_string()));
+
     json!({
         "engine": { "package": env!("CARGO_PKG_NAME"), "version": env!("CARGO_PKG_VERSION") },
         "project": { "import": "partial", "edit": "partial", "export": "partial" },
@@ -1306,6 +1318,7 @@ pub fn capabilities() -> Value {
         "renderers": Value::Object(renderers),
         "exportTargets": Value::Object(export_targets),
         "edits": edits,
+        "queries": Value::Object(queries),
     })
 }
 
@@ -1335,6 +1348,7 @@ fn capability_matrix() -> CapabilityMatrix {
     }
     matrix.insert(Capability::new("edit.junctions", "edit", Support::Supported));
     matrix.insert(Capability::new("edit.noConnects", "edit", Support::Supported));
+    matrix.insert(Capability::new("query.trace", "query", Support::Supported));
     matrix
 }
 
@@ -5680,6 +5694,401 @@ fn connectivity_report_of(design: &Design) -> Value {
     })
 }
 
+/// One node of the read-only connection graph behind [`trace_pins`].
+struct TraceNode {
+    kind: &'static str,
+    sheet: usize,
+    sheet_name: String,
+    index: Option<usize>,
+    name: Option<String>,
+    detail: String,
+    ordinal: usize,
+}
+
+/// Deterministic node order: sheet, kind, 0-based index or name, then creation order.
+fn compare_trace_nodes(left: &TraceNode, right: &TraceNode) -> std::cmp::Ordering {
+    left.sheet_name
+        .cmp(&right.sheet_name)
+        .then_with(|| left.kind.cmp(right.kind))
+        .then_with(|| match (left.index, right.index) {
+            (Some(left_index), Some(right_index)) => left_index.cmp(&right_index),
+            _ => std::cmp::Ordering::Equal,
+        })
+        .then_with(|| left.name.cmp(&right.name))
+        .then_with(|| left.ordinal.cmp(&right.ordinal))
+}
+
+/// Undirected graph of the objects one trace may walk through.
+#[derive(Default)]
+struct TraceGraph {
+    nodes: Vec<TraceNode>,
+    edges: Vec<BTreeSet<usize>>,
+}
+
+impl TraceGraph {
+    fn push(
+        &mut self,
+        kind: &'static str,
+        sheet: usize,
+        sheet_name: &str,
+        index: Option<usize>,
+        name: Option<String>,
+        detail: String,
+    ) -> usize {
+        let ordinal = self.nodes.len();
+        self.nodes.push(TraceNode { kind, sheet, sheet_name: sheet_name.to_string(), index, name, detail, ordinal });
+        self.edges.push(BTreeSet::new());
+        ordinal
+    }
+
+    fn link(&mut self, left: usize, right: usize) {
+        if left != right {
+            self.edges[left].insert(right);
+            self.edges[right].insert(left);
+        }
+    }
+}
+
+/// Splits one `REF.PIN` argument without inventing a second grammar.
+fn split_trace_pin(text: &str) -> Result<(&str, &str), ServiceError> {
+    text.rsplit_once('.')
+        .filter(|(reference, pin)| !reference.is_empty() && !pin.is_empty())
+        .ok_or_else(|| ServiceError::new("session/argument-invalid", format!("`{text}` is not a `REF.PIN` node")))
+}
+
+/// Resolves one `REF.PIN` to its sheet, component and pin name.
+fn resolve_trace_pin<'a>(design: &'a Design, text: &'a str) -> Result<(usize, &'a Component, &'a str), ServiceError> {
+    let (reference, pin) = split_trace_pin(text)?;
+    for (sheet_index, sheet) in design.sheets.iter().enumerate() {
+        let Some(component) = sheet.components.iter().find(|component| component.reference == reference)
+        else {
+            continue;
+        };
+        if !component.pins.iter().any(|candidate| candidate == pin) {
+            return Err(ServiceError::new("trace/pin-missing", format!("component `{reference}` has no pin `{pin}`")));
+        }
+        return Ok((sheet_index, component, pin));
+    }
+    Err(ServiceError::new(
+        "trace/component-missing",
+        format!("no component with reference `{reference}` is placed in this design"),
+    ))
+}
+
+/// Resolves one hop sheet; a hop may never point outside the document.
+fn trace_sheet_name(design: &Design, index: usize) -> Result<&str, ServiceError> {
+    design
+        .sheets
+        .get(index)
+        .map(|sheet| sheet.name.as_str())
+        .ok_or_else(|| ServiceError::new("sheet/not-found", format!("sheet index {index} is not part of this design")))
+}
+
+/// Stable spelling of one port direction, matching the port editor vocabulary.
+fn port_direction_name(direction: PortDirection) -> &'static str {
+    match direction {
+        PortDirection::Input => "input",
+        PortDirection::Output => "output",
+        PortDirection::Bidirectional => "bidirectional",
+        PortDirection::TriState => "tri_state",
+        PortDirection::Passive => "passive",
+    }
+}
+
+/// Builds the connection graph and the pin lookup of one design.
+///
+/// Pins join the wires of their declared net, wires join by the same endpoint
+/// and T-junction rule as the connectivity check, junctions join every wire
+/// they lie on, and labels join the wire they sit on. Two labels join when
+/// their text matches and their scope permits it: any pair on one sheet, and
+/// `global` labels across the whole design. A hierarchical label also joins a
+/// sheet port of the same name, because hierarchy declarations are
+/// document-level. No child document is opened.
+fn build_trace_graph(design: &Design) -> (TraceGraph, HashMap<(String, String), usize>) {
+    let mut graph = TraceGraph::default();
+    let mut pin_nodes: HashMap<(String, String), usize> = HashMap::new();
+    let mut sheet_wires: Vec<Vec<usize>> = Vec::with_capacity(design.sheets.len());
+    let mut sheet_junctions: Vec<Vec<usize>> = Vec::with_capacity(design.sheets.len());
+    let mut sheet_labels: Vec<Vec<usize>> = Vec::with_capacity(design.sheets.len());
+
+    for (sheet_index, sheet) in design.sheets.iter().enumerate() {
+        let name = sheet.name.as_str();
+        for component in &sheet.components {
+            for pin in &component.pins {
+                let key = format!("{}.{}", component.reference, pin);
+                let detail = format!("pin {key} of {} ({})", component.reference, component.value);
+                let node = graph.push("pin", sheet_index, name, None, Some(key.clone()), detail);
+                pin_nodes.insert((component.reference.clone(), pin.clone()), node);
+            }
+        }
+        let mut wires = Vec::with_capacity(sheet.wires.len());
+        for (index, wire) in sheet.wires.iter().enumerate() {
+            let net = wire.net.as_deref().filter(|net| !net.is_empty()).unwrap_or("(no net)");
+            let detail =
+                format!("{} {} ({}, {}) -> ({}, {})", wire.id, net, wire.from[0], wire.from[1], wire.to[0], wire.to[1]);
+            wires.push(graph.push("wire", sheet_index, name, Some(index), None, detail));
+        }
+        let mut junctions = Vec::with_capacity(sheet.junctions.len());
+        for (index, junction) in sheet.junctions.iter().enumerate() {
+            let detail = format!("junction at ({}, {})", junction.x, junction.y);
+            junctions.push(graph.push("junction", sheet_index, name, Some(index), None, detail));
+        }
+        let mut labels = Vec::with_capacity(sheet.labels.len());
+        for (index, label) in sheet.labels.iter().enumerate() {
+            let detail = format!("{} label \"{}\" at ({}, {})", label_scope_name(label.scope), label.text, label.x, label.y);
+            labels.push(graph.push("label", sheet_index, name, Some(index), Some(label.text.clone()), detail));
+        }
+        sheet_wires.push(wires);
+        sheet_junctions.push(junctions);
+        sheet_labels.push(labels);
+    }
+
+    let mut port_nodes = Vec::new();
+    let root_name = design.sheets.first().map(|sheet| sheet.name.as_str()).unwrap_or("");
+    for symbol in &design.hierarchy {
+        for (index, port) in symbol.ports.iter().enumerate() {
+            let detail = format!(
+                "{} port \"{}\" of hierarchical sheet \"{}\" ({})",
+                port_direction_name(port.direction),
+                port.name,
+                symbol.name,
+                symbol.file
+            );
+            port_nodes.push(graph.push("sheet-port", 0, root_name, Some(index), Some(port.name.clone()), detail));
+        }
+    }
+
+    for (sheet_index, sheet) in design.sheets.iter().enumerate() {
+        let wire_nodes = &sheet_wires[sheet_index];
+        let junction_nodes = &sheet_junctions[sheet_index];
+        let label_nodes = &sheet_labels[sheet_index];
+
+        let mut wires_by_net: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
+        for (index, wire) in sheet.wires.iter().enumerate() {
+            if let Some(net) = wire.net.as_deref().filter(|net| !net.is_empty()) {
+                wires_by_net.entry(net).or_default().push(index);
+            }
+        }
+        for net in &sheet.nets {
+            let attached = wires_by_net
+                .get(net.name.as_str())
+                .map(|indices| indices.iter().map(|&index| wire_nodes[index]).collect::<Vec<_>>())
+                .unwrap_or_default();
+            let pins = net
+                .nodes
+                .iter()
+                .filter_map(|node| pin_nodes.get(&(node.reference.clone(), node.pin.clone())).copied())
+                .collect::<Vec<_>>();
+            if attached.is_empty() {
+                for left in 0..pins.len() {
+                    for right in left + 1..pins.len() {
+                        graph.link(pins[left], pins[right]);
+                    }
+                }
+            }
+            else {
+                for &pin in &pins {
+                    for &wire in &attached {
+                        graph.link(pin, wire);
+                    }
+                }
+            }
+        }
+
+        for left in 0..sheet.wires.len() {
+            for right in left + 1..sheet.wires.len() {
+                if connectivity::connected(&sheet.wires[left], &sheet.wires[right]) {
+                    graph.link(wire_nodes[left], wire_nodes[right]);
+                }
+            }
+        }
+        for (index, junction) in sheet.junctions.iter().enumerate() {
+            let point = [junction.x, junction.y];
+            for (wire_index, wire) in sheet.wires.iter().enumerate() {
+                if connectivity::on_wire(point, wire) {
+                    graph.link(junction_nodes[index], wire_nodes[wire_index]);
+                }
+            }
+        }
+        for (index, label) in sheet.labels.iter().enumerate() {
+            let point = [label.x, label.y];
+            for (wire_index, wire) in sheet.wires.iter().enumerate() {
+                if connectivity::on_wire(point, wire) {
+                    graph.link(label_nodes[index], wire_nodes[wire_index]);
+                }
+            }
+        }
+    }
+
+    let all_labels = design
+        .sheets
+        .iter()
+        .enumerate()
+        .flat_map(|(sheet_index, sheet)| {
+            let nodes = &sheet_labels[sheet_index];
+            sheet
+                .labels
+                .iter()
+                .enumerate()
+                .map(move |(index, label)| (sheet_index, nodes[index], label.scope, label.text.clone()))
+        })
+        .collect::<Vec<_>>();
+    for left in 0..all_labels.len() {
+        for right in left + 1..all_labels.len() {
+            let (left_sheet, left_node, left_scope, left_text) = &all_labels[left];
+            let (right_sheet, right_node, right_scope, right_text) = &all_labels[right];
+            if left_text != right_text {
+                continue;
+            }
+            let same_sheet = left_sheet == right_sheet;
+            let global_pair = *left_scope == LabelScope::Global && *right_scope == LabelScope::Global;
+            if same_sheet || global_pair {
+                graph.link(*left_node, *right_node);
+            }
+        }
+    }
+    for &port in &port_nodes {
+        let port_name = graph.nodes[port].name.clone().unwrap_or_default();
+        for (_, label, scope, text) in &all_labels {
+            if *scope == LabelScope::Hierarchical && *text == port_name {
+                graph.link(port, *label);
+            }
+        }
+    }
+
+    (graph, pin_nodes)
+}
+
+/// Shortest path by hop count, then lexicographic node order for ties.
+fn shortest_trace_path(graph: &TraceGraph, start: usize, target: usize) -> Option<Vec<usize>> {
+    let mut distance = vec![usize::MAX; graph.nodes.len()];
+    distance[target] = 0;
+    let mut queue = VecDeque::from([target]);
+    while let Some(node) = queue.pop_front() {
+        for &neighbor in &graph.edges[node] {
+            if distance[neighbor] == usize::MAX {
+                distance[neighbor] = distance[node] + 1;
+                queue.push_back(neighbor);
+            }
+        }
+    }
+    if distance[start] == usize::MAX {
+        return None;
+    }
+    let mut path = vec![start];
+    let mut current = start;
+    while current != target {
+        let next = graph.edges[current]
+            .iter()
+            .copied()
+            .filter(|&neighbor| distance[neighbor] + 1 == distance[current])
+            .min_by(|&left, &right| compare_trace_nodes(&graph.nodes[left], &graph.nodes[right]))
+            .expect("a shortest path always has a next node");
+        path.push(next);
+        current = next;
+    }
+    Some(path)
+}
+
+/// Whether two pins stay connected without walking a label or a sheet port.
+fn trace_without_labels(graph: &TraceGraph, start: usize, target: usize) -> bool {
+    let mut seen = vec![false; graph.nodes.len()];
+    seen[start] = true;
+    let mut queue = VecDeque::from([start]);
+    while let Some(node) = queue.pop_front() {
+        if node == target {
+            return true;
+        }
+        for &neighbor in &graph.edges[node] {
+            if matches!(graph.nodes[neighbor].kind, "label" | "sheet-port") || seen[neighbor] {
+                continue;
+            }
+            seen[neighbor] = true;
+            queue.push_back(neighbor);
+        }
+    }
+    false
+}
+
+/// Projects one node to the hop object the trace report exposes.
+fn trace_hop_json(node: &TraceNode) -> Value {
+    let mut hop = Map::new();
+    hop.insert("type".to_string(), json!(node.kind));
+    hop.insert("sheet".to_string(), json!(node.sheet_name));
+    if let Some(index) = node.index {
+        hop.insert("index".to_string(), json!(index));
+    }
+    if let Some(name) = &node.name {
+        hop.insert("name".to_string(), json!(name));
+    }
+    hop.insert("detail".to_string(), json!(node.detail));
+    Value::Object(hop)
+}
+
+/// Traces the read-only connection path between two pins of one open design.
+///
+/// Both arguments are `REF.PIN` strings. The report is tagged
+/// `open-eda-trace` and lists the shortest hop sequence between the two pins,
+/// with ties resolved by `(sheet, kind, index or name)` order. A pin that
+/// names itself returns `via: "direct"` with no hops. Two pins that no wire,
+/// junction, label or sheet port reaches return `connected: false` and are not
+/// an error. `via` is `"label"` only when every path needs a label hop; `"wire"`
+/// covers net membership, wires and junctions. The trace never writes the
+/// document and never opens a child document.
+pub fn trace_pins(handle: u64, from: &str, to: &str) -> Result<Value, ServiceError> {
+    let design = with_session(handle, |session| Ok(session.design.clone()))?;
+    let (from_sheet, from_component, from_pin) = resolve_trace_pin(&design, from)?;
+    let (to_sheet, to_component, to_pin) = resolve_trace_pin(&design, to)?;
+    trace_sheet_name(&design, from_sheet)?;
+    trace_sheet_name(&design, to_sheet)?;
+
+    let from_key = (from_component.reference.clone(), from_pin.to_string());
+    let to_key = (to_component.reference.clone(), to_pin.to_string());
+    let (graph, pin_nodes) = build_trace_graph(&design);
+    let from_node = *pin_nodes.get(&from_key).expect("a resolved pin always has a trace node");
+    let to_node = *pin_nodes.get(&to_key).expect("a resolved pin always has a trace node");
+
+    let same_pin = from_node == to_node;
+    let path = if same_pin { None } else { shortest_trace_path(&graph, from_node, to_node) };
+    let connected = same_pin || path.is_some();
+    let via = if same_pin {
+        "direct"
+    }
+    else if !connected {
+        "none"
+    }
+    else if trace_without_labels(&graph, from_node, to_node) {
+        "wire"
+    }
+    else {
+        "label"
+    };
+    let hops = path
+        .as_ref()
+        .map(|path| path.iter().map(|&node| trace_hop_json(&graph.nodes[node])).collect::<Vec<_>>())
+        .unwrap_or_default();
+    let mut sheets = Vec::new();
+    let mut seen_sheets = BTreeSet::new();
+    if let Some(path) = &path {
+        for &node in path {
+            if seen_sheets.insert(graph.nodes[node].sheet) {
+                sheets.push(graph.nodes[node].sheet_name.clone());
+            }
+        }
+    }
+
+    Ok(json!({
+        "format": TRACE_REPORT_FORMAT,
+        "version": TRACE_REPORT_VERSION,
+        "from": from,
+        "to": to,
+        "connected": connected,
+        "via": via,
+        "hops": hops,
+        "sheets": sheets,
+    }))
+}
+
 /// Reports deterministic per-sheet and design-wide object counts.
 ///
 /// The counts come from the model arrays themselves, so the report can never
@@ -6940,3 +7349,7 @@ fn write_atomic(path: &Path, contents: &str, overwrite: bool) -> Result<usize, S
 #[cfg(test)]
 #[path = "../tests/unit/lib.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "../tests/unit/trace.rs"]
+mod trace_tests;

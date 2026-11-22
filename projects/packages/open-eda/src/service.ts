@@ -91,6 +91,7 @@ import type {
     TextListResult,
     TextUpdateInput,
     TextUpdateResult,
+    TraceReport,
     TranslateInput,
     TranslateResult,
     UpdateComponentInput,
@@ -437,6 +438,11 @@ export function symbols(handle: number): SymbolLibraryResult {
 /** Reports what each net of one open design connects, plus unconnected pins and totals. */
 export function connectivity(handle: number): ConnectivityReport {
     return decode<ConnectivityReport>(() => binding('design.connectivity').design_connectivity(handle));
+}
+
+/** Traces the read-only connection path between two `REF.PIN` pins. */
+export function tracePins(handle: number, from: string, to: string): TraceReport {
+    return decode<TraceReport>(() => binding('design.trace').design_trace(handle, from, to));
 }
 
 /** Adds one component to an open design. */

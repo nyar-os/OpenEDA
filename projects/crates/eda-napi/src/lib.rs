@@ -439,6 +439,16 @@ fn design_connectivity(ctx: CallContext) -> Result<JsValue> {
     respond(&ctx, &report)
 }
 
+/// Traces the read-only connection path between two `REF.PIN` pins.
+#[function]
+fn design_trace(ctx: CallContext) -> Result<JsValue> {
+    let handle = handle(&ctx, 0)?;
+    let from = text(&ctx, 1)?;
+    let to = text(&ctx, 2)?;
+    let report = open_eda_model::trace_pins(handle, &from, &to).map_err(fail)?;
+    respond(&ctx, &report)
+}
+
 /// Declares or replaces one BOM variant on an open design.
 #[function]
 fn design_add_variant(ctx: CallContext) -> Result<JsValue> {
@@ -1710,6 +1720,7 @@ register_module![
     design_list_variants,
     design_symbols,
     design_connectivity,
+    design_trace,
     design_undo,
     design_redo,
     design_add_sheet,

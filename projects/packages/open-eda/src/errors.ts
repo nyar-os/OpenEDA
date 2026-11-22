@@ -23,6 +23,8 @@ export const errorCodes = [
     'no-connect/duplicate',
     'no-connect/pin-missing',
     'no-connect/not-found',
+    'trace/component-missing',
+    'trace/pin-missing',
     'sheet/not-found',
     'sheet/last-sheet',
     'sheet/not-empty',

@@ -99,6 +99,7 @@ import type {
     TextListResult,
     TextUpdateInput,
     TextUpdateResult,
+    TraceReport,
     TranslateInput,
     TranslateResult,
     UpdateComponentInput,
@@ -796,6 +797,9 @@ function attach(opened: service.DesignHandle, options: AttachOptions): Design {
         },
         async connectivity(): Promise<ConnectivityReport> {
             return service.connectivity(handle);
+        },
+        async tracePins(from: string, to: string): Promise<TraceReport> {
+            return service.tracePins(handle, from, to);
         },
         async listComponents(options?: { readonly sheet?: string }): Promise<readonly Component[]> {
             return service.listComponents(handle, options?.sheet).components;

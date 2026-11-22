@@ -113,6 +113,8 @@ export interface DesignCapabilities {
     readonly exportTargets: Readonly<Record<ExportTarget, SupportLevel>>;
     /** Editing surfaces that are implemented rather than read-only. */
     readonly edits: { readonly junctions: SupportLevel; readonly noConnects: SupportLevel };
+    /** Read-only queries that are not rule checks, such as the pin trace. */
+    readonly queries: { readonly trace: SupportLevel };
 }
 
 /** Options of `OpenEDA.create()`. */
@@ -368,6 +370,40 @@ export interface ConnectivityReport {
         /** Net labels across the design. */
         readonly labels: number;
     };
+}
+
+/** Object kind of one pin trace hop. */
+export type TraceHopType = 'pin' | 'wire' | 'junction' | 'label' | 'sheet-port';
+
+/** How a connected pin pair is joined. */
+export type TraceVia = 'wire' | 'label' | 'direct' | 'none';
+
+/**
+ * One hop of a pin trace.
+ *
+ * `index` is the 0-based position inside its sheet list for wires, junctions,
+ * labels and sheet ports. `name` is the pin `REF.PIN`, the label text or the
+ * port name. Both are present on labels and sheet ports.
+ */
+export interface TraceHop {
+    readonly type: TraceHopType;
+    readonly sheet: string;
+    readonly index?: number;
+    readonly name?: string;
+    readonly detail: string;
+}
+
+/** Result of `design.tracePins()`, tagged `open-eda-trace`. */
+export interface TraceReport {
+    readonly format: 'open-eda-trace';
+    readonly version: number;
+    readonly from: string;
+    readonly to: string;
+    readonly connected: boolean;
+    readonly via: TraceVia;
+    readonly hops: readonly TraceHop[];
+    /** Sheets the reported path touches, in hop order. */
+    readonly sheets: readonly string[];
 }
 
 /** One schematic junction (connection dot). */
@@ -1672,6 +1708,8 @@ export interface Design {
     listSymbols(): Promise<SymbolLibraryResult>;
     /** Reports what each net connects, the pins no net reaches and the per-sheet wire totals. */
     connectivity(): Promise<ConnectivityReport>;
+    /** Traces the read-only connection path between two `REF.PIN` pins. */
+    tracePins(from: string, to: string): Promise<TraceReport>;
     listComponents(options?: { readonly sheet?: SheetId }): Promise<readonly Component[]>;
     listNets(options?: { readonly sheet?: SheetId }): Promise<readonly Net[]>;
     close(): Promise<void>;

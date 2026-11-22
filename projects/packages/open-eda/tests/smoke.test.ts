@@ -1064,3 +1064,122 @@ test('hierarchy check command reports a document without changing it', { skip: w
         fs.rmSync(directory, { recursive: true, force: true });
     }
 });
+
+test('tracePins follows wires, junctions, labels and global scope', { skip: withoutAddon }, async () => {
+    const eda = new OpenEDA();
+    try {
+        const design = await eda.create();
+        await design.addComponent({ reference: 'R1', value: '10k', x: 10, y: 10, pins: ['1', '2'] });
+        await design.addComponent({ reference: 'R2', value: '10k', x: 90, y: 10, pins: ['1', '2'] });
+        await design.connectNet({ net: 'A', nodes: ['R1.1'] });
+        await design.connectNet({ net: 'B', nodes: ['R2.1'] });
+        await design.addWire({ net: 'A', from: [0, 50], to: [100, 50] });
+        await design.addWire({ net: 'B', from: [50, 0], to: [50, 100] });
+
+        const disconnected = await design.tracePins('R1.1', 'R2.1');
+        assert.equal(disconnected.format, 'open-eda-trace');
+        assert.equal(disconnected.version, 1);
+        assert.equal(disconnected.connected, false);
+        assert.equal(disconnected.via, 'none');
+        assert.deepEqual(disconnected.hops, []);
+        assert.deepEqual(disconnected.sheets, []);
+
+        const direct = await design.tracePins('R1.1', 'R1.1');
+        assert.equal(direct.connected, true);
+        assert.equal(direct.via, 'direct');
+        assert.deepEqual(direct.hops, []);
+
+        await assert.rejects(
+            design.tracePins('R9.1', 'R1.1'),
+            (error: unknown) => error instanceof OpenEDAError && error.code === 'trace/component-missing',
+        );
+        await assert.rejects(
+            design.tracePins('R1.9', 'R1.1'),
+            (error: unknown) => error instanceof OpenEDAError && error.code === 'trace/pin-missing',
+        );
+
+        await design.addJunction({ x: 50, y: 50 });
+        const joined = await design.tracePins('R1.1', 'R2.1');
+        assert.equal(joined.connected, true);
+        assert.equal(joined.via, 'wire');
+        assert.deepEqual(
+            joined.hops.map((hop) => hop.type),
+            ['pin', 'wire', 'junction', 'wire', 'pin'],
+        );
+        assert.deepEqual(joined.sheets, ['Sheet 1']);
+        assert.equal(joined.hops[2]?.index, 0);
+
+        const crossSheet = await eda.create();
+        await crossSheet.addSheet('Power');
+        await crossSheet.addComponent({ reference: 'C1', value: '100n', x: 10, y: 10, pins: ['1', '2'] });
+        await crossSheet.addComponent({ sheet: 'Power', reference: 'C2', value: '100n', x: 10, y: 10, pins: ['1', '2'] });
+        await crossSheet.connectNet({ net: 'A', nodes: ['C1.1'] });
+        await crossSheet.connectNet({ sheet: 'Power', net: 'B', nodes: ['C2.1'] });
+        await crossSheet.addWire({ net: 'A', from: [0, 0], to: [20, 0] });
+        await crossSheet.addWire({ sheet: 'Power', net: 'B', from: [0, 0], to: [20, 0] });
+        await crossSheet.addLabel({ text: 'VCC', x: 0, y: 0, scope: 'local' });
+        await crossSheet.addLabel({ sheet: 'Power', text: 'VCC', x: 0, y: 0, scope: 'local' });
+        const local = await crossSheet.tracePins('C1.1', 'C2.1');
+        assert.equal(local.connected, false, 'a local label stays on its sheet');
+
+        await crossSheet.addLabel({ text: 'VCC', x: 0, y: 0, scope: 'global' });
+        await crossSheet.addLabel({ sheet: 'Power', text: 'VCC', x: 0, y: 0, scope: 'global' });
+        const global = await crossSheet.tracePins('C1.1', 'C2.1');
+        assert.equal(global.connected, true);
+        assert.equal(global.via, 'label');
+        assert.deepEqual(global.sheets, ['Sheet 1', 'Power']);
+        assert.ok(global.hops.some((hop) => hop.type === 'label'));
+
+        await crossSheet.close();
+        await design.close();
+    } finally {
+        await eda.dispose();
+    }
+});
+
+test('trace command prints a human path and the JSON envelope', { skip: withoutAddon }, async () => {
+    const eda = new OpenEDA();
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'open-eda-cli-trace-'));
+    const target = path.join(directory, 'trace.oeda');
+    const testDirectory = path.dirname(fileURLToPath(import.meta.url));
+    const cli = fileURLToPath(new URL('../src/cli.js', import.meta.url));
+    const generatedLocales = path.resolve(testDirectory, '../locales');
+    const sourceLocales = path.resolve(testDirectory, '../../locales');
+    const copiedLocales = !fs.existsSync(generatedLocales);
+    if (copiedLocales) {
+        fs.cpSync(sourceLocales, generatedLocales, { recursive: true });
+    }
+    try {
+        const design = await eda.create();
+        await design.addComponent({ reference: 'R1', value: '10k', x: 10, y: 10, pins: ['1', '2'] });
+        await design.addComponent({ reference: 'R2', value: '10k', x: 90, y: 10, pins: ['1', '2'] });
+        await design.connectNet({ net: 'VCC', nodes: ['R1.1', 'R2.1'] });
+        await design.addWire({ net: 'VCC', from: [0, 0], to: [20, 0] });
+        await design.save({ target, overwrite: true });
+        await design.close();
+
+        const human = spawnSync(process.execPath, [cli, 'trace', target, 'R1.1', 'R2.1'], { encoding: 'utf8' });
+        assert.equal(human.status, 0, human.stderr);
+        assert.match(human.stdout, /trace R1\.1 -> R2\.1 connected=true via=wire hops=3/);
+        assert.match(human.stdout, /\[Sheet 1\] wire #0/);
+
+        const machine = spawnSync(process.execPath, [cli, 'trace', target, 'R1.1', 'R2.1', '--json'], {
+            encoding: 'utf8',
+        });
+        assert.equal(machine.status, 0, machine.stderr);
+        const envelope = JSON.parse(machine.stdout) as { ok: boolean; data: { format: string; via: string } };
+        assert.equal(envelope.ok, true);
+        assert.equal(envelope.data.format, 'open-eda-trace');
+        assert.equal(envelope.data.via, 'wire');
+
+        const missing = spawnSync(process.execPath, [cli, 'trace', target, 'R9.1', 'R2.1'], { encoding: 'utf8' });
+        assert.equal(missing.status, 1);
+        assert.match(missing.stdout + missing.stderr, /no component with reference `R9`/);
+    } finally {
+        if (copiedLocales) {
+            fs.rmSync(generatedLocales, { recursive: true, force: true });
+        }
+        await eda.dispose();
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
+});
