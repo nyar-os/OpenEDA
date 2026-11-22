@@ -753,6 +753,47 @@ export interface TextInput {
     readonly y: number;
 }
 
+/** One free text annotation with its 0-based position on the sheet. */
+export interface TextEntry {
+    readonly index: number;
+    readonly text: string;
+    readonly x: number;
+    readonly y: number;
+}
+
+/** Result of `design.listTexts()`. */
+export interface TextListResult {
+    readonly revision: number;
+    readonly sheetId: SheetId;
+    /** Text annotations in 0-based index order. */
+    readonly texts: readonly TextEntry[];
+}
+
+/**
+ * Input of `design.updateText()`.
+ *
+ * At least one of `text`, `x` or `y` must be present; omitted fields keep their
+ * current value. The text is trimmed for the empty check and stored verbatim.
+ */
+export interface TextUpdateInput {
+    readonly sheet?: SheetId;
+    /** 0-based position inside the sheet's text list. */
+    readonly index: number;
+    readonly text?: string;
+    readonly x?: number;
+    readonly y?: number;
+}
+
+/** Result of `design.updateText()`. */
+export interface TextUpdateResult {
+    readonly revision: number;
+    readonly design: DesignSummary;
+    readonly canUndo: boolean;
+    readonly canRedo: boolean;
+    readonly index: number;
+    readonly text: TextLabel;
+}
+
 /** Input of `design.addNoConnect()`. */
 export interface NoConnectInput {
     readonly sheet?: SheetId;
@@ -1403,6 +1444,10 @@ export interface Design {
     deleteText(index: number, options?: { readonly sheet?: SheetId }): Promise<void>;
     /** Moves the text annotation at a 0-based index to a new placement. */
     moveText(index: number, x: number, y: number, options?: { readonly sheet?: SheetId }): Promise<TextLabel>;
+    /** Lists the text annotations of a sheet in 0-based index order. */
+    listTexts(options?: { readonly sheet?: SheetId }): Promise<TextListResult>;
+    /** Updates the content or placement of the text annotation at a 0-based index. */
+    updateText(input: TextUpdateInput): Promise<TextUpdateResult>;
     /** Adds an empty sheet and returns it. */
     addSheet(name?: string): Promise<Sheet>;
     /** Renames one sheet. */

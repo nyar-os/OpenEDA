@@ -18,11 +18,11 @@ declarations, and `export --format kicad_sym` writes the placed components' pin
 interface as an importable KiCad symbol library. The SDK keeps a bounded 32-step undo/redo history
 per open handle, and the CLI mirrors it in a `<file>.history.json` sidecar so
 `undo` and `redo` work across separate command invocations. Sheet
-add/rename/delete, component move, update and delete, deterministic reference
+add/rename/delete, component move, copy, update and delete, deterministic reference
 annotation, BOM variants with do-not-populate lists, no-connect flags that can
 mark a pin as deliberately open, wire add, update, split, list and delete, bulk
 translate of selected components and wires, net derive, rename, merge, disconnect and
-delete, and junction/text move and delete work in place. Design-level net classes
+delete, and junction move/delete plus text list, update, move and delete work in place. Design-level net classes
 declare trace width, clearance and via attributes and assign declared nets and
 buses to them. Reference prefix rules declare the expected designator prefix per
 component class and the `references` check reports violations with severities and
@@ -56,6 +56,7 @@ open-eda undo <file.oeda>
 open-eda redo <file.oeda>
 open-eda component list <file.oeda> [--sheet <sheet>]
 open-eda component add <file.oeda> --ref <ref> --value <value> --x <n> --y <n> [--rotation <deg>] [--pins 1,2] [--sheet <sheet>]
+open-eda component copy <file.oeda> --ref <ref> --as <new-ref> [--dx <n>] [--dy <n>] [--sheet <sheet>]
 open-eda component move <file.oeda> --ref <ref> --x <n> --y <n> [--rotation <deg>] [--sheet <sheet>]
 open-eda component update <file.oeda> --ref <ref> --value <value> [--sheet <sheet>]
 open-eda component footprint <file.oeda> --ref <ref> [--footprint <footprint>] [--sheet <sheet>]
@@ -91,6 +92,8 @@ open-eda junction delete <file.oeda> --index <n> [--sheet <sheet>]
 open-eda no-connect add <file.oeda> --x <n> --y <n> [--ref <ref> --pin <pin>] [--sheet <sheet>]
 open-eda no-connect delete <file.oeda> --index <n> [--sheet <sheet>]
 open-eda text add <file.oeda> --text <text> --x <n> --y <n> [--sheet <sheet>]
+open-eda text list <file.oeda> [--sheet <sheet>]
+open-eda text update <file.oeda> --index <n> [--text <text>] [--x <n>] [--y <n>] [--sheet <sheet>]
 open-eda text move <file.oeda> --index <n> --x <n> --y <n> [--sheet <sheet>]
 open-eda text delete <file.oeda> --index <n> [--sheet <sheet>]
 open-eda sheet add <file.oeda> [--name <name>]
@@ -297,6 +300,29 @@ subset. It creates no design handle and writes no file.
 `open-eda export --format kicad_sym` is the reverse projection: it writes one
 library symbol per derived library id with the pins the schematic declares, and
 adds no body, value or footprint.
+
+## Component copy and text annotations
+
+`open-eda component copy --ref <ref> --as <new-ref>` duplicates one placed
+component on the same sheet under a new designator. The copy keeps the source
+value, footprint, rotation, pins, pin roles, custom properties and component
+class, and is placed at the source position plus `--dx`/`--dy` (zero by
+default). It receives a fresh `component-N` identity. Net nodes, wires and
+no-connect flags are not copied, so the copy starts electrically unconnected.
+The new reference must be unique across every sheet (`object/duplicate`), the
+source reference must exist on the sheet (`object/not-found`), and a blank
+designator or a non-finite offset is rejected. One copy is one revision and one
+undo step. The SDK entry points are `design.copyComponent()` and
+`design_add`/`design_copy_component` on the native binding.
+
+`open-eda text list` reports every free text annotation of a sheet with its
+0-based index, content and placement. `open-eda text update --index <n>` changes
+the content, the placement or both; at least one field is required, the text is
+trimmed for the empty check and a blank value is rejected, and coordinates must
+be finite. The index must exist (`object/not-found`). One update is one revision
+and one undo step. A text label carries only content and placement; no font,
+size or style field is modelled. The SDK entry points are `design.listTexts()`
+and `design.updateText()`.
 
 ## Referential integrity
 

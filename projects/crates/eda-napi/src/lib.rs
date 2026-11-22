@@ -27,7 +27,7 @@ use open_eda_model::{
     DeleteNetRequest, DisconnectNetRequest, InspectOptions, MergeNetsRequest, MoveComponentRequest, NetClassRequest,
     ReferencePrefixRequest, RemoveComponentPropertyRequest, RemoveHierarchyPortRequest, RenameNetRequest, ServiceError,
     SetComponentPropertyRequest, SetFootprintRequest, SetPinTypeRequest, SplitWireRequest, TranslateRequest,
-    UpdateComponentRequest, UpdateDesignRequest, UpdateWireRequest,
+    UpdateComponentRequest, UpdateDesignRequest, UpdateTextRequest, UpdateWireRequest,
 };
 use serde_json::{Value, json};
 use wae::{
@@ -781,6 +781,24 @@ fn design_move_text(ctx: CallContext) -> Result<JsValue> {
     let x = float(&ctx, 3)?;
     let y = float(&ctx, 4)?;
     let report = open_eda_model::move_text(handle, index, sheet.as_deref(), x, y).map_err(fail)?;
+    respond(&ctx, &report)
+}
+
+/// Lists the free text annotations of one sheet.
+#[function]
+fn design_list_texts(ctx: CallContext) -> Result<JsValue> {
+    let handle = handle(&ctx, 0)?;
+    let sheet = optional_text(&ctx, 1)?;
+    let report = open_eda_model::list_texts(handle, sheet.as_deref()).map_err(fail)?;
+    respond(&ctx, &report)
+}
+
+/// Updates the content or placement of one text annotation.
+#[function]
+fn design_update_text(ctx: CallContext) -> Result<JsValue> {
+    let handle = handle(&ctx, 0)?;
+    let request: UpdateTextRequest = decode(serde_json::from_str(&text(&ctx, 1)?))?;
+    let report = open_eda_model::update_text(handle, request).map_err(fail)?;
     respond(&ctx, &report)
 }
 
@@ -1640,6 +1658,8 @@ register_module![
     design_move_junction,
     design_delete_text,
     design_move_text,
+    design_list_texts,
+    design_update_text,
     design_copy_component,
     open_gui,
     pump_events,

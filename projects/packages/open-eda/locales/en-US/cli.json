@@ -75,6 +75,8 @@
             "no-connect-delete": "Delete the no-connect flag at a 0-based index in place",
             "text": "Edit schematic text annotations",
             "text-add": "Add a free text annotation to a design document in place",
+            "text-list": "List the text annotations of a sheet in 0-based index order",
+            "text-update": "Change the content or placement of the text annotation at a 0-based index in place",
             "text-delete": "Delete the text annotation at a 0-based index in place",
             "text-move": "Move the text annotation at a 0-based index in place",
             "sheet": "Edit schematic sheets",

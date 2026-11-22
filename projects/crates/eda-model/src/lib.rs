@@ -732,6 +732,30 @@ pub struct AddTextRequest {
     pub y: f64,
 }
 
+/// Request of [`update_text`].
+///
+/// Every field except the index is optional, so a request carries only what it
+/// changes. A request without `text`, `x` or `y` is rejected instead of adding a
+/// revision.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateTextRequest {
+    /// Target sheet id or name; the first sheet is used when omitted.
+    #[serde(default)]
+    pub sheet: Option<String>,
+    /// 0-based position inside the sheet's text list.
+    pub index: usize,
+    /// New text content; trimmed for the empty check and stored verbatim.
+    #[serde(default)]
+    pub text: Option<String>,
+    /// New placement X coordinate; the current value is kept when omitted.
+    #[serde(default)]
+    pub x: Option<f64>,
+    /// New placement Y coordinate; the current value is kept when omitted.
+    #[serde(default)]
+    pub y: Option<f64>,
+}
+
 /// Request of [`add_no_connect`].
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -2835,6 +2859,71 @@ pub fn move_text(handle: u64, index: usize, sheet: Option<&str>, x: f64, y: f64)
         let mut payload = Map::new();
         payload.insert("index".to_string(), json!(index));
         payload.insert("text".to_string(), json!(moved));
+        Ok(payload)
+    })
+}
+
+/// Lists the free text annotations of one sheet, in 0-based index order.
+pub fn list_texts(handle: u64, sheet: Option<&str>) -> Result<Value, ServiceError> {
+    with_session(handle, |session| {
+        let design = &session.design;
+        let index = sheet_index(design, sheet)?;
+        let target = &design.sheets[index];
+        let texts = target
+            .texts
+            .iter()
+            .enumerate()
+            .map(|(index, text)| json!({ "index": index, "text": text.text, "x": text.x, "y": text.y }))
+            .collect::<Vec<_>>();
+        Ok(json!({
+            "revision": design.revision,
+            "sheetId": target.id,
+            "texts": texts,
+        }))
+    })
+}
+
+/// Updates the content or placement of the text annotation at `index` (0-based).
+///
+/// A request carries only what it changes and needs at least one of `text`, `x`
+/// or `y`. New text is trimmed for the empty check and stored verbatim; a blank
+/// value is rejected with the same argument code as [`add_text`]. Coordinates
+/// must be finite. The index must be inside the sheet's text list.
+pub fn update_text(handle: u64, request: UpdateTextRequest) -> Result<Value, ServiceError> {
+    if let Some(text) = &request.text
+        && text.trim().is_empty()
+    {
+        return Err(ServiceError::new("session/argument-invalid", "a text annotation must not be empty"));
+    }
+    for coordinate in request.x.iter().chain(request.y.iter()) {
+        if !coordinate.is_finite() {
+            return Err(ServiceError::new("session/argument-invalid", "text coordinates must be finite numbers"));
+        }
+    }
+    if request.text.is_none() && request.x.is_none() && request.y.is_none() {
+        return Err(ServiceError::new("session/argument-invalid", "a text update needs `text`, `x` or `y`"));
+    }
+    mutate(handle, |design| {
+        let sheet_position = sheet_index(design, request.sheet.as_deref())?;
+        let target = &mut design.sheets[sheet_position];
+        let Some(text) = target.texts.get_mut(request.index)
+        else {
+            return Err(not_found(format!("no text at index {} on this sheet", request.index)));
+        };
+        if let Some(content) = request.text {
+            text.text = content;
+        }
+        if let Some(x) = request.x {
+            text.x = x;
+        }
+        if let Some(y) = request.y {
+            text.y = y;
+        }
+        let updated = text.clone();
+        design.revision += 1;
+        let mut payload = Map::new();
+        payload.insert("index".to_string(), json!(request.index));
+        payload.insert("text".to_string(), json!(updated));
         Ok(payload)
     })
 }
@@ -10306,6 +10395,80 @@ mod tests {
         undo(handle).expect("undo copy");
         let restored = list_components(handle, None).expect("list after undo");
         assert_eq!(restored["components"].as_array().map(Vec::len), Some(1));
+        close(handle).expect("close");
+    }
+
+    #[test]
+    fn texts_are_listed_and_updated_in_place() {
+        let created = create(CreateRequest::default()).expect("create");
+        let handle = created["handle"].as_u64().expect("handle");
+        add_text(handle, AddTextRequest { sheet: None, text: "NOTE".to_string(), x: 10.0, y: 20.0 }).expect("add text");
+        add_text(handle, AddTextRequest { sheet: None, text: "SECOND".to_string(), x: 30.0, y: 40.0 })
+            .expect("add second text");
+
+        let listed = list_texts(handle, None).expect("list texts");
+        assert_eq!(listed["sheetId"], "sheet-1");
+        assert_eq!(
+            listed["texts"],
+            json!([
+                { "index": 0, "text": "NOTE", "x": 10.0, "y": 20.0 },
+                { "index": 1, "text": "SECOND", "x": 30.0, "y": 40.0 },
+            ])
+        );
+        let before = listed["revision"].as_u64().expect("revision");
+
+        let updated = update_text(
+            handle,
+            UpdateTextRequest { sheet: None, index: 0, text: Some("UPDATED".to_string()), x: Some(12.0), y: None },
+        )
+        .expect("update text");
+        assert_eq!(updated["index"], 0);
+        assert_eq!(updated["text"]["text"], "UPDATED");
+        assert_eq!(updated["text"]["x"], 12.0);
+        assert_eq!(updated["text"]["y"], 20.0);
+        assert_eq!(updated["revision"], before + 1);
+
+        let after = list_texts(handle, None).expect("list after update");
+        assert_eq!(after["texts"][0]["text"], "UPDATED");
+        assert_eq!(after["texts"][0]["x"], 12.0);
+
+        move_text(handle, 1, None, 35.0, 45.0).expect("move text");
+        assert_eq!(list_texts(handle, None).expect("list after move")["texts"][1]["x"], 35.0);
+
+        assert_eq!(
+            update_text(handle, UpdateTextRequest { sheet: None, index: 0, text: Some("   ".to_string()), x: None, y: None },)
+                .unwrap_err()
+                .code,
+            "session/argument-invalid"
+        );
+        assert_eq!(
+            update_text(handle, UpdateTextRequest { sheet: None, index: 0, text: None, x: None, y: None }).unwrap_err().code,
+            "session/argument-invalid"
+        );
+        assert_eq!(
+            update_text(handle, UpdateTextRequest { sheet: None, index: 0, text: None, x: Some(f64::NAN), y: None })
+                .unwrap_err()
+                .code,
+            "session/argument-invalid"
+        );
+        assert_eq!(
+            update_text(handle, UpdateTextRequest { sheet: None, index: 9, text: None, x: Some(1.0), y: None })
+                .unwrap_err()
+                .code,
+            "object/not-found"
+        );
+        assert_eq!(
+            update_text(
+                handle,
+                UpdateTextRequest { sheet: Some("missing".to_string()), index: 0, text: None, x: Some(1.0), y: None },
+            )
+            .unwrap_err()
+            .code,
+            "format/invalid"
+        );
+
+        undo(handle).expect("undo move");
+        assert_eq!(list_texts(handle, None).expect("list after undo")["texts"][1]["x"], 30.0);
         close(handle).expect("close");
     }
 }

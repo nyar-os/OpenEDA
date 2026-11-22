@@ -86,6 +86,9 @@ import type {
     SymbolLibraryResult,
     TextInput,
     TextLabel,
+    TextListResult,
+    TextUpdateInput,
+    TextUpdateResult,
     TranslateInput,
     TranslateResult,
     UpdateComponentInput,
@@ -686,6 +689,15 @@ function attach(opened: service.DesignHandle, options: AttachOptions): Design {
             const result = await mutate(() => service.deleteText(handle, index, deleteOptions?.sheet));
             current = result.design;
         },
+        async listTexts(listOptions?: { readonly sheet?: string }): Promise<TextListResult> {
+            return service.listTexts(handle, listOptions?.sheet);
+        },
+        async updateText(input: TextUpdateInput): Promise<TextUpdateResult> {
+            assertUpdateTextInput(input);
+            const result = await mutate(() => service.updateText(handle, input));
+            current = result.design;
+            return result;
+        },
         async moveText(
             index: number,
             x: number,
@@ -793,6 +805,24 @@ function assertCopyComponentInput(input: CopyComponentInput): void {
         }
     }
     for (const key of ['dx', 'dy'] as const) {
+        const value = input[key];
+        if (value !== undefined && (typeof value !== 'number' || !Number.isFinite(value))) {
+            throw new OpenEDAError('session/argument-invalid', `\`${key}\` must be a finite number`);
+        }
+    }
+}
+
+function assertUpdateTextInput(input: TextUpdateInput): void {
+    if (typeof input?.index !== 'number' || !Number.isInteger(input.index) || input.index < 0) {
+        throw new OpenEDAError('session/argument-invalid', '`index` must be a non-negative integer');
+    }
+    if (input.text === undefined && input.x === undefined && input.y === undefined) {
+        throw new OpenEDAError('session/argument-invalid', 'at least one of `text`, `x` or `y` is required');
+    }
+    if (input.text !== undefined && (typeof input.text !== 'string' || input.text.trim().length === 0)) {
+        throw new OpenEDAError('session/argument-invalid', '`text` must be a non-empty string');
+    }
+    for (const key of ['x', 'y'] as const) {
         const value = input[key];
         if (value !== undefined && (typeof value !== 'number' || !Number.isFinite(value))) {
             throw new OpenEDAError('session/argument-invalid', `\`${key}\` must be a finite number`);

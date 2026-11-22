@@ -655,6 +655,7 @@ test('format registry classifies the design format family', () => {
     assert.equal(formatFromPath('blinker.oeda'), undefined);
     assert.equal(formatFromPath('no-extension'), undefined);
 });
+
 test('component copy duplicates placement and metadata without net nodes', { skip: withoutAddon }, async () => {
     const eda = new OpenEDA();
     try {
@@ -703,6 +704,58 @@ test('component copy duplicates placement and metadata without net nodes', { ski
         );
         await design.undo();
         assert.equal((await design.listComponents()).length, 1);
+        await design.close();
+    } finally {
+        await eda.dispose();
+    }
+});
+
+test('text list and update edit in place across undo', { skip: withoutAddon }, async () => {
+    const eda = new OpenEDA();
+    try {
+        const design = await eda.create();
+        const first = await design.addText({ text: 'NOTE', x: 5, y: 6 });
+        assert.equal(first.text, 'NOTE');
+        const second = await design.addText({ text: 'SECOND', x: 7, y: 8 });
+        assert.equal(second.text, 'SECOND');
+        const listed = await design.listTexts();
+        assert.equal(listed.sheetId, 'sheet-1');
+        assert.deepEqual(
+            listed.texts.map((entry) => entry.index),
+            [0, 1],
+        );
+        assert.deepEqual(
+            listed.texts.map((entry) => entry.text),
+            ['NOTE', 'SECOND'],
+        );
+
+        const textRevision = design.revision;
+        const updated = await design.updateText({ index: 0, text: 'UPDATED', x: 11 });
+        assert.equal(updated.index, 0);
+        assert.equal(updated.text.text, 'UPDATED');
+        assert.equal(updated.text.x, 11);
+        assert.equal(updated.text.y, 6);
+        assert.equal(design.revision, textRevision + 1);
+        assert.equal((await design.listTexts()).texts[0]?.text, 'UPDATED');
+
+        await assert.rejects(
+            design.updateText({ index: 0, text: '   ' }),
+            (error: unknown) => error instanceof OpenEDAError && error.code === 'session/argument-invalid',
+        );
+        await assert.rejects(
+            design.updateText({ index: 0 }),
+            (error: unknown) => error instanceof OpenEDAError && error.code === 'session/argument-invalid',
+        );
+        await assert.rejects(
+            design.updateText({ index: 0, x: Number.NaN }),
+            (error: unknown) => error instanceof OpenEDAError && error.code === 'session/argument-invalid',
+        );
+        await assert.rejects(
+            design.updateText({ index: 9, x: 1 }),
+            (error: unknown) => error instanceof OpenEDAError && error.code === 'object/not-found',
+        );
+        await design.undo();
+        assert.equal((await design.listTexts()).texts[0]?.text, 'NOTE');
         await design.close();
     } finally {
         await eda.dispose();

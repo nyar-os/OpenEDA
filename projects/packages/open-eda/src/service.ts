@@ -78,6 +78,9 @@ import type {
     SymbolLibraryResult,
     TextInput,
     TextLabel,
+    TextListResult,
+    TextUpdateInput,
+    TextUpdateResult,
     TranslateInput,
     TranslateResult,
     UpdateComponentInput,
@@ -560,6 +563,30 @@ export function copyComponent(handle: number, input: CopyComponentInput): Compon
                 newReference: input.newReference,
                 dx: input.dx ?? 0,
                 dy: input.dy ?? 0,
+            }),
+        ),
+    );
+}
+
+/** Lists the free text annotations of one sheet. */
+export function listTexts(handle: number, sheet?: string): TextListResult {
+    const native = binding('design.listTexts');
+    return decode<TextListResult>(() =>
+        sheet === undefined ? native.design_list_texts(handle) : native.design_list_texts(handle, sheet),
+    );
+}
+
+/** Updates the content or placement of one text annotation. */
+export function updateText(handle: number, input: TextUpdateInput): TextUpdateResult {
+    return decode<TextUpdateResult>(() =>
+        binding('design.updateText').design_update_text(
+            handle,
+            JSON.stringify({
+                sheet: input.sheet,
+                index: input.index,
+                text: input.text,
+                x: input.x,
+                y: input.y,
             }),
         ),
     );

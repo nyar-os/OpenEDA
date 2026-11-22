@@ -88,6 +88,8 @@ export interface NativeBinding {
     design_move_junction(handle: number, index: number, sheet: string | undefined, x: number, y: number): string;
     design_delete_text(handle: number, index: number, sheet?: string): string;
     design_move_text(handle: number, index: number, sheet: string | undefined, x: number, y: number): string;
+    design_list_texts(handle: number, sheet?: string): string;
+    design_update_text(handle: number, requestJson: string): string;
     openGui(options?: { title?: string; contentDir?: string; width?: number; height?: number }): string;
     pumpEvents(): string;
     closeGui(): string;

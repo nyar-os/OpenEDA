@@ -1928,6 +1928,69 @@ textCommand
     });
 
 textCommand
+    .command('list', 'cli.cmd.text-list')
+    .option('--sheet <sheet>', 'cli.opt.sheet')
+    .actionCtx(async (options, _args, ctx) => {
+        const file = input(options);
+        if (file === undefined) {
+            ctx.fail('open-eda.cli.file-required', { message: 'a design document is required' });
+            return 2;
+        }
+        const report = await withDesign(file, async (design) => {
+            const sheet = text(options, 'sheet');
+            return design.listTexts(sheet === undefined ? undefined : { sheet });
+        });
+        const lines = [`texts sheet=${report.sheetId} revision=${report.revision} count=${report.texts.length}`];
+        for (const entry of report.texts) {
+            lines.push(`  ${entry.index} "${entry.text}" (${entry.x}, ${entry.y})`);
+        }
+        ctx.emitResult(report, lines.join('\n'));
+        return 0;
+    });
+
+textCommand
+    .command('update', 'cli.cmd.text-update')
+    .option('--index <number>', 'cli.opt.index')
+    .option('--text <text>', 'cli.opt.text')
+    .option('--x <number>', 'cli.opt.x')
+    .option('--y <number>', 'cli.opt.y')
+    .option('--sheet <sheet>', 'cli.opt.sheet')
+    .actionCtx(async (options, _args, ctx) => {
+        const file = input(options);
+        if (file === undefined) {
+            ctx.fail('open-eda.cli.file-required', { message: 'a design document is required' });
+            return 2;
+        }
+        const index = integer(options, 'index');
+        const content = text(options, 'text');
+        const x = number(options, 'x');
+        const y = number(options, 'y');
+        if (
+            index === undefined ||
+            Number.isNaN(index) ||
+            index < 0 ||
+            (content === undefined && x === undefined && y === undefined) ||
+            (x !== undefined && Number.isNaN(x)) ||
+            (y !== undefined && Number.isNaN(y))
+        ) {
+            ctx.fail('open-eda.cli.arguments-invalid', {
+                message:
+                    '`--index` must be a non-negative integer and at least one of `--text`, `--x` or `--y` is required',
+            });
+            return 2;
+        }
+        const result = await withDesign(file, async (design) => {
+            const updated = await design.updateText({ sheet: text(options, 'sheet'), index, text: content, x, y });
+            return { updated, saved: await savedReport(design) };
+        });
+        ctx.emitResult(
+            { ...result.saved, revision: result.saved.revision, index: result.updated.index, text: result.updated.text },
+            `updated text ${result.updated.index} in ${file} revision=${result.saved.revision}`,
+        );
+        return 0;
+    });
+
+textCommand
     .command('delete', 'cli.cmd.text-delete')
     .option('--index <number>', 'cli.opt.index')
     .option('--sheet <sheet>', 'cli.opt.sheet')
