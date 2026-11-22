@@ -1,30 +1,29 @@
 # @wae/open-eda-skills
 
-Agent skills for OpenEDA. The package ships skill documents only; it is not a
-runtime library and contains no schematic, board, routing or fabrication
-algorithms.
+Agent skills for OpenEDA.
 
-## Status
-
-`skills/open-eda/SKILL.md` records the routing and evidence rules for create,
-edit, review and delivery against the implemented document core. The CLI and SDK
-behind it create, edit and inspect a `.oeda` document, undo and redo edits, edit
-sheets, and project to a netlist, SVG, BOM or PDF. Board layout, DRC, clearance,
-power and KiCad/Gerber exchange are not implemented, and the skill says so
-instead of inventing commands.
-
-## Layout
-
-```text
-packages/open-eda-skills/
-├── package.json
-├── README.md
-└── skills/
-    └── open-eda/
-        └── SKILL.md
+```bash
+pnpm add @wae/open-eda-skills
 ```
 
-The skill must never be shipped claiming methods, commands or flags that the
-installed SDK/CLI does not expose. The capability matrix remains the only support
-claim; unsupported checks and exchange targets reject with
-`capability/not-implemented`.
+The package ships skill documents only. Point an agent at:
+
+```text
+node_modules/@wae/open-eda-skills/skills/open-eda/SKILL.md
+```
+
+The skill records the `open-eda` command surface, preflight steps and evidence
+rules for creating, editing, checking and exporting a `.oeda` schematic. It
+never claims a method, command or flag that the installed CLI/SDK does not
+expose: the capability matrix printed by `open-eda capabilities` remains the
+only support claim, and unsupported work returns `capability/not-implemented`.
+
+## Links
+
+- [Product overview](https://github.com/nyar-os/OpenEDA)
+- [CLI reference](https://github.com/nyar-os/OpenEDA/blob/master/documentation/cli.md)
+- [Package README](https://github.com/nyar-os/OpenEDA/blob/master/projects/packages/open-eda/README.md)
+
+## License
+
+Mozilla Public License 2.0.

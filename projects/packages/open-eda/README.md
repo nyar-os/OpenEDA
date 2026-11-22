@@ -1,84 +1,99 @@
 # @wae/open-eda
 
-TypeScript authoring surface for OpenEDA: one editable design document behind
-schematic capture, board layout, inspection, export and agent authoring. The
-session entry point is `new OpenEDA(options?)`.
-
-## Status
-
-The schematic document core is implemented against the native `open-eda-model`
-crate. `new OpenEDA(options?)` creates a session synchronously, and the returned
-`Design` handle supports:
-
-- `addComponent`, `moveComponent`, `updateComponent`, `setFootprint`, `deleteComponent`
-- `connectNet`, `renameNet`, `mergeNets`, `addWire`, `updateWire`, `splitWire`, `listWires`, `deleteWire`, `translate`
-- `addJunction`, `addText`
-- `addSheet`, `renameSheet`, `deleteSheet`
-- `undo`, `redo`, with `canUndo`/`canRedo` and a bounded 32-step history
-- `listObjects`, `listComponents`, `listNets`, `listSymbols`, `connectivity`
-- `inspect` with `erc`, `nets`, `connectivity`, `footprints` and `power`, plus
-  per-code `severity` overrides and `waivers` that move findings to `waived`
-- `save` to a native `.oeda` document and reopen it
-- `export` to `net`, `net_csv`, `spice`, `svg`, `bom`, `bom_json`, `bom_html`, `pdf`, `report`, `json` or `kicad_sch`
-- `OpenEDA.importKicadSch({ source, target? })` from KiCad schematic text or a
-  file path, optionally materializing a native document
-
-| Capability | Status | Notes |
-| --- | --- | --- |
-| `.oeda` create/open/save/edit | supported | sheets, components, nets, buses, wires, undo/redo |
-| checks `erc`, `nets`, `connectivity`, `footprints`, `power` | supported | `drc` and `clearance` report `capability/not-implemented` |
-| export `net`, `net_csv`, `spice`, `svg`, `bom`, `bom_json`, `bom_html`, `pdf`, `report`, `json` | supported | read-only projections |
-| export `kicad_sch` | supported | KiCad 6/7 S-expression, deterministic identifiers |
-| import `kicad_sch` | supported | symbols, wires, junctions, no-connect flags, text, labels and hierarchical sheet symbols with ports; other constructs return loss entries |
-| export `kicad_pcb`, `gbr` | unsupported | declared, not implemented |
-| import `kicad_pcb`, `sch`, `brd`, `gbr`, `step`, ... | unsupported | declared, not implemented |
-| interactive renderer | unsupported | the preview is an SVG projection |
-
-The KiCad importer reports everything outside its subset instead of dropping it:
-buses, hierarchical sheets, arcs, images and unknown root constructs each add a
-`{"code": "kicad/unsupported-element", "detail": "..."}` entry to `losses`.
-Global and hierarchical labels are imported as sheet-local net labels and add a
-`{"code": "kicad/label-scope", "detail": "..."}` entry because cross-sheet
-label scope is not modelled. Junctions, no-connect flags and text annotations
-are part of the subset. Duplicate references and symbols without a reference
-are reported as `kicad/duplicate-reference` and `kicad/missing-reference`.
-
-A component stores an optional footprint. `setFootprint` assigns or clears it,
-the KiCad writer emits the `Footprint` property and the importer reads it back,
-`bom` groups by value and footprint with designator ranges, `bom_json`
-projects the same rows as JSON and `bom_html` writes them as an HTML table.
-The model never picks or validates a footprint. No-connect flags can name a
-`ref`/`pin` node, which makes ERC and the connectivity report treat that pin as
-deliberately open.
-
-The package also exports the design types, stable error codes and the format
-registry (`kicad_sch`/`kicad_pcb`/`sch`/`brd`/`net`/`edif`/`spice`/`cir`/`gbr`/
-`drl`/`step`/`svg`/`pdf`/`png`/`bom`).
-
-`drc`, `clearance`, KiCad board/Gerber exchange and the interactive
-renderer report `capability/not-implemented`. Classification is not a support
-claim: reads, writes and exports are reported by `capabilities()`, never
-inferred from an extension or a method name. Undo history belongs to one open
-handle and is not written into the document, so opening a file starts a fresh
-history. A session created with `new OpenEDA({ history: 'sidecar' })` also keeps
-the same bounded 32-step history in `<file>.history.json` beside the document,
-so `undo`/`redo` work across separate processes; `save()` to a new target clears
-the stale sidecar on that target, and an exhausted direction reports
-`history/empty`. The CLI is a thin shell over this session and enables the
-sidecar.
-
-## Boundaries
-
-- No board parsing, routing, clearance analysis or interactive rendering in this
-  package.
-- No second design model: the CLI, the SDK and the studio consume one revision
-  from `open-eda-model`.
-- Native access goes through the Node-API binding.
-
-## Scripts
+Edit, inspect and export one editable electronics schematic document from
+TypeScript or the command line.
 
 ```bash
-pnpm --filter @wae/open-eda run typecheck
-pnpm --filter @wae/open-eda run build
-pnpm --filter @wae/open-eda run test
+pnpm add @wae/open-eda
 ```
+
+## What you get
+
+A `.oeda` document holds schematic sheets, components, nets, buses, wires,
+junctions, net labels, no-connect flags, text, hierarchical sheet symbols and
+the title block in one revisioned file. The SDK opens that file, edits it
+in place and writes deterministic netlists, BOMs, previews and KiCad schematics.
+
+The package exposes `OpenEDA` and `Design` handles plus the design types, stable
+error codes and the format registry. It requires a matching native addon from
+`@wae/open-eda-<platform>-<arch>`; without one, engine calls report
+`capability/not-implemented`.
+
+## Quick start
+
+```ts
+import { OpenEDA } from '@wae/open-eda';
+
+const eda = new OpenEDA({ history: 'sidecar' });
+const design = await eda.create({ title: 'Blinker', rev: 'A', company: 'Acme' });
+
+await design.addComponent({ reference: 'R1', value: '10k', x: 40, y: 30, pins: ['1', '2'] });
+await design.addComponent({ reference: 'C1', value: '100n', x: 70, y: 30, pins: ['1', '2'] });
+await design.setFootprint({ reference: 'R1', footprint: 'Resistor_SMD:R_0805_2012Metric' });
+await design.connectNet({ net: 'VCC', nodes: ['R1.1', 'C1.1'] });
+await design.addWire({ net: 'VCC', from: [40, 30], to: [70, 30] });
+await design.addJunction({ x: 55, y: 30 });
+await design.addLabel({ text: 'VCC', x: 40, y: 30, scope: 'global' });
+await design.annotate();
+
+const checks = await design.inspect({ checks: ['erc', 'connectivity'] });
+const stats = await design.stats();
+await design.save({ target: 'blinker.oeda', overwrite: true });
+await design.export({ format: 'net', target: 'blinker.net' });
+await design.export({ format: 'kicad_sch', target: 'blinker.kicad_sch' });
+
+console.log(checks.ok, stats.totals.components);
+await eda.dispose();
+```
+
+On the command line:
+
+```bash
+pnpm exec open-eda create --out blinker.oeda --title Blinker
+pnpm exec open-eda component add blinker.oeda --ref R1 --value 10k --x 40 --y 30 --pins 1,2
+pnpm exec open-eda net connect blinker.oeda --net VCC --nodes R1.1
+pnpm exec open-eda inspect blinker.oeda --checks erc,connectivity
+pnpm exec open-eda export blinker.oeda --format svg --out blinker.svg
+```
+
+## API by task
+
+| Task | Methods |
+|------|---------|
+| Session | `new OpenEDA({ locale?, history? })`, `create`, `open`, `importKicadSch`, `importKicadSymbol`, `importKicadNet`, `inspect`, `diff`, `capabilities`, `dispose` |
+| Components | `addComponent`, `copyComponent`, `moveComponent`, `updateComponent`, `setFootprint`, `deleteComponent`, `setComponentProperty`, `listComponentProperties`, `removeComponentProperty`, `setPinType` |
+| Nets and buses | `connectNet`, `disconnectNet`, `deriveNets`, `renameNet`, `mergeNets`, `deleteNet`, `addBus`, `listBuses`, `removeBus`, `addNetClass`, `listNetClasses`, `removeNetClass` |
+| Wiring | `addWire`, `updateWire`, `splitWire`, `listWires`, `deleteWire`, `translate`, `addJunction`, `listJunctions`, `moveJunction`, `deleteJunction` |
+| Annotations | `addLabel`, `listLabels`, `updateLabel`, `removeLabel`, `addText`, `listTexts`, `updateText`, `moveText`, `deleteText`, `addNoConnect`, `listNoConnects`, `deleteNoConnect` |
+| Sheets | `addSheet`, `listSheets`, `renameSheet`, `deleteSheet`, `addHierarchy`, `listHierarchy`, `addHierarchyPort`, `removeHierarchyPort`, `removeHierarchy` |
+| Design data | `annotate`, `setProperties`, `addVariant`, `listVariants`, `removeVariant`, `setReferencePrefix`, `removeReferencePrefix`, `listReferencePrefixes`, `setComponentClass`, `listComponentClasses`, `stats`, `compareNetlist` |
+| Reports | `listObjects`, `listComponents`, `listNets`, `listSymbols`, `connectivity`, `inspect` |
+| Output | `save`, `export`, `undo`, `redo`, `close` |
+
+`inspect` runs `erc`, `electrical`, `nets`, `connectivity`, `footprints` and
+`power`, with per-code `severity` overrides and `waivers`. `export` writes
+`net`, `net_csv`, `net_hier`, `spice`, `spice_subckt`, `svg`, `bom`, `bom_json`,
+`bom_html`, `pdf`, `report`, `json`, `kicad_sch` and `kicad_sym`.
+`importKicadSch` reads the supported KiCad schematic subset and returns a loss
+ledger for everything else.
+
+## Constraints
+
+- No board model, routing, DRC or clearance analysis.
+- No simulation; the SPICE output is a netlist only.
+- No bus wires, arcs or child-sheet content in the KiCad subset.
+- No automatic footprint assignment or validation.
+- Labels never derive, rename or merge a net; cross-sheet label scope is not
+  modelled.
+- Undo history is per open handle; `history: 'sidecar'` keeps it beside the file
+  so the CLI can undo across invocations.
+
+## Links
+
+- [Product overview](https://github.com/nyar-os/OpenEDA)
+- [Capability matrix](https://github.com/nyar-os/OpenEDA/blob/master/documentation/capabilities.md)
+- [CLI reference](https://github.com/nyar-os/OpenEDA/blob/master/documentation/cli.md)
+
+## License
+
+Mozilla Public License 2.0. See [License.md](License.md).

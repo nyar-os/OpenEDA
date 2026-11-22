@@ -67,6 +67,8 @@
                 <li>Undo and redo keep the newest 32 snapshots per open handle; a new edit clears the redo stack.</li>
                 <li>Sheets can be added, renamed and deleted while empty; the last sheet is protected.</li>
                 <li>Components can be moved, updated and deleted; deleting one removes its net nodes and detaches wires.</li>
+                <li>Net labels are first-class annotations with <code>local</code>, <code>global</code> or <code>hierarchical</code> scope, editable by id; labels never create or merge declared nets.</li>
+                <li>Junctions, no-connect flags, text and labels can be listed without editing; <code>stats</code> reports deterministic per-sheet and design-wide counts.</li>
                 <li>Save writes a temporary file and renames it, so a partial document is never left behind.</li>
                 <li>History lives in memory per handle in the SDK and studio. The CLI keeps the same bounded stacks in a <code>&lt;file&gt;.history.json</code> sidecar and never writes history into the <code>.oeda</code> file.</li>
             </ul>
@@ -82,6 +84,7 @@
                 <li>ERC warns about pins that no net connects.</li>
                 <li>The nets check reports floating wires, wires that name an undeclared net, single-node nets and empty sheets.</li>
                 <li>The footprints check reports components without a value.</li>
+                <li>The connectivity report also counts net labels per sheet by scope; <code>stats</code> reports every object count, BOM rows and buses deterministically.</li>
                 <li>Every finding carries its code, severity, sheet, object and revision; only errors fail the report.</li>
                 <li>DRC, clearance and power are reported as unsupported and never as passing.</li>
             </ul>
@@ -124,8 +127,12 @@
                                 <code>open</code>, <code>list</code>, <code>inspect</code>
                                 and <code>export</code> work; <code>undo</code>,
                                 <code>redo</code>, <code>component add/move/update/delete</code>,
-                                <code>net connect/rename</code>, <code>wire delete</code> and
-                                <code>sheet add/rename/delete</code> edit a document in place.
+                                <code>net connect/rename</code>, <code>wire delete</code>,
+                                <code>label add/update/delete</code> and
+                                <code>sheet add/rename/delete</code> edit a document in place;
+                                <code>junction list</code>, <code>no-connect list</code>,
+                                <code>label list</code>, <code>sheet list</code> and
+                                <code>stats</code> are read-only.
                                 Unsupported checks and targets reject.
                             </td>
                             <td><span class="chip chip--ok">document core</span></td>

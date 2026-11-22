@@ -1,0 +1,159 @@
+# CLI reference
+
+`open-eda` is a thin shell over the `OpenEDA` session. It parses options, calls
+one session or `Design` method, prints the result and returns an exit code.
+
+- Exit `0` — success.
+- Exit `1` — invalid input, an unbuildable design or an IO failure.
+- Exit `2` — a CLI argument error or a capability the build does not implement.
+
+The design document is the first positional argument unless a command documents
+something else. List options take comma-separated values (`--refs R1,C1`).
+Run `open-eda --help` for the installed command tree and
+`open-eda capabilities` for the support claim.
+
+The CLI opens one sidecar-history session, so `undo` and `redo` work across
+separate invocations. History lives in `<file>.history.json` beside the
+document and is never written into the document itself.
+
+## Create, inspect and compare
+
+| Command | Description |
+|---------|-------------|
+| `open-eda create --out <file.oeda> [--title <text>] [--rev <text>] [--company <text>] [--date <text>] [--template <name>] [--overwrite]` | Create a native design document |
+| `open-eda open <file>` | Validate and report that the document opens |
+| `open-eda design set <file> [--title <text>] [--rev <text>] [--company <text>] [--date <text>]` | Update title-block properties; an empty value clears a field |
+| `open-eda inspect <file> [--checks erc,electrical,nets,connectivity,footprints,power] [--severity <code>=<level>] [--waive <code>[@<object>]]` | Run the supported checks |
+| `open-eda list <file>` | List sheets, components, nets, wires and buses |
+| `open-eda symbols <file>` | Group placed components by derived library id with pin, footprint and missing-footprint counts |
+| `open-eda connectivity <file>` | Print the connectivity report |
+| `open-eda stats <file>` | Print deterministic per-sheet and design-wide counts |
+| `open-eda diff <before> <after>` | Compare two documents structurally |
+| `open-eda annotate <file>` | Renumber references per prefix by sheet and placement order |
+| `open-eda translate <file> --dx <n> --dy <n> [--refs <list>] [--wires <list>]` | Move selected components and wires |
+| `open-eda undo <file>` / `open-eda redo <file>` | Walk the sidecar history |
+| `open-eda capabilities` | Print the machine-readable capability matrix |
+| `open-eda gui` | Open the studio window |
+
+## Components
+
+| Command | Description |
+|---------|-------------|
+| `open-eda component list <file> [--sheet <id>]` | List components |
+| `open-eda component add <file> --ref <ref> [--value <text>] --x <n> --y <n> [--rotation <deg>] [--pins <list>] [--footprint <text>] [--sheet <id>]` | Place a component |
+| `open-eda component copy <file> --ref <ref> --as <new-ref> [--dx <n>] [--dy <n>] [--sheet <id>]` | Copy placement and metadata without net nodes |
+| `open-eda component move <file> --ref <ref> --x <n> --y <n> [--rotation <deg>] [--sheet <id>]` | Move or rotate a component |
+| `open-eda component update <file> --ref <ref> [--value <text>] [--sheet <id>]` | Update the value |
+| `open-eda component footprint <file> --ref <ref> --footprint <text> [--sheet <id>]` | Assign or clear the footprint |
+| `open-eda component pin-type <file> <ref> <pin> <role>` | Type a pin role; add `--clear` to remove it |
+| `open-eda component property-set <file> --ref <ref> --key <key> --value <text> [--sheet <id>]` | Set a custom property |
+| `open-eda component property-list <file> --ref <ref> [--sheet <id>]` | List custom properties |
+| `open-eda component property-remove <file> --ref <ref> --key <key> [--sheet <id>]` | Remove a custom property |
+| `open-eda component delete <file> --ref <ref> [--sheet <id>]` | Delete a component |
+
+Pin roles: `input`, `output`, `bidirectional`, `tri_state`, `passive`,
+`power_in`, `power_out`, `open_collector`, `open_emitter`, `unspecified`.
+
+## Nets, buses and net classes
+
+| Command | Description |
+|---------|-------------|
+| `open-eda net connect <file> --net <name> --nodes <REF.PIN,...> [--sheet <id>]` | Connect pins to a net |
+| `open-eda net disconnect <file> --net <name> --nodes <REF.PIN,...> [--sheet <id>]` | Disconnect pins |
+| `open-eda net derive <file>` | Derive nets from connectivity |
+| `open-eda net rename <file> --id <net> --name <name> [--sheet <id>]` | Rename a net |
+| `open-eda net merge <file> --target <net> --source <net> [--sheet <id>]` | Merge two nets |
+| `open-eda net list <file> [--sheet <id>]` | List nets and nodes |
+| `open-eda net delete <file> --net <name> [--sheet <id>]` | Delete a net |
+| `open-eda bus add <file> --name <name> --width <n> [--aliases <list>]` | Declare a bus |
+| `open-eda bus list <file>` | List buses, widths and aliases |
+| `open-eda bus remove <file> --id <name>` | Remove a bus |
+| `open-eda net-class add <file> --name <name> --width <n> [--clearance <n>] [--via <n>] [--nets <list>] [--buses <list>]` | Declare a net class; an existing name is replaced as a whole |
+| `open-eda net-class list <file>` | List net classes |
+| `open-eda net-class remove <file> --id <name>` | Remove a net class |
+| `open-eda reference add <file> --class <class> --prefix <prefix>` | Declare a component class and its reference prefix |
+| `open-eda reference assign <file> --ref <ref> --class <class> [--sheet <id>]` | Assign a component to a reference class |
+| `open-eda reference list <file>` | List reference classes and assignments |
+
+## Wires, junctions, text and labels
+
+| Command | Description |
+|---------|-------------|
+| `open-eda wire add <file> --net <name> --from <x,y> --to <x,y> [--sheet <id>]` | Add a wire segment |
+| `open-eda wire update <file> --id <wire> --from <x,y> --to <x,y> [--sheet <id>]` | Move a wire endpoint |
+| `open-eda wire split <file> --id <wire> --x <n> --y <n> [--sheet <id>]` | Split a wire at a point on the segment |
+| `open-eda wire list <file> [--sheet <id>]` | List wires in document order |
+| `open-eda wire delete <file> --id <wire> [--sheet <id>]` | Delete a wire |
+| `open-eda junction add <file> --x <n> --y <n> [--sheet <id>]` | Add a junction |
+| `open-eda junction list <file> [--sheet <id>]` | List junctions with 0-based indices |
+| `open-eda junction move <file> --index <n> --x <n> --y <n> [--sheet <id>]` | Move a junction |
+| `open-eda junction delete <file> --index <n> [--sheet <id>]` | Delete a junction |
+| `open-eda no-connect add <file> --x <n> --y <n> [--ref <ref> --pin <pin>] [--sheet <id>]` | Add a no-connect flag; with a node it marks the pin deliberately open |
+| `open-eda no-connect list <file> [--sheet <id>]` | List no-connect flags |
+| `open-eda no-connect delete <file> --index <n> [--sheet <id>]` | Delete a no-connect flag |
+| `open-eda text add <file> --text <text> --x <n> --y <n> [--sheet <id>]` | Add a text annotation |
+| `open-eda text list <file> [--sheet <id>]` | List text annotations |
+| `open-eda text update <file> --index <n> [--text <text>] [--x <n>] [--y <n>] [--sheet <id>]` | Update a text annotation |
+| `open-eda text move <file> --index <n> --x <n> --y <n> [--sheet <id>]` | Move a text annotation |
+| `open-eda text delete <file> --index <n> [--sheet <id>]` | Delete a text annotation |
+| `open-eda label add <file> --text <text> --x <n> --y <n> [--scope local\|global\|hierarchical] [--rotation <deg>] [--justify left\|right\|center] [--sheet <id>]` | Add a net label |
+| `open-eda label list <file> [--sheet <id>]` | List net labels |
+| `open-eda label update <file> --id <label> [--text <text>] [--x <n>] [--y <n>] [--scope <scope>] [--rotation <deg>] [--justify <justify>] [--sheet <id>]` | Update a net label |
+| `open-eda label delete <file> --id <label> [--sheet <id>]` | Delete a net label |
+
+## Sheets and hierarchy
+
+| Command | Description |
+|---------|-------------|
+| `open-eda sheet add <file> --name <name>` | Add a sheet |
+| `open-eda sheet list <file>` | List sheets |
+| `open-eda sheet rename <file> --id <sheet> --name <name>` | Rename a sheet |
+| `open-eda sheet delete <file> --id <sheet>` | Delete a sheet |
+| `open-eda hierarchy add <file> --name <name> --file <child> --x <n> --y <n> [--width <n>] [--height <n>]` | Add a hierarchical sheet symbol declaration |
+| `open-eda hierarchy list <file>` | List sheet symbols and ports |
+| `open-eda hierarchy port-add <file> --id <sheet> --name <port> --direction <dir> --x <n> --y <n>` | Add a port declaration |
+| `open-eda hierarchy port-remove <file> --id <sheet> --name <port>` | Remove a port declaration |
+| `open-eda hierarchy remove <file> --id <sheet>` | Remove a sheet symbol |
+
+Port directions: `input`, `output`, `bidirectional`, `tri_state`, `passive`.
+
+## Variants
+
+| Command | Description |
+|---------|-------------|
+| `open-eda variant add <file> --name <name> [--dnp <list>] [--values <REF=value,...>]` | Declare a BOM variant |
+| `open-eda variant list <file>` | List variants |
+| `open-eda variant remove <file> --name <name>` | Remove a variant |
+
+## Import, library and export
+
+| Command | Description |
+|---------|-------------|
+| `open-eda import <file.kicad_sch> --out <file.oeda> [--overwrite]` | Import the supported KiCad schematic subset |
+| `open-eda library <file.kicad_sym>` | Report a KiCad symbol library without creating a design |
+| `open-eda export <file> --format <format> --out <target> [--variant <name>]` | Write a read-only projection |
+| `open-eda netlist <file> --out <file.net> [--overwrite]` | Write the flat netlist |
+
+Export formats: `net`, `net_csv`, `net_hier`, `spice`, `spice_subckt`, `svg`,
+`bom`, `bom_json`, `bom_html`, `pdf`, `report`, `json`, `kicad_sch`, `kicad_sym`.
+A variant is accepted by `bom` and `bom_json` only; other targets reject it
+instead of ignoring it.
+
+## Worked example
+
+```bash
+open-eda create --out blinker.oeda --title "Blinker" --rev A --company Acme
+open-eda component add blinker.oeda --ref R1 --value 10k --x 40 --y 30 --pins 1,2
+open-eda component add blinker.oeda --ref C1 --value 100n --x 70 --y 30 --pins 1,2
+open-eda net connect blinker.oeda --net VCC --nodes R1.1,C1.1
+open-eda wire add blinker.oeda --net VCC --from 40,30 --to 70,30
+open-eda junction add blinker.oeda --x 55 --y 30
+open-eda label add blinker.oeda --text VCC --x 40 --y 30 --scope global
+open-eda variant add blinker.oeda --name lite --dnp C1 --values R1=22k
+open-eda inspect blinker.oeda --checks erc,electrical,nets,connectivity
+open-eda stats blinker.oeda
+open-eda export blinker.oeda --format net --out blinker.net
+open-eda export blinker.oeda --format bom --variant lite --out blinker-lite.csv
+open-eda export blinker.oeda --format svg --out blinker.svg
+open-eda export blinker.oeda --format kicad_sch --out blinker.kicad_sch
+```
