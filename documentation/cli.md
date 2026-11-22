@@ -56,6 +56,7 @@ the document and never opens a child document.
 | Command | Description |
 |---------|-------------|
 | `open-eda component list <file> [--sheet <id>]` | List components |
+| `open-eda component show <file> <ref>` | Report one component's placement, custom properties, pins and the nets that reach each pin |
 | `open-eda component add <file> --ref <ref> [--value <text>] --x <n> --y <n> [--rotation <deg>] [--pins <list>] [--footprint <text>] [--sheet <id>]` | Place a component |
 | `open-eda component copy <file> --ref <ref> --as <new-ref> [--dx <n>] [--dy <n>] [--sheet <id>]` | Copy placement and metadata without net nodes |
 | `open-eda component move <file> --ref <ref> --x <n> --y <n> [--rotation <deg>] [--sheet <id>]` | Move or rotate a component |

@@ -22,6 +22,7 @@ import type {
     ComponentInput,
     ComponentPropertyListResult,
     ComponentPropertyResult,
+    ComponentReport,
     ConnectNetInput,
     ConnectivityReport,
     CopyComponentInput,
@@ -476,6 +477,11 @@ export function connectivity(handle: number): ConnectivityReport {
 /** Traces the read-only connection path between two `REF.PIN` pins. */
 export function tracePins(handle: number, from: string, to: string): TraceReport {
     return decode<TraceReport>(() => binding('design.trace').design_trace(handle, from, to));
+}
+
+/** Reports the full detail of one placed component by reference. */
+export function componentReport(handle: number, reference: string): ComponentReport {
+    return decode<ComponentReport>(() => binding('design.componentReport').design_component_report(handle, reference));
 }
 
 /** Adds one component to an open design. */

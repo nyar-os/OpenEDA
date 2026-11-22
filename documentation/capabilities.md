@@ -26,6 +26,7 @@ answer about the document, such as a pin-to-pin path.
 | checks `erc`, `electrical`, `bus`, `nets`, `connectivity`, `footprints`, `power`, `references`, `clearance` | supported | `drc` is unsupported; `bus` validates design-level bus declarations; `clearance` compares schematic component bodies; `hierarchy` is a separate read-only entry, not an `inspect --checks` value |
 | design `stats` | supported | deterministic per-sheet and design-wide counts; tagged `open-eda-stats` |
 | pin trace `trace` | supported | read-only shortest hop path between two `REF.PIN` pins; tagged `open-eda-trace`; reported as `queries.trace`, not as an `inspect --checks` check |
+| component detail `component show` | supported | read-only detail of one component by reference: placement, value, footprint, custom properties and per-pin nets; tagged `open-eda-component`; pins keep declaration order and net names keep document order |
 | read-only listings `component list`, `net list`, `bus list`, `net-class list`, `wire list`, `label list`, `text list`, `sheet list` | supported | document order with 0-based indices where the model edits by index |
 | junction and no-connect editing | supported | add a junction by coordinate and remove it by 0-based index; add a no-connect flag with or without a `REF.PIN` node and remove it by index; a duplicate junction coordinate is refused (`junction/duplicate`) and so is a second flag on one pin (`no-connect/duplicate`); `capabilities()` reports `edits.junctions` and `edits.noConnects` |
 | component pin editing | supported | add, remove and rename pins after placement; an empty or `REF.PIN`-breaking name is `session/argument-invalid`, a repeated name `pin/duplicate`, a missing pin `pin/not-found` and a removal that a net node or no-connect flag still uses `pin/in-use`; a rename follows every net node, no-connect node and electrical role; `capabilities()` reports `edits.pins` |
@@ -181,6 +182,13 @@ fail the report.
   Unknown references and pins fail with `trace/component-missing` and
   `trace/pin-missing`. The trace never writes a document and never opens a
   child document.
+- `component show` (`componentReport()` in the SDK) returns one component by
+  reference: `{format: "open-eda-component", version: 1, sheet: {id, name},
+  component: {id, reference, value, footprint, x, y, rotation, properties},
+  pins: [{name, nets, noConnect}]}`. Properties are sorted by key; pins keep the
+  component's declaration order and each pin's `nets` keeps document order
+  without duplicates. A reference no sheet places fails with
+  `object/not-found`. The query never writes a document and adds no revision.
 - The trace joins objects with the same rules the connectivity check reads: a
   pin joins the wires of its declared net, wires join at coincident endpoints
   or a T-junction, a junction joins every wire it lies on, and a label joins

@@ -412,6 +412,40 @@ export interface TraceReport {
     readonly sheets: readonly string[];
 }
 
+/** One pin of a component detail report. */
+export interface ComponentPinDetail {
+    /** Pin name as the component declares it. */
+    readonly name: string;
+    /** Names of the nets that reach the pin, in document order without duplicates. */
+    readonly nets: readonly string[];
+    /** True when a no-connect flag marks this pin. */
+    readonly noConnect: boolean;
+}
+
+/** Placement and metadata of one component detail report. */
+export interface ComponentDetail {
+    readonly id: ObjectId;
+    readonly reference: string;
+    readonly value: string;
+    /** Assigned footprint; empty when none is assigned. */
+    readonly footprint: string;
+    readonly x: number;
+    readonly y: number;
+    readonly rotation: number;
+    /** Custom properties sorted by key. */
+    readonly properties: readonly ComponentProperty[];
+}
+
+/** Result of `design.componentReport()`, tagged `open-eda-component`. */
+export interface ComponentReport {
+    readonly format: 'open-eda-component';
+    readonly version: number;
+    readonly sheet: { readonly id: SheetId; readonly name: string };
+    readonly component: ComponentDetail;
+    /** One entry per declared pin, in declaration order. */
+    readonly pins: readonly ComponentPinDetail[];
+}
+
 /** One schematic junction (connection dot). */
 export interface Junction {
     readonly x: number;
@@ -1761,6 +1795,8 @@ export interface Design {
     connectivity(): Promise<ConnectivityReport>;
     /** Traces the read-only connection path between two `REF.PIN` pins. */
     tracePins(from: string, to: string): Promise<TraceReport>;
+    /** Reports one placed component's placement, properties, pins and reaching nets. */
+    componentReport(reference: string): Promise<ComponentReport>;
     listComponents(options?: { readonly sheet?: SheetId }): Promise<readonly Component[]>;
     listNets(options?: { readonly sheet?: SheetId }): Promise<readonly Net[]>;
     close(): Promise<void>;

@@ -75,6 +75,7 @@ fn capability_matrix_reports_only_the_implemented_entries() {
     assert_eq!(matrix["edits"]["noConnects"], "supported");
     assert_eq!(matrix["edits"]["pins"], "supported");
     assert_eq!(matrix["edits"]["annotate"], "supported");
+    assert_eq!(matrix["queries"]["component"], "supported");
     assert_eq!(matrix["queries"]["trace"], "supported");
 }
 
@@ -2532,6 +2533,112 @@ fn connectivity_report_flags_single_node_and_dangling_nets_without_mutating() {
     assert_eq!(nets[1]["pins"], json!([]));
     assert_eq!(nets[1]["dangling"], true);
     assert_eq!(design.revision, 4, "the report never mutates the design");
+}
+
+#[test]
+fn component_report_lists_pins_nets_properties_and_no_connect() {
+    let created = create(CreateRequest::default()).expect("create");
+    let handle = created["handle"].as_u64().expect("handle");
+    add_component(
+        handle,
+        AddComponentRequest {
+            sheet: None,
+            reference: "U1".to_string(),
+            value: "buffer".to_string(),
+            x: 12.5,
+            y: -3.0,
+            rotation: 90.0,
+            pins: vec!["1".to_string(), "2".to_string(), "3".to_string()],
+        },
+    )
+    .expect("add U1");
+    connect_net(handle, ConnectNetRequest { sheet: None, net: "VCC".to_string(), nodes: vec!["U1.1".to_string()] })
+        .expect("connect VCC");
+    connect_net(handle, ConnectNetRequest { sheet: None, net: "SIG".to_string(), nodes: vec!["U1.2".to_string()] })
+        .expect("connect SIG");
+    add_no_connect(
+        handle,
+        AddNoConnectRequest {
+            sheet: None,
+            x: 0.0,
+            y: 0.0,
+            node: Some(Node { reference: "U1".to_string(), pin: "3".to_string() }),
+        },
+    )
+    .expect("mark pin 3 open");
+    for (key, value) in [("MPN", "BUF42"), ("Datasheet", "DS-1")] {
+        set_component_property(
+            handle,
+            SetComponentPropertyRequest {
+                sheet: None,
+                reference: "U1".to_string(),
+                key: key.to_string(),
+                value: value.to_string(),
+            },
+        )
+        .expect("set property");
+    }
+
+    let report = component_report(handle, "U1").expect("component report");
+    assert_eq!(report["format"], "open-eda-component");
+    assert_eq!(report["version"], 1);
+    assert_eq!(report["sheet"], json!({ "id": "sheet-1", "name": "Sheet 1" }));
+    assert_eq!(
+        report["component"],
+        json!({
+            "id": "component-1",
+            "reference": "U1",
+            "value": "buffer",
+            "footprint": "",
+            "x": 12.5,
+            "y": -3.0,
+            "rotation": 90.0,
+            "properties": [
+                { "key": "Datasheet", "value": "DS-1" },
+                { "key": "MPN", "value": "BUF42" },
+            ],
+        })
+    );
+    assert_eq!(
+        report["pins"],
+        json!([
+            { "name": "1", "nets": ["VCC"], "noConnect": false },
+            { "name": "2", "nets": ["SIG"], "noConnect": false },
+            { "name": "3", "nets": [], "noConnect": true },
+        ])
+    );
+
+    let revision = summary(handle).expect("summary")["revision"].clone();
+    let again = component_report(handle, "U1").expect("component report");
+    assert_eq!(again, report, "the report is deterministic for one document state");
+    assert_eq!(summary(handle).expect("summary")["revision"], revision, "the report never mutates the design");
+    close(handle).expect("close");
+}
+
+#[test]
+fn component_report_reports_unknown_references_as_object_not_found() {
+    let created = create(CreateRequest::default()).expect("create");
+    let handle = created["handle"].as_u64().expect("handle");
+    add_component(
+        handle,
+        AddComponentRequest {
+            sheet: None,
+            reference: "R1".to_string(),
+            value: "10k".to_string(),
+            x: 0.0,
+            y: 0.0,
+            rotation: 0.0,
+            pins: vec!["1".to_string(), "2".to_string()],
+        },
+    )
+    .expect("add R1");
+
+    let revision = summary(handle).expect("summary")["revision"].clone();
+    let error = component_report(handle, "R9").expect_err("unknown reference");
+    assert_eq!(error.code, "object/not-found");
+    assert!(error.message.contains("R9"));
+    assert_eq!(summary(handle).expect("summary")["revision"], revision, "a failed lookup adds no revision");
+    close(handle).expect("close");
 }
 
 #[test]

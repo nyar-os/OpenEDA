@@ -27,6 +27,7 @@ import type {
     ComponentInput,
     ComponentPropertyListResult,
     ComponentPropertyResult,
+    ComponentReport,
     ConnectNetInput,
     ConnectivityReport,
     CopyComponentInput,
@@ -818,6 +819,9 @@ function attach(opened: service.DesignHandle, options: AttachOptions): Design {
         },
         async tracePins(from: string, to: string): Promise<TraceReport> {
             return service.tracePins(handle, from, to);
+        },
+        async componentReport(reference: string): Promise<ComponentReport> {
+            return service.componentReport(handle, reference);
         },
         async listComponents(options?: { readonly sheet?: string }): Promise<readonly Component[]> {
             return service.listComponents(handle, options?.sheet).components;

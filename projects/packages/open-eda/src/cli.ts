@@ -679,6 +679,33 @@ componentCommand
     });
 
 componentCommand
+    .command('show', 'cli.cmd.component-show')
+    .actionCtx(async (options, _args, ctx) => {
+        const file = input(options);
+        const reference = options._?.[1];
+        if (file === undefined) {
+            ctx.fail('open-eda.cli.file-required', { message: 'a design document is required' });
+            return 2;
+        }
+        if (reference === undefined || reference.trim().length === 0) {
+            ctx.fail('open-eda.cli.arguments-invalid', { message: 'a `<ref>` argument is required' });
+            return 2;
+        }
+        const report = await withDesign(file, (design) => design.componentReport(reference));
+        const component = report.component;
+        const lines = [
+            `component ${component.reference} sheet=${report.sheet.name} value=${component.value} ` +
+                `footprint=${component.footprint.length > 0 ? component.footprint : '-'} ` +
+                `at=(${component.x}, ${component.y}) rotation=${component.rotation} properties=${component.properties.length}`,
+        ];
+        for (const pin of report.pins) {
+            lines.push(`  pin ${pin.name} nets=${pin.nets.join(',') || '-'} noConnect=${pin.noConnect}`);
+        }
+        ctx.emitResult(report, lines.join('\n'));
+        return 0;
+    });
+
+componentCommand
     .command('add', 'cli.cmd.component-add')
     .option('--ref <ref>', 'cli.opt.ref')
     .option('--value <value>', 'cli.opt.value')

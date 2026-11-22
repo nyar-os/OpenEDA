@@ -26,6 +26,7 @@
             "design-set": "Set title, drawing revision, company and date in place",
             "component": "Edit placed components",
             "component-list": "List the components placed on a sheet",
+            "component-show": "Show one placed component with its placement, custom properties and per-pin nets",
             "component-add": "Add a component to a design document in place",
             "component-copy": "Copy a placed component under a new reference in place",
             "component-move": "Move a placed component in place",

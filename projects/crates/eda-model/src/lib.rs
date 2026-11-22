@@ -126,6 +126,11 @@ const TRACE_REPORT_FORMAT: &str = "open-eda-trace";
 /// Version written into the read-only pin trace report.
 const TRACE_REPORT_VERSION: u64 = 1;
 
+/// Tag written into the read-only component detail report.
+const COMPONENT_REPORT_FORMAT: &str = "open-eda-component";
+/// Version written into the read-only component detail report.
+const COMPONENT_REPORT_VERSION: u64 = 1;
+
 /// Loss code reported when a SPICE element pin has no net and gets an NC node.
 const SPICE_OPEN_PIN: &str = "spice/open-pin";
 
@@ -1362,6 +1367,7 @@ pub fn capabilities() -> Value {
     });
 
     let mut queries = Map::new();
+    queries.insert("component".to_string(), Value::String(level("query.component".to_string()).to_string()));
     queries.insert("trace".to_string(), Value::String(level("query.trace".to_string()).to_string()));
 
     json!({
@@ -1404,6 +1410,7 @@ fn capability_matrix() -> CapabilityMatrix {
     matrix.insert(Capability::new("edit.noConnects", "edit", Support::Supported));
     matrix.insert(Capability::new("edit.pins", "edit", Support::Supported));
     matrix.insert(Capability::new("edit.annotate", "edit", Support::Supported));
+    matrix.insert(Capability::new("query.component", "query", Support::Supported));
     matrix.insert(Capability::new("query.trace", "query", Support::Supported));
     matrix
 }
@@ -5930,6 +5937,74 @@ fn symbol_library(design: &Design) -> Value {
             "components": components,
             "missingFootprint": missing_footprint,
         },
+    })
+}
+
+/// Reports the full detail of one placed component by reference.
+///
+/// The lookup walks the sheets in document order; a reference that no sheet
+/// places is `object/not-found`. The report gathers the component identity,
+/// placement, value, footprint and custom properties, and one entry per declared
+/// pin with the nets that reach it and whether a no-connect flag marks it. Pins
+/// keep the component's declaration order and net names keep document order
+/// without duplicates, so one document state always produces the same report.
+/// The report never mutates the design.
+pub fn component_report(handle: u64, reference: &str) -> Result<Value, ServiceError> {
+    with_session(handle, |session| {
+        let design = &session.design;
+        let (sheet, component) = design
+            .sheets
+            .iter()
+            .find_map(|sheet| {
+                sheet.components.iter().find(|component| component.reference == reference).map(|component| (sheet, component))
+            })
+            .ok_or_else(|| not_found(format!("no component with reference `{reference}` is placed in this design")))?;
+
+        let mut marked: HashSet<(&str, &str)> = HashSet::new();
+        for flag in &sheet.no_connects {
+            if let Some(node) = &flag.node {
+                marked.insert((node.reference.as_str(), node.pin.as_str()));
+            }
+        }
+
+        let pins = component
+            .pins
+            .iter()
+            .map(|pin| {
+                let mut nets: Vec<&str> = Vec::new();
+                for net in &sheet.nets {
+                    let reaches = net.nodes.iter().any(|node| node.reference == component.reference && node.pin == *pin);
+                    if reaches && !nets.contains(&net.name.as_str()) {
+                        nets.push(net.name.as_str());
+                    }
+                }
+                json!({
+                    "name": pin,
+                    "nets": nets,
+                    "noConnect": marked.contains(&(component.reference.as_str(), pin.as_str())),
+                })
+            })
+            .collect::<Vec<_>>();
+
+        let properties =
+            component.properties.iter().map(|(key, value)| json!({ "key": key, "value": value })).collect::<Vec<_>>();
+
+        Ok(json!({
+            "format": COMPONENT_REPORT_FORMAT,
+            "version": COMPONENT_REPORT_VERSION,
+            "sheet": { "id": sheet.id, "name": sheet.name },
+            "component": {
+                "id": component.id,
+                "reference": component.reference,
+                "value": component.value,
+                "footprint": component.footprint,
+                "x": component.x,
+                "y": component.y,
+                "rotation": component.rotation,
+                "properties": properties,
+            },
+            "pins": pins,
+        }))
     })
 }
 

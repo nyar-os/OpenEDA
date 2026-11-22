@@ -467,6 +467,15 @@ fn design_connectivity(ctx: CallContext) -> Result<JsValue> {
     respond(&ctx, &report)
 }
 
+/// Reports the full detail of one placed component by reference.
+#[function]
+fn design_component_report(ctx: CallContext) -> Result<JsValue> {
+    let handle = handle(&ctx, 0)?;
+    let reference = text(&ctx, 1)?;
+    let report = open_eda_model::component_report(handle, &reference).map_err(fail)?;
+    respond(&ctx, &report)
+}
+
 /// Traces the read-only connection path between two `REF.PIN` pins.
 #[function]
 fn design_trace(ctx: CallContext) -> Result<JsValue> {
@@ -1751,6 +1760,7 @@ register_module![
     design_list_variants,
     design_symbols,
     design_connectivity,
+    design_component_report,
     design_trace,
     design_undo,
     design_redo,

@@ -55,6 +55,7 @@ open-eda library <file.kicad_sym>
 open-eda undo <file.oeda>
 open-eda redo <file.oeda>
 open-eda component list <file.oeda> [--sheet <sheet>]
+open-eda component show <file.oeda> <ref>
 open-eda component add <file.oeda> --ref <ref> --value <value> --x <n> --y <n> [--rotation <deg>] [--pins 1,2] [--sheet <sheet>]
 open-eda component copy <file.oeda> --ref <ref> --as <new-ref> [--dx <n>] [--dy <n>] [--sheet <sheet>]
 open-eda component move <file.oeda> --ref <ref> --x <n> --y <n> [--rotation <deg>] [--sheet <sheet>]
@@ -288,6 +289,16 @@ reaches, and the wire-group and junction totals (groups, unassigned groups,
 conflicting groups, floating junctions). The report is read-only, tagged
 `open-eda-connectivity`, and deterministic for one revision; it never assigns
 nets or edits the document.
+
+## Component detail
+
+`open-eda component show <file.oeda> <ref>` returns one placed component by
+reference: its sheet, identity, placement, value, footprint and custom
+properties, plus one entry per declared pin with the nets that reach it and
+whether a no-connect flag marks it. Pins keep declaration order and net names
+keep document order without duplicates. The report is read-only, tagged
+`open-eda-component`, and an unknown reference fails with `object/not-found`;
+it never edits the document.
 
 ## Symbol library
 
