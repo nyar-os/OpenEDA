@@ -1868,7 +1868,7 @@ fn electrical_pin_types_report_conflicts_and_unpowered_inputs() {
         InspectOptions { checks: Some(vec!["electrical".to_string()]), ..InspectOptions::default() },
     )
     .expect("inspect");
-    assert!(codes(&conflict).contains(&"erc/output-output-conflict".to_string()));
+    assert!(codes(&conflict).iter().any(|code| code == "erc/output-output-conflict"));
     let listed = list_components(handle, None).expect("list components");
     let u1 =
         listed["components"].as_array().expect("components").iter().find(|component| component["ref"] == "U1").expect("U1");
@@ -1883,9 +1883,9 @@ fn electrical_pin_types_report_conflicts_and_unpowered_inputs() {
         InspectOptions { checks: Some(vec!["electrical".to_string()]), ..InspectOptions::default() },
     )
     .expect("inspect");
-    assert!(!codes(&unpowered_cleared).contains(&"erc/output-output-conflict".to_string()));
-    assert!(!codes(&unpowered_cleared).contains(&"erc/power-in-unpowered".to_string()));
-    assert!(!codes(&unpowered_cleared).contains(&"erc/input-input-conflict".to_string()));
+    assert!(!codes(&unpowered_cleared).iter().any(|code| code == "erc/output-output-conflict"));
+    assert!(!codes(&unpowered_cleared).iter().any(|code| code == "erc/power-in-unpowered"));
+    assert!(!codes(&unpowered_cleared).iter().any(|code| code == "erc/input-input-conflict"));
 
     let input_revision = set("U1", "1", Some(PinType::Input))["revision"].as_u64().expect("revision");
     let inputs = inspect_with_options(
@@ -1893,7 +1893,7 @@ fn electrical_pin_types_report_conflicts_and_unpowered_inputs() {
         InspectOptions { checks: Some(vec!["electrical".to_string()]), ..InspectOptions::default() },
     )
     .expect("inspect");
-    assert!(codes(&inputs).contains(&"erc/input-input-conflict".to_string()));
+    assert!(codes(&inputs).iter().any(|code| code == "erc/input-input-conflict"));
 
     let no_op = set("U1", "1", Some(PinType::Input));
     assert_eq!(no_op["revision"].as_u64().expect("revision"), input_revision);
@@ -1904,7 +1904,7 @@ fn electrical_pin_types_report_conflicts_and_unpowered_inputs() {
         InspectOptions { checks: Some(vec!["electrical".to_string()]), ..InspectOptions::default() },
     )
     .expect("inspect");
-    assert!(!codes(&after_clear).contains(&"erc/input-input-conflict".to_string()));
+    assert!(!codes(&after_clear).iter().any(|code| code == "erc/input-input-conflict"));
 
     let error = set_pin_type(
         handle,
