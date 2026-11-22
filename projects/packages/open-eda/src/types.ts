@@ -1204,7 +1204,7 @@ export interface Design {
     listSymbols(): Promise<SymbolLibraryResult>;
     /** Reports what each net connects, the pins no net reaches and the per-sheet wire totals. */
     connectivity(): Promise<ConnectivityReport>;
-    listComponents(): Promise<readonly Component[]>;
-    listNets(): Promise<readonly Net[]>;
+    listComponents(options?: { readonly sheet?: SheetId }): Promise<readonly Component[]>;
+    listNets(options?: { readonly sheet?: SheetId }): Promise<readonly Net[]>;
     close(): Promise<void>;
 }

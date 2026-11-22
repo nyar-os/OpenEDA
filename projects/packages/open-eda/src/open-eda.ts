@@ -654,11 +654,11 @@ function attach(opened: service.DesignHandle, options: AttachOptions): Design {
         async connectivity(): Promise<ConnectivityReport> {
             return service.connectivity(handle);
         },
-        async listComponents(): Promise<readonly Component[]> {
-            return service.listComponents(handle).components;
+        async listComponents(options?: { readonly sheet?: string }): Promise<readonly Component[]> {
+            return service.listComponents(handle, options?.sheet).components;
         },
-        async listNets(): Promise<readonly Net[]> {
-            return service.listNets(handle).nets;
+        async listNets(options?: { readonly sheet?: string }): Promise<readonly Net[]> {
+            return service.listNets(handle, options?.sheet).nets;
         },
         async close(): Promise<void> {
             service.close(handle);

@@ -53,12 +53,14 @@ open-eda netlist diff <file.oeda> <file.net>
 open-eda library <file.kicad_sym>
 open-eda undo <file.oeda>
 open-eda redo <file.oeda>
+open-eda component list <file.oeda> [--sheet <sheet>]
 open-eda component add <file.oeda> --ref <ref> --value <value> --x <n> --y <n> [--rotation <deg>] [--pins 1,2] [--sheet <sheet>]
 open-eda component move <file.oeda> --ref <ref> --x <n> --y <n> [--rotation <deg>] [--sheet <sheet>]
 open-eda component update <file.oeda> --ref <ref> --value <value> [--sheet <sheet>]
 open-eda component footprint <file.oeda> --ref <ref> [--footprint <footprint>] [--sheet <sheet>]
 open-eda component pin-type <file.oeda> <ref> <pin> [type] [--clear] [--sheet <sheet>]
 open-eda component delete <file.oeda> --ref <ref> [--sheet <sheet>]
+open-eda net list <file.oeda> [--sheet <sheet>]
 open-eda net connect <file.oeda> --net <name> --nodes <ref.pin>,<ref.pin> [--sheet <sheet>]
 open-eda net derive <file.oeda> [--sheet <sheet>]
 open-eda net disconnect <file.oeda> --net <name> [--nodes <ref.pin>,<ref.pin>] [--sheet <sheet>]

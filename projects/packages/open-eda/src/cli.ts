@@ -535,6 +535,31 @@ designCommand
 
 const componentCommand = cli.command('component', 'cli.cmd.component');
 componentCommand
+    .command('list', 'cli.cmd.component-list')
+    .option('--sheet <sheet>', 'cli.opt.sheet')
+    .actionCtx(async (options, _args, ctx) => {
+        const file = input(options);
+        if (file === undefined) {
+            ctx.fail('open-eda.cli.file-required', { message: 'a design document is required' });
+            return 2;
+        }
+        const report = await withDesign(file, async (design) => {
+            const sheet = text(options, 'sheet');
+            const components = await design.listComponents(sheet === undefined ? undefined : { sheet });
+            return { components, summary: design.summary };
+        });
+        const lines = [`components revision=${report.summary.revision} count=${report.components.length}`];
+        for (const component of report.components) {
+            lines.push(
+                `  ${component.id} ${component.ref} ${component.value} ` +
+                    `(${component.x}, ${component.y}) rot=${component.rotation} pins=${component.pins.join(',') || '-'}`,
+            );
+        }
+        ctx.emitResult({ ...report.summary, components: report.components }, lines.join('\n'));
+        return 0;
+    });
+
+componentCommand
     .command('add', 'cli.cmd.component-add')
     .option('--ref <ref>', 'cli.opt.ref')
     .option('--value <value>', 'cli.opt.value')
@@ -764,6 +789,29 @@ componentCommand
     });
 
 const netCommand = cli.command('net', 'cli.cmd.net');
+netCommand
+    .command('list', 'cli.cmd.net-list')
+    .option('--sheet <sheet>', 'cli.opt.sheet')
+    .actionCtx(async (options, _args, ctx) => {
+        const file = input(options);
+        if (file === undefined) {
+            ctx.fail('open-eda.cli.file-required', { message: 'a design document is required' });
+            return 2;
+        }
+        const report = await withDesign(file, async (design) => {
+            const sheet = text(options, 'sheet');
+            const nets = await design.listNets(sheet === undefined ? undefined : { sheet });
+            return { nets, summary: design.summary };
+        });
+        const lines = [`nets revision=${report.summary.revision} count=${report.nets.length}`];
+        for (const net of report.nets) {
+            const nodes = net.nodes.map((node) => `${node.ref}.${node.pin}`).join(', ') || '(no nodes)';
+            lines.push(`  ${net.id} ${net.name}: ${nodes}`);
+        }
+        ctx.emitResult({ ...report.summary, nets: report.nets }, lines.join('\n'));
+        return 0;
+    });
+
 netCommand
     .command('connect', 'cli.cmd.net-connect')
     .option('--net <name>', 'cli.opt.net')
