@@ -171,9 +171,9 @@ test('document core: edit, inspect, save/open round trip and projections', { ski
         assert.equal(bom.format, 'bom');
         assert.equal(bom.artifact.rows, 2);
         const bomText = fs.readFileSync(bomPath, 'utf8');
-        assert.ok(bomText.startsWith('Comment,Designator,Quantity\n'));
-        assert.ok(bomText.includes('100n,C1,1'));
-        assert.ok(bomText.includes('10k,R1,1'));
+        assert.ok(bomText.startsWith('Comment,Footprint,Designator,Quantity\n'));
+        assert.ok(bomText.includes('100n,,C1,1'));
+        assert.ok(bomText.includes('10k,,R1,1'));
         const pdf = await reopened.export({ format: 'pdf', target: pdfPath });
         assert.equal(pdf.format, 'pdf');
         assert.equal(pdf.artifact.mediaBox, 'a4-landscape');
@@ -271,6 +271,7 @@ test('history, sheets and deep edits stay referentially sound', { skip: withoutA
             design.translate({ references: ['R9'], dx: 1, dy: 0 }),
             (error: unknown) => error instanceof OpenEDAError && error.code === 'object/not-found',
         );
+        await design.connectNet({ net: 'GND', nodes: ['R1.2', 'C1.2'] });
         const merged = await design.mergeNets({ target: 'VIN', source: 'GND' });
         assert.equal(merged.net.name, 'VIN');
         assert.equal(merged.source, 'GND');
