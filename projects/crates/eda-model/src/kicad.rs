@@ -359,6 +359,17 @@ fn render_component(out: &mut String, design: &Design, component: &Component) {
         num(component.x),
         num(component.y)
     ));
+    // Custom properties are written as hidden KiCad symbol properties, so a
+    // property assigned from the SDK or CLI round-trips through the schematic.
+    for (key, value) in &component.properties {
+        out.push_str(&format!(
+            "    (property {} {} (at {} {} 0) (effects (font (size 1.27 1.27)) hide))\n",
+            quote(key),
+            quote(value),
+            num(component.x),
+            num(component.y)
+        ));
+    }
     for (index, pin) in component.pins.iter().enumerate() {
         out.push_str(&format!(
             "    (pin {} (uuid \"{}\"))\n",
@@ -879,6 +890,7 @@ fn read_symbol(
     let mut reference = String::new();
     let mut value = String::new();
     let mut footprint = String::new();
+    let mut properties = BTreeMap::new();
     for property in node.children().iter().filter(|item| item.head() == Some("property")) {
         let Some(name) = property.children().first().and_then(node_text)
         else {
@@ -889,7 +901,15 @@ fn read_symbol(
             "Reference" => reference = text.to_string(),
             "Value" => value = text.to_string(),
             "Footprint" => footprint = text.to_string(),
-            _ => {}
+            _ => {
+                let key = name.trim();
+                // Custom properties use the same key rule as the user-facing
+                // edit operation: non-empty and free of whitespace and
+                // control characters, so every imported key can be addressed.
+                if !key.is_empty() && !key.chars().any(|character| character.is_whitespace() || character.is_control()) {
+                    properties.insert(key.to_string(), text.to_string());
+                }
+            }
         }
     }
 
@@ -916,18 +936,7 @@ fn read_symbol(
         losses.push(loss(MISSING_REFERENCE, format!("a symbol without a reference property was named `{fallback}`")));
         reference = fallback.to_string();
     }
-    Some(Component {
-        id: String::new(),
-        reference,
-        value,
-        footprint,
-        x,
-        y,
-        rotation,
-        pins,
-        pin_types,
-        properties: BTreeMap::new(),
-    })
+    Some(Component { id: String::new(), reference, value, footprint, x, y, rotation, pins, pin_types, properties })
 }
 
 fn read_wire(node: &Node, losses: &mut Vec<Value>) -> Option<([f64; 2], [f64; 2])> {

@@ -1,4 +1,3 @@
-
 use super::*;
 
 struct TempDir(std::path::PathBuf);
@@ -1993,6 +1992,47 @@ fn kicad_sch_export_is_deterministic_and_round_trips() {
     assert_eq!(names, vec!["VCC", "GND"]);
     assert_eq!(nets[0]["nodes"][0]["ref"], "R1");
 
+    close(handle).expect("close");
+}
+
+#[test]
+fn kicad_sch_round_trips_custom_component_properties() {
+    let created = create(CreateRequest::default()).expect("create");
+    let handle = created["handle"].as_u64().expect("handle");
+    blinker(handle);
+    set_component_property(
+        handle,
+        SetComponentPropertyRequest {
+            sheet: None,
+            reference: "R1".to_string(),
+            key: "MPN".to_string(),
+            value: "ABC-123".to_string(),
+        },
+    )
+    .expect("set MPN");
+    set_component_property(
+        handle,
+        SetComponentPropertyRequest {
+            sheet: None,
+            reference: "R1".to_string(),
+            key: "Datasheet".to_string(),
+            value: "https://example.test/r1.pdf".to_string(),
+        },
+    )
+    .expect("set datasheet");
+
+    let dir = TempDir::new("kicad-properties");
+    let path = dir.join("blinker.kicad_sch");
+    export(handle, "kicad_sch", &path).expect("export kicad_sch");
+    let text = fs::read_to_string(&path).expect("read kicad_sch");
+    assert!(text.contains("(property \"MPN\" \"ABC-123\""), "MPN is written: {text}");
+    assert!(text.contains("(property \"Datasheet\" \"https://example.test/r1.pdf\""), "Datasheet is written");
+
+    let imported = import_kicad_sch(&text).expect("import kicad_sch");
+    assert_eq!(imported["losses"], json!([]));
+    let properties = &imported["design"]["sheets"][0]["components"][0]["properties"];
+    assert_eq!(properties["MPN"], json!("ABC-123"));
+    assert_eq!(properties["Datasheet"], json!("https://example.test/r1.pdf"));
     close(handle).expect("close");
 }
 
