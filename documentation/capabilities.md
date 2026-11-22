@@ -20,7 +20,8 @@ instead of degrading silently.
 | component custom properties | supported | trimmed unique keys, verbatim values; stored in `.oeda`, the JSON projection and KiCad symbol properties |
 | checks `erc`, `electrical`, `nets`, `connectivity`, `footprints`, `power` | supported | `drc` and `clearance` are unsupported |
 | design `stats` | supported | deterministic per-sheet and design-wide counts; tagged `open-eda-stats` |
-| read-only listings `component list`, `net list`, `bus list`, `net-class list`, `wire list`, `junction list`, `no-connect list`, `label list`, `text list`, `sheet list` | supported | document order with 0-based indices where the model edits by index |
+| read-only listings `component list`, `net list`, `bus list`, `net-class list`, `wire list`, `label list`, `text list`, `sheet list` | supported | document order with 0-based indices where the model edits by index |
+| junction and no-connect editing | supported | add a junction by coordinate and remove it by 0-based index; add a no-connect flag with or without a `REF.PIN` node and remove it by index; a duplicate junction coordinate is refused (`junction/duplicate`) and so is a second flag on one pin (`no-connect/duplicate`); `capabilities()` reports `edits.junctions` and `edits.noConnects` |
 | export `net`, `net_csv`, `net_hier`, `spice`, `spice_subckt`, `svg`, `bom`, `bom_json`, `bom_html`, `pdf`, `report`, `json`, `kicad_sch`, `kicad_sym` | supported | read-only projections; `kicad_pcb` and `gbr` are unsupported |
 | import `kicad_sch` | supported | symbols, wires, junctions, no-connect flags, text, labels, hierarchical sheet symbols and ports; other constructs are reported as losses |
 | hierarchy editing | supported | add/list/remove parent symbol declarations and their ports; child files are never opened |
@@ -63,7 +64,8 @@ producing an ambiguous file.
 `erc/unconnected-hierarchical-port`. A no-connect flag may carry a `ref`/`pin`
 node; then the `erc` check and the connectivity report treat that pin as
 intentionally open. A flag without a node is a coordinate-only marker and
-suppresses nothing.
+suppresses nothing. Removing the pin flag restores the finding, so the flag is
+the only state that suppresses it.
 
 `electrical` reads typed pins only and reports `erc/input-input-conflict`,
 `erc/output-output-conflict` and `erc/power-in-unpowered`.
