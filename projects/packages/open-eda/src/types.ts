@@ -407,6 +407,26 @@ export interface ComponentInput {
     readonly pins: readonly string[];
 }
 
+/**
+ * Input of `design.copyComponent()`.
+ *
+ * The copy stays on the source sheet and keeps the source value, footprint,
+ * rotation, pins, pin roles, custom properties and component class. It moves by
+ * `dx`/`dy` (zero when omitted). Net nodes, wires and no-connect flags are not
+ * copied, so the new component starts electrically unconnected.
+ */
+export interface CopyComponentInput {
+    readonly sheet?: SheetId;
+    /** Reference designator of the placed component to copy. */
+    readonly reference: string;
+    /** Reference designator of the copy; unique across every sheet. */
+    readonly newReference: string;
+    /** Offset added to the source X coordinate; defaults to zero. */
+    readonly dx?: number;
+    /** Offset added to the source Y coordinate; defaults to zero. */
+    readonly dy?: number;
+}
+
 /** One reference designator moved by `design.annotate()`. */
 export interface AnnotateChange {
     readonly sheetId: SheetId;
@@ -1289,6 +1309,8 @@ export interface Design {
     redo(): Promise<HistoryResult>;
     /** Adds one component and returns the created object. */
     addComponent(input: ComponentInput): Promise<Component>;
+    /** Copies one placed component under a new reference; net nodes and wires are not copied. */
+    copyComponent(input: CopyComponentInput): Promise<Component>;
     /** Deletes one component; its net nodes are removed and detached wires stay valid. */
     deleteComponent(reference: string, options?: { readonly sheet?: SheetId }): Promise<void>;
     /** Connects `REF.PIN` nodes to a net, creating it when needed. */

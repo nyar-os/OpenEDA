@@ -28,6 +28,7 @@ import type {
     ComponentPropertyResult,
     ConnectNetInput,
     ConnectivityReport,
+    CopyComponentInput,
     DeleteNetInput,
     Design,
     DesignCapabilities,
@@ -475,6 +476,12 @@ function attach(opened: service.DesignHandle, options: AttachOptions): Design {
             current = result.design;
             return result.component;
         },
+        async copyComponent(input: CopyComponentInput): Promise<Component> {
+            assertCopyComponentInput(input);
+            const result = await mutate(() => service.copyComponent(handle, input));
+            current = result.design;
+            return result.component;
+        },
         async deleteComponent(reference: string, deleteOptions?: { readonly sheet?: string }): Promise<void> {
             const result = await mutate(() => service.deleteComponent(handle, reference, deleteOptions?.sheet));
             current = result.design;
@@ -775,6 +782,21 @@ function assertComponentPropertyInput(input: SetComponentPropertyInput | RemoveC
     }
     if ('value' in input && typeof input.value !== 'string') {
         throw new OpenEDAError('session/argument-invalid', '`value` must be a string');
+    }
+}
+
+function assertCopyComponentInput(input: CopyComponentInput): void {
+    for (const key of ['reference', 'newReference'] as const) {
+        const value = input?.[key];
+        if (typeof value !== 'string' || value.trim().length === 0) {
+            throw new OpenEDAError('session/argument-invalid', `\`${key}\` must be a non-empty reference designator`);
+        }
+    }
+    for (const key of ['dx', 'dy'] as const) {
+        const value = input[key];
+        if (value !== undefined && (typeof value !== 'number' || !Number.isFinite(value))) {
+            throw new OpenEDAError('session/argument-invalid', `\`${key}\` must be a finite number`);
+        }
     }
 }
 

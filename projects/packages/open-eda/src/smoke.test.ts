@@ -655,3 +655,56 @@ test('format registry classifies the design format family', () => {
     assert.equal(formatFromPath('blinker.oeda'), undefined);
     assert.equal(formatFromPath('no-extension'), undefined);
 });
+test('component copy duplicates placement and metadata without net nodes', { skip: withoutAddon }, async () => {
+    const eda = new OpenEDA();
+    try {
+        const design = await eda.create();
+        await design.addComponent({ reference: 'R1', value: '10k', x: 10, y: 20, rotation: 90, pins: ['1', '2'] });
+        await design.setFootprint({ reference: 'R1', footprint: 'R_0805' });
+        await design.setPinType({ reference: 'R1', pin: '1', pinType: 'passive' });
+        await design.setComponentProperty({ reference: 'R1', key: 'MPN', value: 'ABC-123' });
+        await design.setReferencePrefix({ class: 'resistor', prefix: 'R' });
+        await design.setComponentClass({ reference: 'R1', class: 'resistor' });
+        await design.connectNet({ net: 'VCC', nodes: ['R1.1'] });
+
+        const revision = design.revision;
+        const copy = await design.copyComponent({ reference: 'R1', newReference: 'R2', dx: 15, dy: -5 });
+        assert.equal(copy.id, 'component-2');
+        assert.equal(copy.ref, 'R2');
+        assert.equal(copy.value, '10k');
+        assert.equal(copy.footprint, 'R_0805');
+        assert.equal(copy.x, 25);
+        assert.equal(copy.y, 15);
+        assert.equal(copy.rotation, 90);
+        assert.deepEqual(copy.pins, ['1', '2']);
+        assert.equal(copy.pinTypes?.['1'], 'passive');
+        assert.equal(copy.properties?.MPN, 'ABC-123');
+        assert.equal(design.revision, revision + 1);
+        assert.equal((await design.listNets()).length, 1);
+        assert.equal((await design.listNets())[0]?.nodes.length, 1);
+        const classes = await design.listComponentClasses();
+        assert.ok(classes.some((entry) => entry.reference === 'R2' && entry.class === 'resistor'));
+
+        await assert.rejects(
+            design.copyComponent({ reference: 'R1', newReference: 'R2' }),
+            (error: unknown) => error instanceof OpenEDAError && error.code === 'object/duplicate',
+        );
+        await assert.rejects(
+            design.copyComponent({ reference: 'R9', newReference: 'R3' }),
+            (error: unknown) => error instanceof OpenEDAError && error.code === 'object/not-found',
+        );
+        await assert.rejects(
+            design.copyComponent({ reference: 'R1', newReference: '  ' }),
+            (error: unknown) => error instanceof OpenEDAError && error.code === 'session/argument-invalid',
+        );
+        await assert.rejects(
+            design.copyComponent({ reference: 'R1', newReference: 'R3', dx: Number.NaN }),
+            (error: unknown) => error instanceof OpenEDAError && error.code === 'session/argument-invalid',
+        );
+        await design.undo();
+        assert.equal((await design.listComponents()).length, 1);
+        await design.close();
+    } finally {
+        await eda.dispose();
+    }
+});

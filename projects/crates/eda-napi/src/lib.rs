@@ -23,11 +23,11 @@ use std::{
 
 use open_eda_model::{
     AddBusRequest, AddComponentRequest, AddHierarchyPortRequest, AddHierarchyRequest, AddJunctionRequest, AddNoConnectRequest,
-    AddTextRequest, AddWireRequest, ComponentClassRequest, ConnectNetRequest, CreateRequest, DeleteNetRequest,
-    DisconnectNetRequest, InspectOptions, MergeNetsRequest, MoveComponentRequest, NetClassRequest, ReferencePrefixRequest,
-    RemoveComponentPropertyRequest, RemoveHierarchyPortRequest, RenameNetRequest, ServiceError, SetComponentPropertyRequest,
-    SetFootprintRequest, SetPinTypeRequest, SplitWireRequest, TranslateRequest, UpdateComponentRequest, UpdateDesignRequest,
-    UpdateWireRequest,
+    AddTextRequest, AddWireRequest, ComponentClassRequest, ConnectNetRequest, CopyComponentRequest, CreateRequest,
+    DeleteNetRequest, DisconnectNetRequest, InspectOptions, MergeNetsRequest, MoveComponentRequest, NetClassRequest,
+    ReferencePrefixRequest, RemoveComponentPropertyRequest, RemoveHierarchyPortRequest, RenameNetRequest, ServiceError,
+    SetComponentPropertyRequest, SetFootprintRequest, SetPinTypeRequest, SplitWireRequest, TranslateRequest,
+    UpdateComponentRequest, UpdateDesignRequest, UpdateWireRequest,
 };
 use serde_json::{Value, json};
 use wae::{
@@ -781,6 +781,15 @@ fn design_move_text(ctx: CallContext) -> Result<JsValue> {
     let x = float(&ctx, 3)?;
     let y = float(&ctx, 4)?;
     let report = open_eda_model::move_text(handle, index, sheet.as_deref(), x, y).map_err(fail)?;
+    respond(&ctx, &report)
+}
+
+/// Copies one placed component under a new reference designator.
+#[function]
+fn design_copy_component(ctx: CallContext) -> Result<JsValue> {
+    let handle = handle(&ctx, 0)?;
+    let request: CopyComponentRequest = decode(serde_json::from_str(&text(&ctx, 1)?))?;
+    let report = open_eda_model::copy_component(handle, request).map_err(fail)?;
     respond(&ctx, &report)
 }
 
@@ -1631,6 +1640,7 @@ register_module![
     design_move_junction,
     design_delete_text,
     design_move_text,
+    design_copy_component,
     open_gui,
     pump_events,
     close_gui,

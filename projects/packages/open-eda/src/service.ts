@@ -23,6 +23,7 @@ import type {
     ComponentPropertyResult,
     ConnectNetInput,
     ConnectivityReport,
+    CopyComponentInput,
     DeleteNetInput,
     DeleteNetClassResult,
     DeleteReferencePrefixResult,
@@ -544,6 +545,22 @@ export function addText(handle: number, input: TextInput): TextResult {
         binding('design.addText').design_add_text(
             handle,
             JSON.stringify({ sheet: input.sheet, text: input.text, x: input.x, y: input.y }),
+        ),
+    );
+}
+
+/** Copies one placed component under a new reference designator. */
+export function copyComponent(handle: number, input: CopyComponentInput): ComponentResult {
+    return decode<ComponentResult>(() =>
+        binding('design.copyComponent').design_copy_component(
+            handle,
+            JSON.stringify({
+                sheet: input.sheet,
+                reference: input.reference,
+                newReference: input.newReference,
+                dx: input.dx ?? 0,
+                dy: input.dy ?? 0,
+            }),
         ),
     );
 }

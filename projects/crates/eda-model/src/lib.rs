@@ -779,6 +779,29 @@ pub struct UpdateComponentRequest {
     pub value: String,
 }
 
+/// Request of [`copy_component`].
+///
+/// The copy stays on the source sheet, keeps the source value, footprint,
+/// rotation, pins, pin roles and custom properties, and moves by `dx`/`dy`.
+/// Net nodes, wires and no-connect flags are never copied.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CopyComponentRequest {
+    /// Target sheet id or name; the first sheet is used when omitted.
+    #[serde(default)]
+    pub sheet: Option<String>,
+    /// Reference designator of the placed component to copy.
+    pub reference: String,
+    /// Reference designator of the copy; unique across every sheet.
+    pub new_reference: String,
+    /// Offset added to the source X coordinate; defaults to zero.
+    #[serde(default)]
+    pub dx: f64,
+    /// Offset added to the source Y coordinate; defaults to zero.
+    #[serde(default)]
+    pub dy: f64,
+}
+
 /// Request of [`set_component_footprint`].
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1990,6 +2013,65 @@ pub fn add_component(handle: u64, request: AddComponentRequest) -> Result<Value,
             properties: BTreeMap::new(),
         };
         sheet.components.push(component.clone());
+        design.revision += 1;
+        let mut payload = Map::new();
+        payload.insert("component".to_string(), json!(component));
+        Ok(payload)
+    })
+}
+
+/// Copies one placed component under a new reference designator.
+///
+/// The copy stays on the source sheet, receives a fresh `component-N` identity
+/// and inherits the source value, footprint, rotation, pins, pin roles, custom
+/// properties and component class. It is placed at the source position plus
+/// `dx`/`dy`. Net nodes, wires and no-connect flags are never copied, so the new
+/// component starts electrically unconnected. The new reference must be unique
+/// across every sheet and reuses the duplicate error code of [`add_component`].
+pub fn copy_component(handle: u64, request: CopyComponentRequest) -> Result<Value, ServiceError> {
+    let new_reference = request.new_reference.trim().to_string();
+    if new_reference.is_empty() {
+        return Err(ServiceError::new("session/argument-invalid", "a component reference must not be empty"));
+    }
+    if !request.dx.is_finite() || !request.dy.is_finite() {
+        return Err(ServiceError::new("session/argument-invalid", "component offsets must be finite numbers"));
+    }
+    mutate(handle, |design| {
+        let index = sheet_index(design, request.sheet.as_deref())?;
+        let source = design.sheets[index]
+            .components
+            .iter()
+            .find(|component| component.reference == request.reference)
+            .cloned()
+            .ok_or_else(|| not_found(format!("no component with reference `{}` is placed on this sheet", request.reference)))?;
+        if design.sheets.iter().any(|sheet| sheet.components.iter().any(|component| component.reference == new_reference)) {
+            return Err(duplicate(format!("reference `{new_reference}` already exists in this design")));
+        }
+        let x = source.x + request.dx;
+        let y = source.y + request.dy;
+        if !x.is_finite() || !y.is_finite() {
+            return Err(ServiceError::new("session/argument-invalid", "component coordinates must be finite numbers"));
+        }
+        let class = design.rules.component_classes.get(&source.id).cloned();
+        let sheet = &mut design.sheets[index];
+        let mut used: HashSet<String> = sheet.components.iter().map(|component| component.id.clone()).collect();
+        let id = next_id(&mut design.next_component, "component", &mut used);
+        let component = Component {
+            id: id.clone(),
+            reference: new_reference,
+            value: source.value,
+            footprint: source.footprint,
+            x,
+            y,
+            rotation: source.rotation,
+            pins: source.pins,
+            pin_types: source.pin_types,
+            properties: source.properties,
+        };
+        sheet.components.push(component.clone());
+        if let Some(class) = class {
+            design.rules.component_classes.insert(id, class);
+        }
         design.revision += 1;
         let mut payload = Map::new();
         payload.insert("component".to_string(), json!(component));
@@ -10067,6 +10149,163 @@ mod tests {
         assert_eq!(list_hierarchy(reopened).expect("list after remove")["count"], 0);
         assert_eq!(remove_hierarchy(reopened, "Power").unwrap_err().code, "object/not-found");
         close(reopened).expect("close reopened");
+        close(handle).expect("close");
+    }
+
+    #[test]
+    fn copy_component_duplicates_placement_and_keeps_metadata() {
+        let created = create(CreateRequest::default()).expect("create");
+        let handle = created["handle"].as_u64().expect("handle");
+        add_component(
+            handle,
+            AddComponentRequest {
+                sheet: None,
+                reference: "R1".to_string(),
+                value: "10k".to_string(),
+                x: 40.0,
+                y: 30.0,
+                rotation: 90.0,
+                pins: vec!["1".to_string(), "2".to_string()],
+            },
+        )
+        .expect("add component");
+        set_component_footprint(
+            handle,
+            SetFootprintRequest {
+                sheet: None,
+                reference: "R1".to_string(),
+                footprint: "Resistor_SMD:R_0805_2012Metric".to_string(),
+            },
+        )
+        .expect("set footprint");
+        set_pin_type(
+            handle,
+            SetPinTypeRequest {
+                sheet: None,
+                reference: "R1".to_string(),
+                pin: "1".to_string(),
+                pin_type: Some(PinType::Passive),
+            },
+        )
+        .expect("set pin type");
+        set_component_property(
+            handle,
+            SetComponentPropertyRequest {
+                sheet: None,
+                reference: "R1".to_string(),
+                key: "MPN".to_string(),
+                value: "ABC-123".to_string(),
+            },
+        )
+        .expect("set property");
+        set_reference_prefix(handle, ReferencePrefixRequest { class: "resistor".to_string(), prefix: "R".to_string() })
+            .expect("declare prefix");
+        set_component_class(
+            handle,
+            ComponentClassRequest { sheet: None, reference: "R1".to_string(), class: "resistor".to_string() },
+        )
+        .expect("assign class");
+        connect_net(handle, ConnectNetRequest { sheet: None, net: "VCC".to_string(), nodes: vec!["R1.1".to_string()] })
+            .expect("connect net");
+        let before = list_components(handle, None).expect("list components")["revision"].as_u64().expect("revision");
+
+        let copied = copy_component(
+            handle,
+            CopyComponentRequest {
+                sheet: None,
+                reference: "R1".to_string(),
+                new_reference: "R2".to_string(),
+                dx: 5.0,
+                dy: -5.0,
+            },
+        )
+        .expect("copy component");
+        assert_eq!(copied["component"]["id"], "component-2");
+        assert_eq!(copied["component"]["ref"], "R2");
+        assert_eq!(copied["component"]["value"], "10k");
+        assert_eq!(copied["component"]["footprint"], "Resistor_SMD:R_0805_2012Metric");
+        assert_eq!(copied["component"]["x"], 45.0);
+        assert_eq!(copied["component"]["y"], 25.0);
+        assert_eq!(copied["component"]["rotation"], 90.0);
+        assert_eq!(copied["component"]["pins"], json!(["1", "2"]));
+        assert_eq!(copied["component"]["pinTypes"]["1"], "passive");
+        assert_eq!(copied["component"]["properties"]["MPN"], "ABC-123");
+        assert_eq!(copied["revision"], before + 1);
+        assert_eq!(copied["canUndo"], true);
+
+        let classes = list_component_classes(handle).expect("list classes");
+        let assignments = classes["componentClasses"].as_array().expect("assignments");
+        assert_eq!(assignments.len(), 2);
+        assert!(assignments.iter().any(|entry| entry["reference"] == "R2" && entry["class"] == "resistor"));
+
+        let nets = list_nets(handle, None).expect("list nets");
+        assert_eq!(nets["nets"].as_array().map(Vec::len), Some(1));
+        assert_eq!(nets["nets"][0]["nodes"], json!([{ "ref": "R1", "pin": "1" }]));
+
+        assert_eq!(
+            copy_component(
+                handle,
+                CopyComponentRequest {
+                    sheet: None,
+                    reference: "R1".to_string(),
+                    new_reference: "R2".to_string(),
+                    dx: 0.0,
+                    dy: 0.0,
+                },
+            )
+            .unwrap_err()
+            .code,
+            "object/duplicate"
+        );
+        assert_eq!(
+            copy_component(
+                handle,
+                CopyComponentRequest {
+                    sheet: None,
+                    reference: "R9".to_string(),
+                    new_reference: "R3".to_string(),
+                    dx: 0.0,
+                    dy: 0.0,
+                },
+            )
+            .unwrap_err()
+            .code,
+            "object/not-found"
+        );
+        assert_eq!(
+            copy_component(
+                handle,
+                CopyComponentRequest {
+                    sheet: None,
+                    reference: "R1".to_string(),
+                    new_reference: "  ".to_string(),
+                    dx: 0.0,
+                    dy: 0.0,
+                },
+            )
+            .unwrap_err()
+            .code,
+            "session/argument-invalid"
+        );
+        assert_eq!(
+            copy_component(
+                handle,
+                CopyComponentRequest {
+                    sheet: None,
+                    reference: "R1".to_string(),
+                    new_reference: "R3".to_string(),
+                    dx: f64::NAN,
+                    dy: 0.0,
+                },
+            )
+            .unwrap_err()
+            .code,
+            "session/argument-invalid"
+        );
+
+        undo(handle).expect("undo copy");
+        let restored = list_components(handle, None).expect("list after undo");
+        assert_eq!(restored["components"].as_array().map(Vec::len), Some(1));
         close(handle).expect("close");
     }
 }
