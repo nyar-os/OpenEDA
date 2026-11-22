@@ -37,6 +37,7 @@ export type {
     HistoryFlags,
     JunctionResult,
     MergeNetsEditResult,
+    MergeWireEditResult,
     NetListResult,
     NetResult,
     SheetResult,

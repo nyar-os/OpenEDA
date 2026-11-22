@@ -1989,6 +1989,46 @@ wireCommand
     });
 
 wireCommand
+    .command('merge', 'cli.cmd.wire-merge')
+    .option('--sheet <sheet>', 'cli.opt.sheet-id')
+    .option('--a <index>', 'cli.opt.wire-index-a')
+    .option('--b <index>', 'cli.opt.wire-index-b')
+    .actionCtx(async (options, _args, ctx) => {
+        const file = input(options);
+        if (file === undefined) {
+            ctx.fail('open-eda.cli.file-required', { message: 'a design document is required' });
+            return 2;
+        }
+        const sheet = text(options, 'sheet');
+        const a = number(options, 'a');
+        const b = number(options, 'b');
+        if (
+            sheet === undefined ||
+            sheet.trim().length === 0 ||
+            a === undefined ||
+            !Number.isInteger(a) ||
+            a < 0 ||
+            b === undefined ||
+            !Number.isInteger(b) ||
+            b < 0
+        ) {
+            ctx.fail('open-eda.cli.arguments-invalid', {
+                message: '`--sheet`, `--a` and `--b` are required; `--a` and `--b` are 0-based wire indices',
+            });
+            return 2;
+        }
+        const { wire, removed, saved } = await withDesign(file, async (design) => {
+            const merged = await design.mergeWires({ sheet, a, b });
+            return { ...merged, saved: await savedReport(design) };
+        });
+        ctx.emitResult(
+            { ...saved, revision: saved.revision, wire, removed },
+            `merged ${removed} into ${wire.id} in ${file} revision=${saved.revision}`,
+        );
+        return 0;
+    });
+
+wireCommand
     .command('list', 'cli.cmd.wire-list')
     .option('--sheet <sheet>', 'cli.opt.sheet')
     .actionCtx(async (options, _args, ctx) => {

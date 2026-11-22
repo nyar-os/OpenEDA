@@ -62,6 +62,8 @@ import type {
     LabelUpdateResult,
     MergeNetsInput,
     MergeNetsResult,
+    MergeWireInput,
+    MergeWireResult,
     MoveComponentInput,
     Net,
     NetClassInput,
@@ -151,6 +153,9 @@ export interface WireResult extends EditResult, HistoryFlags {
 
 /** Result of {@link splitWire}. */
 export interface SplitWireEditResult extends EditResult, HistoryFlags, SplitWireResult {}
+
+/** Result of {@link mergeWires}. */
+export interface MergeWireEditResult extends EditResult, HistoryFlags, MergeWireResult {}
 
 /** Result of {@link translate}. */
 export interface TranslateEditResult extends EditResult, HistoryFlags, TranslateResult {}
@@ -571,6 +576,13 @@ export function splitWire(handle: number, input: SplitWireInput): SplitWireEditR
             handle,
             JSON.stringify({ sheet: input.sheet, id: input.id, x: input.x, y: input.y }),
         ),
+    );
+}
+
+/** Merges two touching collinear wires of the same net into one segment. */
+export function mergeWires(handle: number, input: MergeWireInput): MergeWireEditResult {
+    return decode<MergeWireEditResult>(() =>
+        binding('design.mergeWires').design_merge_wires(handle, input.sheet, input.a, input.b),
     );
 }
 

@@ -360,6 +360,17 @@ fn design_split_wire(ctx: CallContext) -> Result<JsValue> {
     respond(&ctx, &report)
 }
 
+/// Merges two touching collinear wires of one sheet into a single segment.
+#[function]
+fn design_merge_wires(ctx: CallContext) -> Result<JsValue> {
+    let handle = handle(&ctx, 0)?;
+    let sheet = text(&ctx, 1)?;
+    let first = position(&ctx, 2)?;
+    let second = position(&ctx, 3)?;
+    let report = open_eda_model::merge_wires(handle, &sheet, first, second).map_err(fail)?;
+    respond(&ctx, &report)
+}
+
 /// Translates the selected components and wires of one sheet by an offset.
 #[function]
 fn design_translate(ctx: CallContext) -> Result<JsValue> {
@@ -1756,6 +1767,7 @@ register_module![
     design_add_wire,
     design_update_wire,
     design_split_wire,
+    design_merge_wires,
     design_translate,
     design_list_wires,
     design_add_junction,

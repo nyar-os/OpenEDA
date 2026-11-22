@@ -1197,6 +1197,140 @@ fn wires_split_at_a_point_on_the_segment() {
 }
 
 #[test]
+fn wires_merge_end_to_end_and_keep_the_first_identity() {
+    let created = create(CreateRequest::default()).expect("create");
+    let handle = created["handle"].as_u64().expect("handle");
+    add_wire(handle, AddWireRequest { sheet: None, net: Some("VCC".to_string()), from: [0.0, 0.0], to: [10.0, 0.0] })
+        .expect("first wire");
+    add_wire(handle, AddWireRequest { sheet: None, net: Some("VCC".to_string()), from: [10.0, 0.0], to: [30.0, 0.0] })
+        .expect("second wire");
+
+    let merged = merge_wires(handle, "sheet-1", 0, 1).expect("merge");
+    assert_eq!(merged["wire"]["id"], "wire-1");
+    assert_eq!(merged["wire"]["net"], "VCC");
+    assert_eq!(merged["wire"]["from"], json!([0.0, 0.0]));
+    assert_eq!(merged["wire"]["to"], json!([30.0, 0.0]));
+    assert_eq!(merged["removed"], "wire-2");
+    assert_eq!(merged["revision"], 4);
+    let listed = list_wires(handle, None).expect("list");
+    assert_eq!(listed["wires"].as_array().expect("wires").len(), 1);
+    assert_eq!(listed["wires"][0]["id"], "wire-1");
+
+    let undone = undo(handle).expect("undo");
+    assert_eq!(undone["revision"], 5);
+    assert_eq!(list_wires(handle, None).expect("list")["wires"].as_array().expect("wires").len(), 2);
+
+    let reversed = merge_wires(handle, "sheet-1", 1, 0).expect("reverse merge");
+    assert_eq!(reversed["wire"]["id"], "wire-2");
+    assert_eq!(reversed["wire"]["from"], json!([0.0, 0.0]));
+    assert_eq!(reversed["wire"]["to"], json!([30.0, 0.0]));
+    assert_eq!(reversed["removed"], "wire-1");
+    assert_eq!(list_wires(handle, None).expect("list")["wires"].as_array().expect("wires").len(), 1);
+    close(handle).expect("close");
+}
+
+#[test]
+fn wire_merge_rejects_mismatched_pairs() {
+    let created = create(CreateRequest::default()).expect("create");
+    let handle = created["handle"].as_u64().expect("handle");
+    for (net, from, to) in [
+        (Some("VCC"), [0.0, 0.0], [10.0, 0.0]),
+        (Some("VCC"), [10.0, 0.0], [20.0, 0.0]),
+        (Some("GND"), [20.0, 0.0], [30.0, 0.0]),
+        (Some("VCC"), [10.0, 0.0], [10.0, 10.0]),
+        (Some("VCC"), [40.0, 0.0], [50.0, 0.0]),
+        (Some("VCC"), [0.0, 0.0], [5.0, 0.0]),
+        (Some("VCC"), [60.0, 0.0], [60.0, 0.0]),
+        (None, [0.0, 20.0], [10.0, 20.0]),
+        (None, [10.0, 20.0], [20.0, 20.0]),
+    ] {
+        add_wire(handle, AddWireRequest { sheet: None, net: net.map(str::to_string), from, to }).expect("add wire");
+    }
+
+    assert_eq!(merge_wires(handle, "sheet-1", 0, 2).expect_err("different net").code, "wire/merge-mismatch");
+    assert_eq!(merge_wires(handle, "sheet-1", 0, 3).expect_err("non-collinear").code, "wire/merge-mismatch");
+    assert_eq!(merge_wires(handle, "sheet-1", 0, 4).expect_err("not touching").code, "wire/merge-mismatch");
+    assert_eq!(merge_wires(handle, "sheet-1", 0, 5).expect_err("overlap").code, "wire/merge-mismatch");
+    assert_eq!(merge_wires(handle, "sheet-1", 0, 0).expect_err("same wire").code, "wire/merge-mismatch");
+    assert_eq!(merge_wires(handle, "sheet-1", 0, 6).expect_err("zero-length").code, "session/argument-invalid");
+    assert_eq!(merge_wires(handle, "sheet-1", 0, 99).expect_err("unknown index").code, "object/not-found");
+    assert_eq!(merge_wires(handle, "sheet-1", 99, 0).expect_err("unknown first index").code, "object/not-found");
+    assert_eq!(merge_wires(handle, "missing", 0, 1).expect_err("unknown sheet").code, "sheet/not-found");
+
+    add_sheet(handle, Some("Power")).expect("add sheet");
+    add_wire(
+        handle,
+        AddWireRequest { sheet: Some("Power".to_string()), net: Some("VCC".to_string()), from: [0.0, 0.0], to: [10.0, 0.0] },
+    )
+    .expect("wire on the second sheet");
+    assert_eq!(merge_wires(handle, "sheet-2", 0, 1).expect_err("index only exists on another sheet").code, "object/not-found");
+
+    add_junction(handle, AddJunctionRequest { sheet: None, x: 10.0, y: 0.0 }).expect("junction");
+    assert_eq!(merge_wires(handle, "sheet-1", 0, 1).expect_err("junction at shared point").code, "wire/merge-junction");
+
+    let netless = merge_wires(handle, "sheet-1", 7, 8).expect("net-less merge");
+    assert_eq!(netless["wire"]["net"], Value::Null);
+    assert_eq!(netless["wire"]["from"], json!([0.0, 20.0]));
+    assert_eq!(netless["wire"]["to"], json!([20.0, 20.0]));
+    close(handle).expect("close");
+}
+
+#[test]
+fn wire_merge_is_deterministic_and_survives_a_save() {
+    let dir = TempDir::new("wire-merge");
+    let path = dir.join("merge.oeda");
+    let seed = |handle: u64| {
+        add_component(
+            handle,
+            AddComponentRequest {
+                sheet: None,
+                reference: "R1".to_string(),
+                value: "10k".to_string(),
+                x: 0.0,
+                y: 0.0,
+                rotation: 0.0,
+                pins: vec!["1".to_string(), "2".to_string()],
+            },
+        )
+        .expect("component");
+        connect_net(
+            handle,
+            ConnectNetRequest { sheet: None, net: "VCC".to_string(), nodes: vec!["R1.1".to_string()] },
+        )
+        .expect("declare VCC");
+        add_wire(handle, AddWireRequest { sheet: None, net: Some("VCC".to_string()), from: [0.0, 0.0], to: [10.0, 0.0] })
+            .expect("first wire");
+        add_wire(handle, AddWireRequest { sheet: None, net: Some("VCC".to_string()), from: [10.0, 0.0], to: [25.0, 0.0] })
+            .expect("second wire");
+    };
+    let created = create(CreateRequest::default()).expect("create");
+    let handle = created["handle"].as_u64().expect("handle");
+    seed(handle);
+    let first = merge_wires(handle, "sheet-1", 0, 1).expect("merge");
+
+    let other = create(CreateRequest::default()).expect("create");
+    let other_handle = other["handle"].as_u64().expect("handle");
+    seed(other_handle);
+    let second = merge_wires(other_handle, "sheet-1", 0, 1).expect("merge again");
+    assert_eq!(first["wire"], second["wire"]);
+    assert_eq!(first["removed"], second["removed"]);
+
+    save(handle, &path, false).expect("save");
+    close(handle).expect("close");
+    close(other_handle).expect("close");
+
+    let reopened = open(&path).expect("reopen");
+    let reopened_handle = reopened["handle"].as_u64().expect("handle");
+    let wired = list_wires(reopened_handle, None).expect("list reopened");
+    assert_eq!(wired["wires"].as_array().expect("wires").len(), 1);
+    assert_eq!(wired["wires"][0]["id"], "wire-1");
+    assert_eq!(wired["wires"][0]["net"], "VCC");
+    assert_eq!(wired["wires"][0]["from"], json!([0.0, 0.0]));
+    assert_eq!(wired["wires"][0]["to"], json!([25.0, 0.0]));
+    close(reopened_handle).expect("close");
+}
+
+#[test]
 fn selected_components_and_wires_translate_all_or_nothing() {
     let created = create(CreateRequest::default()).expect("create");
     let handle = created["handle"].as_u64().expect("handle");

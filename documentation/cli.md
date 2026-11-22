@@ -104,6 +104,7 @@ Pin roles: `input`, `output`, `bidirectional`, `tri_state`, `passive`,
 | `open-eda wire add <file> --net <name> --from <x,y> --to <x,y> [--sheet <id>]` | Add a wire segment |
 | `open-eda wire update <file> --id <wire> --from <x,y> --to <x,y> [--sheet <id>]` | Move a wire endpoint |
 | `open-eda wire split <file> --id <wire> --x <n> --y <n> [--sheet <id>]` | Split a wire at a point on the segment |
+| `open-eda wire merge <file> --sheet <id> --a <index> --b <index>` | Merge two touching collinear wires of the same net |
 | `open-eda wire list <file> [--sheet <id>]` | List wires in document order |
 | `open-eda wire delete <file> --id <wire> [--sheet <id>]` | Delete a wire |
 | `open-eda junction add <file> --x <n> --y <n> [--sheet <id>]` | Add a junction |

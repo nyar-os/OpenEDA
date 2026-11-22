@@ -1035,6 +1035,24 @@ export interface SplitWireInput {
     readonly y: number;
 }
 
+/** Result of `design.mergeWires()`: the surviving segment and the removed one. */
+export interface MergeWireResult {
+    /** First segment, now spanning both far endpoints and keeping its identity. */
+    readonly wire: Wire;
+    /** Wire id removed by the merge. */
+    readonly removed: ObjectId;
+}
+
+/** Input of `design.mergeWires()`; both indices are 0-based on one sheet. */
+export interface MergeWireInput {
+    /** Sheet that holds both wires. */
+    readonly sheet: SheetId;
+    /** 0-based position of the wire that keeps its identity. */
+    readonly a: number;
+    /** 0-based position of the wire that is removed. */
+    readonly b: number;
+}
+
 /** Result of `design.translate()`. */
 export interface TranslateResult {
     /** Components moved in this call. */
@@ -1755,6 +1773,8 @@ export interface Design {
     updateWire(input: UpdateWireInput): Promise<Wire>;
     /** Splits one wire segment into two at a point on the segment. */
     splitWire(input: SplitWireInput): Promise<SplitWireResult>;
+    /** Merges two touching collinear wires of the same net into one segment. */
+    mergeWires(input: MergeWireInput): Promise<MergeWireResult>;
     /** Translates selected components and wires of a sheet by an offset. */
     translate(input: TranslateInput): Promise<TranslateResult>;
     /** Lists the wires drawn on a sheet. */

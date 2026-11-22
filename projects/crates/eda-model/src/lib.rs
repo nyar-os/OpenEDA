@@ -3989,6 +3989,102 @@ pub fn split_wire(handle: u64, request: SplitWireRequest) -> Result<Value, Servi
     })
 }
 
+/// Merges two touching, collinear wires of the same net into one segment.
+///
+/// Both wires are addressed by their 0-based position in the `sheet` wire
+/// list, so they always belong to the same sheet. They must name the same net;
+/// an absent, empty or whitespace-only name counts as net-less, matching
+/// [`update_wire`], which clears an empty assignment. They must share exactly
+/// one endpoint within a `1e-9` tolerance scaled by the longer segment, and
+/// must extend in opposite directions from that shared endpoint, so the
+/// shared point is not left in the middle of the merged wire.
+///
+/// The first wire keeps its identity, order and net and spans the two far
+/// endpoints; the second wire is removed. A junction at the shared point is
+/// refused as `wire/merge-junction`, because it would sit inside the merged
+/// segment. A different net, a missing shared endpoint, overlapping or
+/// non-collinear segments are `wire/merge-mismatch`, and a result that would
+/// have zero length is `session/argument-invalid`. The payload reports the
+/// surviving `wire` and the `removed` wire id.
+pub fn merge_wires(handle: u64, sheet: &str, first: usize, second: usize) -> Result<Value, ServiceError> {
+    mutate(handle, |design| {
+        let index = sheet_index(design, Some(sheet))?;
+        let target = &mut design.sheets[index];
+        let first_wire =
+            target.wires.get(first).cloned().ok_or_else(|| not_found(format!("no wire at index {first} on this sheet")))?;
+        let second_wire =
+            target.wires.get(second).cloned().ok_or_else(|| not_found(format!("no wire at index {second} on this sheet")))?;
+        if first == second {
+            return Err(ServiceError::new("wire/merge-mismatch", "a wire cannot be merged with itself"));
+        }
+        if wire_net_name(first_wire.net.as_deref()) != wire_net_name(second_wire.net.as_deref()) {
+            return Err(ServiceError::new("wire/merge-mismatch", "the wires must name the same net before they can be merged"));
+        }
+        let first_length = segment_length(first_wire.from, first_wire.to);
+        let second_length = segment_length(second_wire.from, second_wire.to);
+        let tolerance = 1.0e-9 * first_length.max(second_length).max(1.0);
+        if first_length <= tolerance || second_length <= tolerance {
+            return Err(ServiceError::new("session/argument-invalid", "a zero-length wire cannot be merged"));
+        }
+        let first_ends = [first_wire.from, first_wire.to];
+        let second_ends = [second_wire.from, second_wire.to];
+        let mut touches = 0;
+        let mut shared = None;
+        for (first_end, first_point) in first_ends.iter().enumerate() {
+            for (second_end, second_point) in second_ends.iter().enumerate() {
+                if points_within(*first_point, *second_point, tolerance) {
+                    touches += 1;
+                    shared = Some((first_end, second_end, *first_point));
+                }
+            }
+        }
+        let (first_end, second_end, shared_point) = match (touches, shared) {
+            (1, Some(shared)) => shared,
+            (0, _) => {
+                return Err(ServiceError::new("wire/merge-mismatch", "the wires do not share an endpoint"));
+            }
+            _ => {
+                return Err(ServiceError::new("wire/merge-mismatch", "the wires overlap or share both endpoints"));
+            }
+        };
+        if target.junctions.iter().any(|junction| points_within([junction.x, junction.y], shared_point, tolerance)) {
+            return Err(ServiceError::new(
+                "wire/merge-junction",
+                format!("a junction at ({}, {}) would sit inside the merged wire", shared_point[0], shared_point[1]),
+            ));
+        }
+        let first_far = if first_end == 0 { first_wire.to } else { first_wire.from };
+        let second_far = if second_end == 0 { second_wire.to } else { second_wire.from };
+        let first_direction = unit_direction(first_far, shared_point);
+        let second_direction = unit_direction(second_far, shared_point);
+        let cross = first_direction[0] * second_direction[1] - first_direction[1] * second_direction[0];
+        let dot = first_direction[0] * second_direction[0] + first_direction[1] * second_direction[1];
+        if cross.abs() > 1.0e-9 || dot >= 0.0 {
+            return Err(ServiceError::new(
+                "wire/merge-mismatch",
+                "the wires must be collinear and extend in opposite directions from the shared endpoint",
+            ));
+        }
+        let merged = Wire {
+            id: first_wire.id.clone(),
+            net: first_wire.net.clone(),
+            from: if first_end == 0 { second_far } else { first_wire.from },
+            to: if first_end == 1 { second_far } else { first_wire.to },
+        };
+        if segment_length(merged.from, merged.to) <= tolerance {
+            return Err(ServiceError::new("session/argument-invalid", "the merged wire would be zero length"));
+        }
+        target.wires.remove(second);
+        let first_position = if second < first { first - 1 } else { first };
+        target.wires[first_position] = merged.clone();
+        design.revision += 1;
+        let mut payload = Map::new();
+        payload.insert("wire".to_string(), json!(merged));
+        payload.insert("removed".to_string(), json!(second_wire.id));
+        Ok(payload)
+    })
+}
+
 /// Translates the selected components and wires of one sheet by an offset.
 ///
 /// Only the listed objects move; unlisted components, wires, junctions, text
@@ -4980,6 +5076,33 @@ fn sheet_index(design: &Design, sheet: Option<&str>) -> Result<usize, ServiceErr
             .position(|sheet| sheet.id == needle || sheet.name == needle)
             .ok_or_else(|| ServiceError::new("sheet/not-found", format!("sheet `{needle}` is not part of this design"))),
     }
+}
+
+/// Net identity used by [`merge_wires`]: an absent, empty or whitespace-only
+/// name means the wire belongs to no net.
+fn wire_net_name(net: Option<&str>) -> Option<&str> {
+    net.map(str::trim).filter(|name| !name.is_empty())
+}
+
+/// Whether two points lie within `tolerance` on both axes.
+fn points_within(left: [f64; 2], right: [f64; 2], tolerance: f64) -> bool {
+    (left[0] - right[0]).abs() <= tolerance && (left[1] - right[1]).abs() <= tolerance
+}
+
+/// Length of one straight segment.
+fn segment_length(from: [f64; 2], to: [f64; 2]) -> f64 {
+    let delta_x = to[0] - from[0];
+    let delta_y = to[1] - from[1];
+    (delta_x * delta_x + delta_y * delta_y).sqrt()
+}
+
+/// Unit vector pointing from `from` toward `toward`; the caller rules out a
+/// zero-length segment, so the divisor is never zero.
+fn unit_direction(from: [f64; 2], toward: [f64; 2]) -> [f64; 2] {
+    let delta_x = toward[0] - from[0];
+    let delta_y = toward[1] - from[1];
+    let length = (delta_x * delta_x + delta_y * delta_y).sqrt();
+    [delta_x / length, delta_y / length]
 }
 
 fn next_id(counter: &mut u64, prefix: &str, used: &mut HashSet<String>) -> String {

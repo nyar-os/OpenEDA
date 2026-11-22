@@ -68,6 +68,8 @@ import type {
     LabelUpdateResult,
     MergeNetsInput,
     MergeNetsResult,
+    MergeWireInput,
+    MergeWireResult,
     MoveComponentInput,
     Net,
     NetClass,
@@ -541,6 +543,11 @@ function attach(opened: service.DesignHandle, options: AttachOptions): Design {
             const result = await mutate(() => service.splitWire(handle, input));
             current = result.design;
             return { first: result.first, second: result.second };
+        },
+        async mergeWires(input: MergeWireInput): Promise<MergeWireResult> {
+            const result = await mutate(() => service.mergeWires(handle, input));
+            current = result.design;
+            return { wire: result.wire, removed: result.removed };
         },
         async translate(input: TranslateInput): Promise<TranslateResult> {
             const result = await mutate(() => service.translateObjects(handle, input));
