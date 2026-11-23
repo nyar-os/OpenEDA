@@ -27,7 +27,7 @@ to stderr.
 | `open-eda create --out <file.oeda> [--title <text>] [--rev <text>] [--company <text>] [--date <text>] [--template <name>] [--overwrite]` | Create a native design document |
 | `open-eda open <file>` | Validate and report that the document opens |
 | `open-eda design set <file> [--title <text>] [--rev <text>] [--company <text>] [--date <text>]` | Update title-block properties; an empty value clears a field |
-| `open-eda inspect <file> [--checks erc,electrical,bus,nets,connectivity,footprints,power,references,clearance] [--severity <code>=<level>] [--waive <code>[@<object>]]` | Run the supported checks |
+| `open-eda inspect <file> [--checks erc,electrical,drivers,bus,nets,connectivity,footprints,power,references,clearance] [--severity <code>=<level>] [--waive <code>[@<object>]]` | Run the supported checks |
 | `open-eda list <file>` | List sheets, components, nets, wires and buses |
 | `open-eda symbols <file>` | Group placed components by derived library id with pin, footprint and missing-footprint counts |
 | `open-eda connectivity <file>` | Print the connectivity report |
@@ -39,6 +39,16 @@ to stderr.
 | `open-eda undo <file>` / `open-eda redo <file>` | Walk the sidecar history |
 | `open-eda capabilities` | Print the machine-readable capability matrix |
 | `open-eda gui` | Open the studio window |
+
+### Drivers and library checks
+
+`inspect --checks drivers` reports `erc/undriven-input` when a net reaches typed
+input pins but no typed driver, and `erc/unconnected-power-pin` when a typed
+power input reaches no net and no no-connect flag names it.
+
+`library-check` prints `library/*` findings with their symbol, pin and unit.
+Exit `0` means no error finding (a clean library or warnings only); exit `1`
+means an error finding, a missing argument or an unusable file.
 
 ### Pin trace
 
@@ -155,7 +165,8 @@ Port directions: `input`, `output`, `bidirectional`, `tri_state`, `passive`.
 | Command | Description |
 |---------|-------------|
 | `open-eda import <file.kicad_sch> --out <file.oeda> [--overwrite]` | Import the supported KiCad schematic subset |
-| `open-eda library <file.kicad_sym>` | Report a KiCad symbol library without creating a design |
+| `open-eda library <file.kicad_sym> [--pins]` | Report a KiCad symbol library without creating a design; `--pins` prints each pin's unit, number, name and role |
+| `open-eda library-check <file.kicad_sym>` | Validate a KiCad symbol library; exit `1` when a finding is an error |
 | `open-eda export <file> --format <format> --out <target> [--variant <name>]` | Write a read-only projection |
 | `open-eda netlist <file> --out <file.net> [--overwrite]` | Write the flat netlist |
 
