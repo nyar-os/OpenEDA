@@ -46,6 +46,7 @@ fn capability_matrix_reports_only_the_implemented_entries() {
     assert_eq!(matrix["checks"]["erc"], "supported");
     assert_eq!(matrix["checks"]["electrical"], "supported");
     assert_eq!(matrix["checks"]["drivers"], "supported");
+    assert_eq!(matrix["checks"]["pin_types"], "supported");
     assert_eq!(matrix["checks"]["bus"], "supported");
     assert_eq!(matrix["checks"]["nets"], "supported");
     assert_eq!(matrix["checks"]["connectivity"], "supported");
@@ -61,6 +62,7 @@ fn capability_matrix_reports_only_the_implemented_entries() {
     assert_eq!(matrix["exportTargets"]["net_csv"], "supported");
     assert_eq!(matrix["exportTargets"]["net_hier"], "supported");
     assert_eq!(matrix["exportTargets"]["net_class"], "supported");
+    assert_eq!(matrix["exportTargets"]["net_length"], "supported");
     assert_eq!(matrix["exportTargets"]["spice"], "supported");
     assert_eq!(matrix["exportTargets"]["spice_subckt"], "supported");
     assert_eq!(matrix["exportTargets"]["svg"], "supported");
@@ -187,6 +189,113 @@ fn net_class_export_groups_rows_by_declared_class_and_reports_pin_roles() {
     );
     assert_eq!(export_with_variant(handle, "net_class", &path, Some("lite")).unwrap_err().code, "session/argument-invalid");
     close(handle).expect("close");
+}
+
+#[test]
+fn net_length_export_reports_per_net_wire_length_and_unrouted_nets() {
+    let dir = TempDir::new("net-length");
+    let path = dir.join("lengths.csv");
+    let second = dir.join("lengths-again.csv");
+    let created = create(CreateRequest::default()).expect("create");
+    let handle = created["handle"].as_u64().expect("handle");
+    add_component(
+        handle,
+        AddComponentRequest {
+            sheet: None,
+            reference: "R1".to_string(),
+            value: "10k".to_string(),
+            x: 0.0,
+            y: 0.0,
+            rotation: 0.0,
+            pins: vec!["1".to_string(), "2".to_string()],
+        },
+    )
+    .expect("add component");
+    connect_net(
+        handle,
+        ConnectNetRequest { sheet: None, net: "VCC".to_string(), nodes: vec!["R1.1".to_string(), "R1.2".to_string()] },
+    )
+    .expect("connect VCC");
+    connect_net(
+        handle,
+        ConnectNetRequest { sheet: None, net: "SIG".to_string(), nodes: vec!["R1.1".to_string(), "R1.2".to_string()] },
+    )
+    .expect("connect SIG");
+    for (from, to) in [([0.0, 0.0], [10.0, 0.0]), ([10.0, 0.0], [10.0, 20.0]), ([10.0, 20.0], [13.0, 24.0])] {
+        add_wire(handle, AddWireRequest { sheet: None, net: Some("VCC".to_string()), from, to }).expect("add wire");
+    }
+
+    let report = export(handle, "net_length", &path).expect("export net_length");
+    assert_eq!(report["format"], "net_length");
+    assert_eq!(report["artifact"]["kind"], "net_length");
+    assert_eq!(report["artifact"]["nets"], 2);
+    assert_eq!(report["artifact"]["wires"], 3);
+    assert_eq!(report["artifact"]["unrouted"], 1);
+    assert_eq!(report["artifact"]["length"], "35");
+    let text = fs::read_to_string(&path).expect("read net length csv");
+    assert_eq!(
+        text,
+        "Sheet,Net,Length,Wires,Unrouted\n\
+         Sheet 1,VCC,35,3,no\n\
+         Sheet 1,SIG,0,0,yes\n"
+    );
+    export(handle, "net_length", &second).expect("export again");
+    assert_eq!(text, fs::read_to_string(&second).expect("read second csv"), "export must be byte-stable");
+    close(handle).expect("close");
+}
+
+#[test]
+fn pin_types_check_reports_role_conflicts_the_other_checks_do_not() {
+    let mut u1 = inspection_component("component-1", "U1", 0.0, 0.0);
+    u1.pins = vec!["OUT".to_string(), "VCC".to_string(), "BUS".to_string()];
+    u1.pin_types.insert("OUT".to_string(), PinType::Output);
+    u1.pin_types.insert("VCC".to_string(), PinType::PowerIn);
+    u1.pin_types.insert("BUS".to_string(), PinType::TriState);
+    let mut u2 = inspection_component("component-2", "U2", 10.0, 0.0);
+    u2.pins = vec!["PWR".to_string()];
+    u2.pin_types.insert("PWR".to_string(), PinType::PowerOut);
+    let node = |reference: &str, pin: &str| Node { reference: reference.to_string(), pin: pin.to_string() };
+    let mut sheet = inspection_sheet("sheet-1", vec![u1, u2]);
+    sheet.nets = vec![
+        Net { id: "net-1".to_string(), name: "SUPPLY_IN".to_string(), nodes: vec![node("U1", "OUT"), node("U1", "VCC")] },
+        Net { id: "net-2".to_string(), name: "BUS_DRIVE".to_string(), nodes: vec![node("U2", "PWR"), node("U1", "BUS")] },
+        Net { id: "net-3".to_string(), name: "REGULATED".to_string(), nodes: vec![node("U2", "PWR"), node("U1", "OUT")] },
+        Net { id: "net-4".to_string(), name: "CLEAN".to_string(), nodes: vec![node("U2", "PWR"), node("U1", "VCC")] },
+    ];
+    let design = inspection_design(vec![sheet], 4);
+
+    let issues = inspect_design(&design, &["pin_types".to_string()]);
+    let codes: Vec<&str> = issues.iter().filter_map(|issue| issue["code"].as_str()).collect();
+    assert_eq!(codes, vec!["erc/output-power-in-conflict", "erc/power-output-driver-conflict"]);
+    assert_eq!(issues[0]["severity"], "error");
+    assert_eq!(issues[0]["sheetId"], "sheet-1");
+    assert_eq!(issues[0]["objectId"], "net-1");
+    assert!(issues[0]["message"].as_str().unwrap_or("").contains("U1.OUT"), "{}", issues[0]["message"]);
+    assert_eq!(issues[1]["objectId"], "net-2");
+    assert!(issues[1]["message"].as_str().unwrap_or("").contains("U1.BUS"), "{}", issues[1]["message"]);
+    assert_eq!(design.revision, 4, "inspection must not advance the revision");
+
+    let clean = inspection_design(
+        vec![inspection_sheet(
+            "sheet-1",
+            vec![
+                {
+                    let mut u1 = inspection_component("component-1", "U1", 0.0, 0.0);
+                    u1.pins = vec!["VCC".to_string()];
+                    u1.pin_types.insert("VCC".to_string(), PinType::PowerIn);
+                    u1
+                },
+                {
+                    let mut u2 = inspection_component("component-2", "U2", 10.0, 0.0);
+                    u2.pins = vec!["PWR".to_string()];
+                    u2.pin_types.insert("PWR".to_string(), PinType::PowerOut);
+                    u2
+                },
+            ],
+        )],
+        1,
+    );
+    assert!(inspect_design(&clean, &["pin_types".to_string()]).is_empty(), "a power output feeding a power input is legal");
 }
 
 #[test]

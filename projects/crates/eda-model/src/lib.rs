@@ -44,12 +44,35 @@ pub const DESIGN_FORMATS: &[&str] =
     &["kicad_sch", "kicad_pcb", "sch", "brd", "net", "edif", "spice", "cir", "gbr", "drl", "step", "svg", "pdf", "png", "bom"];
 
 /// Rule checks declared by the studio inspector.
-const INSPECT_CHECKS: &[&str] =
-    &["erc", "electrical", "drivers", "bus", "drc", "nets", "connectivity", "footprints", "clearance", "power", "references"];
+const INSPECT_CHECKS: &[&str] = &[
+    "erc",
+    "electrical",
+    "drivers",
+    "pin_types",
+    "bus",
+    "drc",
+    "nets",
+    "connectivity",
+    "footprints",
+    "clearance",
+    "power",
+    "references",
+];
 
 /// Rule checks this build actually runs.
-const SUPPORTED_CHECKS: &[&str] =
-    &["erc", "electrical", "drivers", "bus", "nets", "connectivity", "footprints", "clearance", "power", "references"];
+const SUPPORTED_CHECKS: &[&str] = &[
+    "erc",
+    "electrical",
+    "drivers",
+    "pin_types",
+    "bus",
+    "nets",
+    "connectivity",
+    "footprints",
+    "clearance",
+    "power",
+    "references",
+];
 
 /// Render targets declared for preview surfaces.
 const RENDER_FORMATS: &[&str] = &["svg", "png", "pdf"];
@@ -63,6 +86,7 @@ const EXPORT_TARGETS: &[&str] = &[
     "net_csv",
     "net_hier",
     "net_class",
+    "net_length",
     "spice",
     "spice_subckt",
     "gbr",
@@ -83,6 +107,7 @@ const SUPPORTED_EXPORTS: &[&str] = &[
     "net_csv",
     "net_hier",
     "net_class",
+    "net_length",
     "spice",
     "spice_subckt",
     "svg",
@@ -1356,8 +1381,8 @@ pub struct Waiver {
 ///
 /// The matrix is the single source of truth for the CLI, the SDK and the
 /// studio, so a method name is never treated as a capability. Netlist, SPICE,
-/// SVG, BOM (CSV, JSON and HTML), PDF, report, JSON document, KiCad schematic
-/// and KiCad symbol library
+/// SVG, BOM (CSV, JSON and HTML), PDF, report, JSON document, net-length,
+/// KiCad schematic and KiCad symbol library
 /// projections are supported,
 /// KiCad schematics are also imported, and every other exchange format and rule
 /// check is reported as unsupported. Design-level buses are edited through
@@ -1376,7 +1401,12 @@ pub struct Waiver {
 /// report are unchanged. The `drivers` check reads typed pins only and reports
 /// `erc/undriven-input` for a net whose inputs no driving pin reaches, and
 /// `erc/unconnected-power-pin` for a typed power input that no net and no
-/// no-connect flag covers.
+/// no-connect flag covers. The `pin_types` check reads typed pins only and
+/// reports `erc/output-power-in-conflict` when one net joins a logic `output`
+/// pin and a `power_in` pin, and `erc/power-output-driver-conflict` when a
+/// `power_out` pin shares a net with a `bidirectional`, `tri_state`,
+/// `open_collector` or `open_emitter` pin; the conflicts the `electrical` and
+/// `power` checks already report are not repeated.
 ///
 /// Junctions and no-connect flags are editable, not read-only: the matrix
 /// reports `edits.junctions` and `edits.noConnects` as `supported` because
@@ -4924,6 +4954,17 @@ pub fn export_with_variant(handle: u64, format: &str, path: &Path, variant: Opti
             });
             (contents, artifact)
         }
+        "net_length" => {
+            let (contents, rows, unrouted, wires, length) = render_net_length_csv(&design);
+            let artifact = json!({
+                "kind": "net_length",
+                "nets": rows,
+                "wires": wires,
+                "unrouted": unrouted,
+                "length": format_number(length),
+            });
+            (contents, artifact)
+        }
         "spice" => {
             let (contents, spice_losses) = render_spice(&design);
             losses = spice_losses;
@@ -6126,6 +6167,73 @@ fn inspect_design(design: &Design, checks: &[String]) -> Vec<Value> {
                             ),
                         ));
                     }
+                }
+            }
+        }
+    }
+    if checks.iter().any(|check| check == "pin_types") {
+        // Only a role pair that cannot share one net is a conflict here. The
+        // pairs the `electrical` and `power` checks already report
+        // (input/input, output/output, power_out/power_out and
+        // power_out/output) are left out so one net never produces two
+        // findings for the same short.
+        for sheet in &design.sheets {
+            for net in &sheet.nets {
+                let mut outputs = Vec::new();
+                let mut power_inputs = Vec::new();
+                let mut power_outputs = Vec::new();
+                let mut logic_drivers = Vec::new();
+                for node in &net.nodes {
+                    let Some(component) = sheet.components.iter().find(|component| component.reference == node.reference)
+                    else {
+                        continue;
+                    };
+                    let Some(pin_type) = component.pin_types.get(&node.pin).copied()
+                    else {
+                        continue;
+                    };
+                    let label = format!("{}.{}", node.reference, node.pin);
+                    match pin_type {
+                        PinType::Output => outputs.push(label),
+                        PinType::PowerIn => power_inputs.push(label),
+                        PinType::PowerOut => power_outputs.push(label),
+                        PinType::Bidirectional | PinType::TriState | PinType::OpenCollector | PinType::OpenEmitter => {
+                            logic_drivers.push(label)
+                        }
+                        PinType::Input | PinType::Passive | PinType::Unspecified => {}
+                    }
+                }
+                if !outputs.is_empty() && !power_inputs.is_empty() {
+                    issues.push(issue(
+                        "erc/output-power-in-conflict",
+                        "error",
+                        design.revision,
+                        &sheet.id,
+                        &net.id,
+                        true,
+                        format!(
+                            "net `{}` connects logic output {} and power input {}; a logic output cannot supply a power input",
+                            net.name,
+                            outputs.join(", "),
+                            power_inputs.join(", ")
+                        ),
+                    ));
+                }
+                if !power_outputs.is_empty() && !logic_drivers.is_empty() {
+                    issues.push(issue(
+                        "erc/power-output-driver-conflict",
+                        "error",
+                        design.revision,
+                        &sheet.id,
+                        &net.id,
+                        true,
+                        format!(
+                            "net `{}` connects power output {} and logic driver {}; the supply would drive against the logic pin",
+                            net.name,
+                            power_outputs.join(", "),
+                            logic_drivers.join(", ")
+                        ),
+                    ));
                 }
             }
         }
@@ -7442,6 +7550,51 @@ fn render_net_class_csv(design: &Design) -> (String, usize, usize) {
         }
     }
     (text, rows, unclassified)
+}
+
+/// Projects one design to a CSV of drawn wire length per declared net.
+///
+/// The header is `Sheet,Net,Length,Wires,Unrouted`; every declared net of every
+/// sheet becomes one row in document order. `Length` is the sum of the Euclidean
+/// lengths of the wires on that sheet whose declared net equals the row's net,
+/// in the document unit, and `Wires` counts those segments. `Unrouted` is `yes`
+/// when no wire of the sheet names the net, so a net that only exists as node
+/// membership is listed instead of assumed drawn. A bus is never expanded here:
+/// the declaration has no geometry of its own, and the length of each member is
+/// reported through the net that carries the member name.
+///
+/// The returned tuple is the CSV, its data-row count, how many rows are
+/// unrouted, the number of contributing wires and the total length.
+fn render_net_length_csv(design: &Design) -> (String, usize, usize, usize, f64) {
+    let mut text = String::from("Sheet,Net,Length,Wires,Unrouted\n");
+    let mut rows = 0usize;
+    let mut unrouted = 0usize;
+    let mut wires = 0usize;
+    let mut total_length = 0.0;
+    for sheet in &design.sheets {
+        for net in &sheet.nets {
+            let segments: Vec<&Wire> =
+                sheet.wires.iter().filter(|wire| wire.net.as_deref() == Some(net.name.as_str())).collect();
+            let length: f64 = segments.iter().map(|wire| segment_length(wire.from, wire.to)).sum();
+            let count = segments.len();
+            let is_unrouted = count == 0;
+            text.push_str(&format!(
+                "{},{},{},{},{}\n",
+                csv_field(&sheet.name),
+                csv_field(&net.name),
+                format_number(length),
+                count,
+                if is_unrouted { "yes" } else { "no" }
+            ));
+            rows += 1;
+            wires += count;
+            total_length += length;
+            if is_unrouted {
+                unrouted += 1;
+            }
+        }
+    }
+    (text, rows, unrouted, wires, total_length)
 }
 
 /// Resolves the net class that claims one net name.
