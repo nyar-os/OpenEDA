@@ -26,7 +26,7 @@ answer about the document, such as a pin-to-pin path.
 | bus update `bus update` | supported | partial edit of one declared bus by id, name or alias: rename, width change and whole alias-list replacement (an empty list clears aliases); a rename never rewrites nets, net nodes or net-class assignments, and a width change only changes derived member names; a request that leaves the declaration unchanged reports `changed: false` and adds no revision |
 | net rename `net rename` | supported | design-wide rename of one declared net by its old name: every declaration of that name follows and keeps its nodes, and wires, net labels, net-class `nets` and bus `aliases` that spelled the old name are rewritten in document order; a name another net already declares is refused (`object/duplicate`), a net absent from the identifying sheet is `net/not-found` and an empty name `session/argument-invalid`; a changed rename adds exactly one revision, an already-matching name reports `changed: false` and adds none; `capabilities()` reports `edits.netRename` |
 | component custom properties | supported | trimmed unique keys, verbatim values; stored in `.oeda`, the JSON projection and KiCad symbol properties |
-| checks `erc`, `electrical`, `drivers`, `pin_types`, `bus`, `nets`, `connectivity`, `footprints`, `power`, `references`, `clearance` | supported | `drc` is unsupported; `bus` validates design-level bus declarations; `clearance` compares schematic component bodies; `erc` reports one `erc/duplicate-reference` per reference shared by more than one component; `drivers` reports `erc/undriven-input` and `erc/unconnected-power-pin`; `pin_types` reports the role conflicts the other checks leave open; `hierarchy` is a separate read-only entry, not an `inspect --checks` value |
+| checks `erc`, `electrical`, `drivers`, `pin_types`, `bus`, `nets`, `connectivity`, `dangling`, `footprints`, `power`, `references`, `clearance` | supported | `drc` is unsupported; `bus` validates design-level bus declarations; `clearance` compares schematic component bodies; `dangling` reports `wire/dangling-endpoint` for a wire endpoint nothing anchors; `erc` reports one `erc/duplicate-reference` per reference shared by more than one component; `drivers` reports `erc/undriven-input` and `erc/unconnected-power-pin`; `pin_types` reports the role conflicts the other checks leave open; `hierarchy` is a separate read-only entry, not an `inspect --checks` value |
 | design `stats` | supported | deterministic per-sheet and design-wide counts; tagged `open-eda-stats` |
 | pin trace `trace` | supported | read-only shortest hop path between two `REF.PIN` pins; tagged `open-eda-trace`; reported as `queries.trace`, not as an `inspect --checks` check |
 | component detail `component show` | supported | read-only detail of one component by reference: placement, value, footprint, custom properties and per-pin nets; tagged `open-eda-component`; pins keep declaration order and net names keep document order |
@@ -211,6 +211,23 @@ component is still compared as an axis-aligned box. Two bodies that only share
 an edge are not an overlap. One `clearance/component-overlap` finding (warning,
 non-blocking) is reported per overlapping pair of one sheet, in reference order,
 and names both references; components on different sheets are never compared.
+
+`dangling` walks every wire of every sheet already present in the design and
+reports one `wire/dangling-endpoint` warning per endpoint that nothing anchors:
+no other wire endpoint or interior, no junction, no net-label anchor, no
+no-connect marker, no placed component and, on the root sheet, no hierarchical
+sheet-port anchor. The check reuses the connectivity tolerance (`1e-4`) and its
+wire-distance rule, so it agrees with the `connectivity` check and
+`erc/floating-wire`; it adds the label, no-connect and port anchors those two
+leave out. The model stores no pin geometry, so a component anchors through its
+placement point exactly as `erc/floating-wire` reads it, and no bus entry is
+modelled, so none can attach. Each issue carries the sheet id, the wire id as
+`objectId`, `endpoint` (0 = `from`, 1 = `to`) and the endpoint `x`/`y`.
+Findings follow sheet order, wire declaration order and endpoint index. A
+zero-length wire, whose two endpoints coincide within the tolerance, is
+reported once at endpoint 0 instead of twice at the same coordinate. Wires on
+child sheets are seen only when `inspect` runs on that sheet; the check never
+opens a child document.
 
 Inspection accepts per-code severity overrides (`error`, `warning`, `info`,
 `off`) and waivers by code, optionally narrowed to one object or sheet. Accepted
@@ -418,6 +435,10 @@ Every file is written through a temporary file and a rename.
   deterministic re-runs, unchanged revisions and the `design/not-found` error.
 - `projects/crates/eda-model/tests/unit/clearance.rs` — component-body overlap
   pairs, edge contact, rotation, sheets, severity and waivers.
+- `projects/crates/eda-model/tests/unit/dangling.rs` — one finding per
+  unattached wire endpoint, junction/label/no-connect/component/wire anchors,
+  the root-only sheet-port anchor, the zero-length rule, sheet order, severity,
+  waivers and deterministic re-runs.
 - `projects/crates/eda-model/tests/unit/pins.rs` — pin add, remove and rename
   validation, reference-safe removal, net/no-connect rewrites, history and
   save/reopen persistence.

@@ -28,7 +28,7 @@ to stderr.
 | `open-eda create --out <file.oeda> [--title <text>] [--rev <text>] [--company <text>] [--date <text>] [--template <name>] [--overwrite]` | Create a native design document |
 | `open-eda open <file>` | Validate and report that the document opens |
 | `open-eda design set <file> [--title <text>] [--rev <text>] [--company <text>] [--date <text>]` | Update title-block properties; an empty value clears a field |
-| `open-eda inspect <file> [--checks erc,electrical,drivers,pin_types,bus,nets,connectivity,footprints,power,references,clearance] [--severity <code>=<level>] [--waive <code>[@<object>]]` | Run the supported checks |
+| `open-eda inspect <file> [--checks erc,electrical,drivers,pin_types,bus,nets,connectivity,dangling,footprints,power,references,clearance] [--severity <code>=<level>] [--waive <code>[@<object>]]` | Run the supported checks |
 | `open-eda list <file>` | List sheets, components, nets, wires and buses |
 | `open-eda symbols <file>` | Group placed components by derived library id with pin, footprint and missing-footprint counts |
 | `open-eda connectivity <file>` | Print the connectivity report |
@@ -52,6 +52,15 @@ joins a logic `output` pin and a `power_in` pin, and
 `erc/power-output-driver-conflict` when one net joins a `power_out` pin and a
 `bidirectional`, `tri_state`, `open_collector` or `open_emitter` pin. The
 conflicts `electrical` and `power` already report are not repeated.
+
+`inspect --checks dangling` reports one `wire/dangling-endpoint` warning per
+wire endpoint that nothing anchors: no other wire endpoint or interior, no
+junction, no net-label anchor, no no-connect marker, no placed component and,
+on the root sheet, no hierarchical sheet-port anchor. Each issue names the wire,
+its endpoint (0 = `from`, 1 = `to`) and the `x`/`y` coordinate. A zero-length
+wire is reported once at endpoint 0. `--severity` and `--waive` accept the code
+like the other checks, findings follow sheet, wire and endpoint order, and wires
+on a child sheet are seen only when `inspect` runs on that sheet.
 
 `library-check` prints `library/*` findings with their symbol, pin and unit.
 Exit `0` means no error finding (a clean library or warnings only); exit `1`
