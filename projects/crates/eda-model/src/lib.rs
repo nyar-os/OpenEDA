@@ -18,6 +18,9 @@
 mod connectivity;
 mod diff;
 mod kicad;
+mod net_audit;
+
+pub use net_audit::net_audit;
 
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque},
@@ -1419,8 +1422,9 @@ pub struct Waiver {
 ///
 /// Read-only queries live under `queries`, next to `checks`: `queries.trace`
 /// reports the pin-to-pin path query of [`trace_pins`] and `queries.net` reports
-/// the net detail query of [`net_show`]. They are queries, not rule checks, so
-/// they never appear in the `inspect --checks` value.
+/// the net detail query of [`net_show`]. `queries.netAudit` reports the per-net
+/// health report of [`net_audit`]. They are queries, not rule checks, so they
+/// never appear in the `inspect --checks` value.
 pub fn capabilities() -> Value {
     let matrix = capability_matrix();
     let level = |id: String| if matrix.supports(&id) { "supported" } else { "unsupported" };
@@ -1469,6 +1473,7 @@ pub fn capabilities() -> Value {
     queries.insert("component".to_string(), Value::String(level("query.component".to_string()).to_string()));
     queries.insert("net".to_string(), Value::String(level("query.net".to_string()).to_string()));
     queries.insert("trace".to_string(), Value::String(level("query.trace".to_string()).to_string()));
+    queries.insert("netAudit".to_string(), Value::String(level("query.netAudit".to_string()).to_string()));
 
     json!({
         "engine": { "package": env!("CARGO_PKG_NAME"), "version": env!("CARGO_PKG_VERSION") },
@@ -1516,6 +1521,7 @@ fn capability_matrix() -> CapabilityMatrix {
     matrix.insert(Capability::new("query.component", "query", Support::Supported));
     matrix.insert(Capability::new("query.net", "query", Support::Supported));
     matrix.insert(Capability::new("query.trace", "query", Support::Supported));
+    matrix.insert(Capability::new("query.netAudit", "query", Support::Supported));
     matrix
 }
 
@@ -9107,3 +9113,7 @@ mod bus_tests;
 #[cfg(test)]
 #[path = "../tests/unit/net_rename.rs"]
 mod net_rename_tests;
+
+#[cfg(test)]
+#[path = "../tests/unit/net_audit.rs"]
+mod net_audit_tests;
