@@ -25,7 +25,7 @@ answer about the document, such as a pin-to-pin path.
 | bus update `bus update` | supported | partial edit of one declared bus by id, name or alias: rename, width change and whole alias-list replacement (an empty list clears aliases); a rename never rewrites nets, net nodes or net-class assignments, and a width change only changes derived member names; a request that leaves the declaration unchanged reports `changed: false` and adds no revision |
 | net rename `net rename` | supported | design-wide rename of one declared net by its old name: every declaration of that name follows and keeps its nodes, and wires, net labels, net-class `nets` and bus `aliases` that spelled the old name are rewritten in document order; a name another net already declares is refused (`object/duplicate`), a net absent from the identifying sheet is `net/not-found` and an empty name `session/argument-invalid`; a changed rename adds exactly one revision, an already-matching name reports `changed: false` and adds none; `capabilities()` reports `edits.netRename` |
 | component custom properties | supported | trimmed unique keys, verbatim values; stored in `.oeda`, the JSON projection and KiCad symbol properties |
-| checks `erc`, `electrical`, `drivers`, `bus`, `nets`, `connectivity`, `footprints`, `power`, `references`, `clearance` | supported | `drc` is unsupported; `bus` validates design-level bus declarations; `clearance` compares schematic component bodies; `erc` reports one `erc/duplicate-reference` per reference shared by more than one component; `drivers` reports `erc/undriven-input` and `erc/unconnected-power-pin`; `hierarchy` is a separate read-only entry, not an `inspect --checks` value |
+| checks `erc`, `electrical`, `drivers`, `pin_types`, `bus`, `nets`, `connectivity`, `footprints`, `power`, `references`, `clearance` | supported | `drc` is unsupported; `bus` validates design-level bus declarations; `clearance` compares schematic component bodies; `erc` reports one `erc/duplicate-reference` per reference shared by more than one component; `drivers` reports `erc/undriven-input` and `erc/unconnected-power-pin`; `pin_types` reports the role conflicts the other checks leave open; `hierarchy` is a separate read-only entry, not an `inspect --checks` value |
 | design `stats` | supported | deterministic per-sheet and design-wide counts; tagged `open-eda-stats` |
 | pin trace `trace` | supported | read-only shortest hop path between two `REF.PIN` pins; tagged `open-eda-trace`; reported as `queries.trace`, not as an `inspect --checks` check |
 | component detail `component show` | supported | read-only detail of one component by reference: placement, value, footprint, custom properties and per-pin nets; tagged `open-eda-component`; pins keep declaration order and net names keep document order |
@@ -36,7 +36,7 @@ answer about the document, such as a pin-to-pin path.
 | junction and no-connect editing | supported | add a junction by coordinate and remove it by 0-based index; add a no-connect flag with or without a `REF.PIN` node and remove it by index; a duplicate junction coordinate is refused (`junction/duplicate`) and so is a second flag on one pin (`no-connect/duplicate`); `capabilities()` reports `edits.junctions` and `edits.noConnects` |
 | component pin editing | supported | add, remove and rename pins after placement; an empty or `REF.PIN`-breaking name is `session/argument-invalid`, a repeated name `pin/duplicate`, a missing pin `pin/not-found` and a removal that a net node or no-connect flag still uses `pin/in-use`; a rename follows every net node, no-connect node and electrical role; `capabilities()` reports `edits.pins` |
 | component pin swapping | supported | swap the net connections of two pins of one placed component; each pin takes the other pin's connection, an unconnected pin receives the transferred one, no-connect flags follow the swap, a self-swap or empty name is `session/argument-invalid`, a missing component `object/not-found` and an undeclared pin `pin/not-found`; an unconnected pair adds no revision; `capabilities()` reports `edits.pinSwap` |
-| export `net`, `net_csv`, `net_hier`, `net_class`, `spice`, `spice_subckt`, `svg`, `bom`, `bom_json`, `bom_html`, `pdf`, `report`, `json`, `kicad_sch`, `kicad_sym` | supported | read-only projections; `kicad_pcb` and `gbr` are unsupported |
+| export `net`, `net_csv`, `net_hier`, `net_class`, `net_length`, `spice`, `spice_subckt`, `svg`, `bom`, `bom_json`, `bom_html`, `pdf`, `report`, `json`, `kicad_sch`, `kicad_sym` | supported | read-only projections; `kicad_pcb` and `gbr` are unsupported |
 | import `kicad_sch` | supported | symbols, wires, junctions, no-connect flags, text, labels, hierarchical sheet symbols and ports; other constructs are reported as losses |
 | hierarchy editing | supported | add/list/remove parent symbol declarations and their ports; editing never reads the child files |
 | hierarchy check `hierarchy check` | supported | read-only depth-first walk of `.oeda` children; reports extension, missing file, parse, cycle, depth and port/label mismatches as `hierarchy/*` issues |
@@ -168,6 +168,21 @@ no-connect flag names that `REF.PIN`, in which case the open pin is deliberate
 and nothing is reported. The check is per sheet, reports one finding per net or
 per pin, and adds no revision.
 
+`pin_types` reads typed pins only too, and reports the role pairs that cannot
+share one net but that neither `electrical` nor `power` already covers. A net
+that joins a logic `output` pin and a `power_in` pin is
+`erc/output-power-in-conflict` (error), because a logic driver cannot supply a
+supply input. A net that joins a `power_out` pin and a `bidirectional`,
+`tri_state`, `open_collector` or `open_emitter` pin is
+`erc/power-output-driver-conflict` (error), because the supply would drive
+against a logic pin. The pairs the other checks already report —
+`input`/`input`, `output`/`output`, `power_out`/`power_out` and
+`power_out`/`output` — are deliberately not repeated, so one short yields one
+finding. A `power_out` pin on a net with `power_in`, `passive`, `input`,
+`unspecified` or untyped pins is not a conflict. The check is per sheet,
+reports one finding per net with the conflicting `REF.PIN` names, and adds no
+revision.
+
 `power` reports `power/driver-conflict` when more than one power-output pin
 drives one net, and `power/output-driver-conflict` when a power output shares a
 net with a logic output.
@@ -298,6 +313,15 @@ an error, so the reader's losses never fail the check on their own.
   assigns, that bus and each of its members. `Role` is the pin's electrical role
   in the document vocabulary, empty for an untyped pin. Nets and nodes follow the
   same order and bus expansion as `net_csv`.
+- `net_length` emits `Sheet,Net,Length,Wires,Unrouted` rows for the declared nets
+  in document order. `Length` is the sum of the Euclidean lengths of the wires on
+  that sheet whose declared net equals the row's net, in the document unit;
+  `Wires` counts those segments. `Unrouted` is `yes` when no wire names the net,
+  so a net that exists only as node membership is listed instead of assumed
+  drawn. A bus declaration is never expanded because it has no geometry of its
+  own; each member net is measured through the net that carries its name. The
+  export is a schematic drawing measurement, not board routing, and is
+  byte-stable for one revision.
 - `spice` emits one element line per component by reference prefix (`R`/`C`/`L`
   two-pin, `D` two-pin with model, `Q`/`J` three-pin, `V`/`I` sources, `U`/`X`
   subcircuits, unknown prefixes as generic `X`). An unconnected pin becomes a
@@ -352,10 +376,11 @@ Every file is written through a temporary file and a rename.
 ## Tests
 
 - `projects/crates/eda-model/tests/unit/lib.rs` — create, edit, inspect, save
-  and reopen, writers (including the net-class grouped netlist), statistics,
-  annotation, labels, variants, properties, partial component updates, numeric
-  BOM designator ordering, the `drivers` check, the symbol-library
-  `library-check` findings, determinism and KiCad round-trips.
+  and reopen, writers (including the net-class grouped netlist and the
+  net-length report), statistics, annotation, labels, variants, properties,
+  partial component updates, numeric BOM designator ordering, the `drivers`
+  and `pin_types` checks, the symbol-library `library-check` findings,
+  determinism and KiCad round-trips.
 - `projects/crates/eda-model/tests/unit/kicad.rs` — parser and writer subset.
 - `projects/crates/eda-model/tests/unit/diff.rs` — structural comparison.
 - `projects/crates/eda-model/tests/unit/connectivity.rs` — net and pin analysis.

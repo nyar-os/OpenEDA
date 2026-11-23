@@ -28,7 +28,7 @@ to stderr.
 | `open-eda create --out <file.oeda> [--title <text>] [--rev <text>] [--company <text>] [--date <text>] [--template <name>] [--overwrite]` | Create a native design document |
 | `open-eda open <file>` | Validate and report that the document opens |
 | `open-eda design set <file> [--title <text>] [--rev <text>] [--company <text>] [--date <text>]` | Update title-block properties; an empty value clears a field |
-| `open-eda inspect <file> [--checks erc,electrical,drivers,bus,nets,connectivity,footprints,power,references,clearance] [--severity <code>=<level>] [--waive <code>[@<object>]]` | Run the supported checks |
+| `open-eda inspect <file> [--checks erc,electrical,drivers,pin_types,bus,nets,connectivity,footprints,power,references,clearance] [--severity <code>=<level>] [--waive <code>[@<object>]]` | Run the supported checks |
 | `open-eda list <file>` | List sheets, components, nets, wires and buses |
 | `open-eda symbols <file>` | Group placed components by derived library id with pin, footprint and missing-footprint counts |
 | `open-eda connectivity <file>` | Print the connectivity report |
@@ -46,6 +46,12 @@ to stderr.
 `inspect --checks drivers` reports `erc/undriven-input` when a net reaches typed
 input pins but no typed driver, and `erc/unconnected-power-pin` when a typed
 power input reaches no net and no no-connect flag names it.
+
+`inspect --checks pin_types` reports `erc/output-power-in-conflict` when one net
+joins a logic `output` pin and a `power_in` pin, and
+`erc/power-output-driver-conflict` when one net joins a `power_out` pin and a
+`bidirectional`, `tri_state`, `open_collector` or `open_emitter` pin. The
+conflicts `electrical` and `power` already report are not repeated.
 
 `library-check` prints `library/*` findings with their symbol, pin and unit.
 Exit `0` means no error finding (a clean library or warnings only); exit `1`
@@ -171,10 +177,13 @@ Port directions: `input`, `output`, `bidirectional`, `tri_state`, `passive`.
 | `open-eda export <file> --format <format> --out <target> [--variant <name>]` | Write a read-only projection |
 | `open-eda netlist <file> --out <file.net> [--overwrite]` | Write the flat netlist |
 
-Export formats: `net`, `net_csv`, `net_hier`, `net_class`, `spice`,
+Export formats: `net`, `net_csv`, `net_hier`, `net_class`, `net_length`, `spice`,
 `spice_subckt`, `svg`, `bom`, `bom_json`, `bom_html`, `pdf`, `report`, `json`,
 `kicad_sch`, `kicad_sym`. `net_class` groups pin rows by declared net class and
-adds the pin electrical role. A variant is accepted by `bom`, `bom_json` and
+adds the pin electrical role. `net_length` writes
+`Sheet,Net,Length,Wires,Unrouted` rows for the declared nets: `Length` sums the
+drawn wire segments the net names, and `Unrouted` is `yes` when no wire names
+the net. A variant is accepted by `bom`, `bom_json` and
 `bom_html` only; other targets reject it instead of ignoring it.
 
 ## Worked example
