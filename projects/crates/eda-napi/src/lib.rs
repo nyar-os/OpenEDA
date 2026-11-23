@@ -771,7 +771,8 @@ fn design_list_component_properties(ctx: CallContext) -> Result<JsValue> {
     respond(&ctx, &report)
 }
 
-/// Renames one net and every wire that referenced it.
+/// Renames a declared net across every sheet; wires, labels, net classes and
+/// bus aliases that spelled the old name follow it.
 #[function]
 fn design_rename_net(ctx: CallContext) -> Result<JsValue> {
     let handle = handle(&ctx, 0)?;

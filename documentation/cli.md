@@ -81,7 +81,7 @@ Pin roles: `input`, `output`, `bidirectional`, `tri_state`, `passive`,
 | `open-eda net connect <file> --net <name> --nodes <REF.PIN,...> [--sheet <id>]` | Connect pins to a net |
 | `open-eda net disconnect <file> --net <name> --nodes <REF.PIN,...> [--sheet <id>]` | Disconnect pins |
 | `open-eda net derive <file>` | Derive nets from connectivity |
-| `open-eda net rename <file> --id <net> --name <name> [--sheet <id>]` | Rename a net |
+| `open-eda net rename <file> --id <net> --name <name> [--sheet <id>]` | Rename a declared net across every sheet; declarations keep their nodes and wires, labels, net-class and bus alias assignments follow; an unknown net is `net/not-found`, a name another net declares is refused, and an already-matching name reports `changed: false` without a new revision |
 | `open-eda net merge <file> --target <net> --source <net> [--sheet <id>]` | Merge two nets |
 | `open-eda net show <file> <net> [--sheet <id>]` | Report one net's nodes, wires, labels and matching bus and net class |
 | `open-eda net list <file> [--sheet <id>]` | List nets and nodes |

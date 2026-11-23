@@ -1318,13 +1318,13 @@ netCommand
             ctx.fail('open-eda.cli.arguments-invalid', { message: '`--id` and `--name` are required' });
             return 2;
         }
-        const { net: renamed, saved } = await withDesign(file, async (design) => {
-            const renamed = await design.renameNet({ sheet: text(options, 'sheet'), net, name });
-            return { net: renamed, saved: await savedReport(design) };
+        const { net: renamed, previousName, changed, saved } = await withDesign(file, async (design) => {
+            const result = await design.renameNet({ sheet: text(options, 'sheet'), net, name });
+            return { net: result.net, previousName: result.previousName, changed: result.changed, saved: await savedReport(design) };
         });
         ctx.emitResult(
-            { ...saved, revision: saved.revision, net: renamed },
-            `renamed net ${net} to ${name} in ${file} revision=${saved.revision}`,
+            { ...saved, revision: saved.revision, changed, previousName, net: renamed },
+            `${changed ? 'renamed' : 'unchanged'} net ${previousName} to ${renamed.name} in ${file} revision=${saved.revision}`,
         );
         return 0;
     });

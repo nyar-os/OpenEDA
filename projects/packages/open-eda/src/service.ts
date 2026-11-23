@@ -82,6 +82,7 @@ import type {
     RemoveHierarchyResult,
     RemovePinInput,
     RenameNetInput,
+    RenameNetResult,
     RenamePinInput,
     SaveReport,
     SetComponentPropertyInput,
@@ -854,8 +855,9 @@ export function listComponentProperties(
     );
 }
 
-/** Renames one net and every wire that named it. */
-export function renameNet(handle: number, input: RenameNetInput): NetResult {    return decode<NetResult>(() =>
+/** Renames a declared net across every sheet; wires, labels, net-class and bus alias assignments follow. */
+export function renameNet(handle: number, input: RenameNetInput): RenameNetResult {
+    return decode<RenameNetResult>(() =>
         binding('design.renameNet').design_rename_net(
             handle,
             JSON.stringify({ sheet: input.sheet, net: input.net, name: input.name }),

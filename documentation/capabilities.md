@@ -23,6 +23,7 @@ answer about the document, such as a pin-to-pin path.
 | BOM variants and DNP | supported | named DNP designator lists and value overrides applied to `bom`, `bom_json` and `bom_html` |
 | net classes | supported | name, width, clearance, via and net/bus assignment lists |
 | bus update `bus update` | supported | partial edit of one declared bus by id, name or alias: rename, width change and whole alias-list replacement (an empty list clears aliases); a rename never rewrites nets, net nodes or net-class assignments, and a width change only changes derived member names; a request that leaves the declaration unchanged reports `changed: false` and adds no revision |
+| net rename `net rename` | supported | design-wide rename of one declared net by its old name: every declaration of that name follows and keeps its nodes, and wires, net labels, net-class `nets` and bus `aliases` that spelled the old name are rewritten in document order; a name another net already declares is refused (`object/duplicate`), a net absent from the identifying sheet is `net/not-found` and an empty name `session/argument-invalid`; a changed rename adds exactly one revision, an already-matching name reports `changed: false` and adds none; `capabilities()` reports `edits.netRename` |
 | component custom properties | supported | trimmed unique keys, verbatim values; stored in `.oeda`, the JSON projection and KiCad symbol properties |
 | checks `erc`, `electrical`, `bus`, `nets`, `connectivity`, `footprints`, `power`, `references`, `clearance` | supported | `drc` is unsupported; `bus` validates design-level bus declarations; `clearance` compares schematic component bodies; `erc` reports one `erc/duplicate-reference` per reference shared by more than one component; `hierarchy` is a separate read-only entry, not an `inspect --checks` value |
 | design `stats` | supported | deterministic per-sheet and design-wide counts; tagged `open-eda-stats` |
@@ -324,6 +325,12 @@ Every file is written through a temporary file and a rename.
 - `projects/crates/eda-model/tests/unit/bus.rs` — duplicate bus names, missing
   members, a net shared by two buses, zero-width buses, a valid bus and `bus
   update` rename, width, alias replacement and validation.
+- `projects/crates/eda-model/tests/unit/net_rename.rs` — design-wide `net
+  rename` propagation to declarations, nodes, wires, labels, net classes and
+  bus aliases, the `net/not-found`, `object/duplicate` and
+  `session/argument-invalid` refusals, `changed: false` with no revision,
+  revision counting, undo/redo, save/reopen persistence and byte-identical
+  output.
 - `projects/crates/eda-model/tests/unit/clearance.rs` — component-body overlap
   pairs, edge contact, rotation, sheets, severity and waivers.
 - `projects/crates/eda-model/tests/unit/pins.rs` — pin add, remove and rename

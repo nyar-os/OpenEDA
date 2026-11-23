@@ -89,6 +89,7 @@ import type {
     RemoveHierarchyResult,
     RemovePinInput,
     RenameNetInput,
+    RenameNetResult,
     RenamePinInput,
     SaveOptions,
     SaveReport,
@@ -617,10 +618,10 @@ function attach(opened: service.DesignHandle, options: AttachOptions): Design {
             }
             return service.listComponentProperties(handle, reference, options?.sheet);
         },
-        async renameNet(input: RenameNetInput): Promise<Net> {
+        async renameNet(input: RenameNetInput): Promise<RenameNetResult> {
             const result = await mutate(() => service.renameNet(handle, input));
             current = result.design;
-            return result.net;
+            return result;
         },
         async deleteWire(wire: string, deleteOptions?: { readonly sheet?: string }): Promise<void> {
             const result = await mutate(() => service.deleteWire(handle, wire, deleteOptions?.sheet));

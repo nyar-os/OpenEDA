@@ -76,6 +76,7 @@ fn capability_matrix_reports_only_the_implemented_entries() {
     assert_eq!(matrix["edits"]["noConnects"], "supported");
     assert_eq!(matrix["edits"]["pins"], "supported");
     assert_eq!(matrix["edits"]["annotate"], "supported");
+    assert_eq!(matrix["edits"]["netRename"], "supported");
     assert_eq!(matrix["queries"]["component"], "supported");
     assert_eq!(matrix["queries"]["net"], "supported");
     assert_eq!(matrix["queries"]["trace"], "supported");
@@ -1293,11 +1294,8 @@ fn wire_merge_is_deterministic_and_survives_a_save() {
             },
         )
         .expect("component");
-        connect_net(
-            handle,
-            ConnectNetRequest { sheet: None, net: "VCC".to_string(), nodes: vec!["R1.1".to_string()] },
-        )
-        .expect("declare VCC");
+        connect_net(handle, ConnectNetRequest { sheet: None, net: "VCC".to_string(), nodes: vec!["R1.1".to_string()] })
+            .expect("declare VCC");
         add_wire(handle, AddWireRequest { sheet: None, net: Some("VCC".to_string()), from: [0.0, 0.0], to: [10.0, 0.0] })
             .expect("first wire");
         add_wire(handle, AddWireRequest { sheet: None, net: Some("VCC".to_string()), from: [10.0, 0.0], to: [25.0, 0.0] })

@@ -1210,13 +1210,31 @@ export interface SetFootprintInput {
     readonly footprint: string;
 }
 
-/** Input of `design.renameNet()`. Wires that named the old net follow it. */
+/**
+ * Input of `design.renameNet()`. The rename follows the old name across every
+ * sheet: declarations keep their nodes, and wires, net labels, net-class `nets`
+ * and bus `aliases` that spelled the old name are rewritten. The `sheet`, when
+ * given, only identifies the net.
+ */
 export interface RenameNetInput {
     readonly sheet?: SheetId;
     /** Current net id or name. */
     readonly net: string;
     /** New net name. */
     readonly name: string;
+}
+
+/** Result of `design.renameNet()`. */
+export interface RenameNetResult {
+    readonly revision: number;
+    readonly design: DesignSummary;
+    readonly canUndo: boolean;
+    readonly canRedo: boolean;
+    readonly net: Net;
+    /** The name the net carried before this call; equal to `net.name` when unchanged. */
+    readonly previousName: string;
+    /** `false` when the net already carried the requested name; no revision was added. */
+    readonly changed: boolean;
 }
 
 /** Input of `design.disconnectNet()`. The net and its wires are kept. */
@@ -1802,8 +1820,8 @@ export interface Design {
         reference: string,
         options?: { readonly sheet?: SheetId },
     ): Promise<ComponentPropertyListResult>;
-    /** Renames a net; wires that named it follow the new name. */
-    renameNet(input: RenameNetInput): Promise<Net>;
+    /** Renames a declared net across every sheet; wires, labels, net-class and bus alias assignments follow; an already-matching name reports `changed: false` and adds no revision. */
+    renameNet(input: RenameNetInput): Promise<RenameNetResult>;
     /** Deletes one wire segment. */
     deleteWire(wire: ObjectId, options?: { readonly sheet?: SheetId }): Promise<void>;
     /** Names every connected wire group on a sheet and reports the counts. */

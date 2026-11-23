@@ -1153,7 +1153,8 @@ pub struct RenamePinRequest {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RenameNetRequest {
-    /// Target sheet id or name; the first sheet is used when omitted.
+    /// Sheet that identifies the net; the first sheet is used when omitted.
+    /// The rename itself follows the old name across every sheet.
     #[serde(default)]
     pub sheet: Option<String>,
     /// Current net id or name.
@@ -1410,6 +1411,7 @@ pub fn capabilities() -> Value {
         "noConnects": level("edit.noConnects".to_string()),
         "pins": level("edit.pins".to_string()),
         "annotate": level("edit.annotate".to_string()),
+        "netRename": level("edit.net-rename".to_string()),
     });
 
     let mut queries = Map::new();
@@ -1458,6 +1460,7 @@ fn capability_matrix() -> CapabilityMatrix {
     matrix.insert(Capability::new("edit.noConnects", "edit", Support::Supported));
     matrix.insert(Capability::new("edit.pins", "edit", Support::Supported));
     matrix.insert(Capability::new("edit.annotate", "edit", Support::Supported));
+    matrix.insert(Capability::new("edit.net-rename", "edit", Support::Supported));
     matrix.insert(Capability::new("query.component", "query", Support::Supported));
     matrix.insert(Capability::new("query.net", "query", Support::Supported));
     matrix.insert(Capability::new("query.trace", "query", Support::Supported));
@@ -3170,41 +3173,72 @@ pub fn connect_net(handle: u64, request: ConnectNetRequest) -> Result<Value, Ser
     })
 }
 
-/// Renames a net and every wire that referenced its old name.
+/// Renames a declared net by its old name across every sheet of the design.
+///
+/// Every declaration that carries the old name follows the rename and keeps its
+/// nodes, so the net's `REF.PIN` nodes move with it. Wires that named the old
+/// net, net labels whose text is the old name, net-class `nets` assignments and
+/// bus `aliases` that spelled the old name are rewritten in document order.
+/// A name another net already declares is refused (`object/duplicate`), a net
+/// absent from the target sheet is `net/not-found` and an empty name is
+/// `session/argument-invalid`. A rename that changes the name adds exactly one
+/// revision; a request whose new name already matches reports `changed: false`
+/// and adds none.
 pub fn rename_net(handle: u64, request: RenameNetRequest) -> Result<Value, ServiceError> {
     let name = request.name.trim().to_string();
     if name.is_empty() {
         return Err(ServiceError::new("session/argument-invalid", "a net name must not be empty"));
     }
     mutate(handle, |design| {
-        let index = sheet_index(design, request.sheet.as_deref())?;
-        let sheet = &mut design.sheets[index];
-        let target = sheet
+        let sheet_position = sheet_index(design, request.sheet.as_deref())?;
+        let target = design.sheets[sheet_position]
             .nets
             .iter()
             .position(|net| net.id == request.net || net.name == request.net)
-            .ok_or_else(|| not_found(format!("no net `{}` is declared on this sheet", request.net)))?;
-        if sheet.nets.iter().any(|net| net.id != sheet.nets[target].id && net.name == name) {
-            return Err(duplicate(format!("net name `{name}` already exists on this sheet")));
+            .ok_or_else(|| ServiceError::new("net/not-found", format!("no net `{}` is declared on this sheet", request.net)))?;
+        let previous = design.sheets[sheet_position].nets[target].name.clone();
+        let changed = previous != name;
+        if changed && design.sheets.iter().any(|sheet| sheet.nets.iter().any(|net| net.name == name)) {
+            return Err(duplicate(format!("net name `{name}` already exists in this design")));
         }
-        let previous = sheet.nets[target].name.clone();
-        sheet.nets[target].name = name.clone();
-        for wire in &mut sheet.wires {
-            if wire.net.as_deref() == Some(previous.as_str()) {
-                wire.net = Some(name.clone());
+        if changed {
+            for sheet in &mut design.sheets {
+                for net in &mut sheet.nets {
+                    if net.name == previous {
+                        net.name = name.clone();
+                    }
+                }
+                for wire in &mut sheet.wires {
+                    if wire.net.as_deref() == Some(previous.as_str()) {
+                        wire.net = Some(name.clone());
+                    }
+                }
+                for label in &mut sheet.labels {
+                    if label.text == previous {
+                        label.text = name.clone();
+                    }
+                }
             }
-        }
-        for net_class in &mut design.rules.net_classes {
-            if net_class.nets.iter().any(|entry| entry == &previous) {
-                net_class.nets.retain(|entry| entry != &previous && entry != &name);
-                net_class.nets.push(name.clone());
+            for net_class in &mut design.rules.net_classes {
+                if net_class.nets.iter().any(|entry| entry == &previous) {
+                    net_class.nets.retain(|entry| entry != &previous && entry != &name);
+                    net_class.nets.push(name.clone());
+                }
             }
+            for bus in &mut design.buses {
+                for alias in &mut bus.aliases {
+                    if alias == &previous {
+                        *alias = name.clone();
+                    }
+                }
+            }
+            design.revision += 1;
         }
-        let net = sheet.nets[target].clone();
-        design.revision += 1;
+        let net = design.sheets[sheet_position].nets[target].clone();
         let mut payload = Map::new();
         payload.insert("net".to_string(), json!(net));
         payload.insert("previousName".to_string(), json!(previous));
+        payload.insert("changed".to_string(), json!(changed));
         Ok(payload)
     })
 }
@@ -8394,3 +8428,7 @@ mod clearance_tests;
 #[cfg(test)]
 #[path = "../tests/unit/bus.rs"]
 mod bus_tests;
+
+#[cfg(test)]
+#[path = "../tests/unit/net_rename.rs"]
+mod net_rename_tests;

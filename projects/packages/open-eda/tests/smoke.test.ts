@@ -250,8 +250,17 @@ test('history, sheets and deep edits stay referentially sound', { skip: withoutA
         const updated = await design.updateComponent({ reference: 'R1', value: '22k' });
         assert.equal(updated.value, '22k');
         const renamed = await design.renameNet({ net: 'VCC', name: 'VIN' });
-        assert.equal(renamed.name, 'VIN');
+        assert.equal(renamed.net.name, 'VIN');
+        assert.equal(renamed.previousName, 'VCC');
+        assert.equal(renamed.changed, true);
         assert.equal((await design.listObjects()).wires[0]?.net, 'VIN');
+        const unchangedRename = await design.renameNet({ net: 'VIN', name: 'VIN' });
+        assert.equal(unchangedRename.changed, false);
+        assert.equal(unchangedRename.revision, renamed.revision, 'an already-matching name adds no revision');
+        await assert.rejects(
+            design.renameNet({ net: 'NOPE', name: 'X' }),
+            (error: unknown) => error instanceof OpenEDAError && error.code === 'net/not-found',
+        );
         const split = await design.splitWire({ id: 'wire-1', x: 20, y: 10 });
         assert.equal(split.first.id, 'wire-1');
         assert.deepEqual(split.first.to, [20, 10]);

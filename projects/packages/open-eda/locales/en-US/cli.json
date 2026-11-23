@@ -45,7 +45,7 @@
             "net-show": "Show one net's nodes, wires, labels and matching bus and net class",
             "net-list": "List the nets of a sheet with their REF.PIN nodes",
             "net-connect": "Connect REF.PIN nodes to a named net in place",
-            "net-rename": "Rename a net and update the wires that referenced it",
+            "net-rename": "Rename a declared net across every sheet; wires, labels, net-class and bus alias assignments follow",
             "net-merge": "Merge one net into another and repoint the wires that named it",
             "net-derive": "Name every connected wire group of a sheet in place",
             "net-disconnect": "Remove REF.PIN nodes from a net while keeping the net and its wires",
