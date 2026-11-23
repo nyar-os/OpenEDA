@@ -54,6 +54,7 @@ import type {
     JunctionListResult,
     KicadImportResult,
     KicadNetImportResult,
+    KicadSymbolCheckResult,
     KicadSymbolImportResult,
     LabelDeleteResult,
     LabelInput,
@@ -438,6 +439,17 @@ export function importKicadSch(source: string): KicadImportResult {
  */
 export function importKicadSymbol(source: string): KicadSymbolImportResult {
     return decode<KicadSymbolImportResult>(() => binding('import.kicadSymbol').import_kicad_symbol(source));
+}
+
+/**
+ * Validates a KiCad `.kicad_sym` symbol library.
+ *
+ * The report names every duplicate symbol, empty symbol, repeated pin number
+ * and nameless pin with its symbol, pin and unit, and carries the reader's
+ * losses. Nothing is written to disk and no design handle is opened.
+ */
+export function checkKicadSymbol(source: string): KicadSymbolCheckResult {
+    return decode<KicadSymbolCheckResult>(() => binding('library.check').check_kicad_symbol(source));
 }
 
 /**

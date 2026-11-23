@@ -197,6 +197,21 @@ fn import_kicad_symbol(ctx: CallContext) -> Result<JsValue> {
     respond(&ctx, &report)
 }
 
+/// Validates a KiCad symbol library from either its text or a file path.
+#[function]
+fn check_kicad_symbol(ctx: CallContext) -> Result<JsValue> {
+    let source = text(&ctx, 0)?;
+    let contents = if Path::new(&source).is_file() {
+        std::fs::read_to_string(&source)
+            .map_err(|error| Error::new(format!("format/invalid: cannot read `{source}`: {error}")))?
+    }
+    else {
+        source
+    };
+    let report = open_eda_model::check_kicad_symbol(&contents).map_err(fail)?;
+    respond(&ctx, &report)
+}
+
 /// Imports a KiCad netlist from either its text or a file path.
 #[function]
 fn import_kicad_net(ctx: CallContext) -> Result<JsValue> {
@@ -1766,6 +1781,7 @@ register_module![
     design_export,
     import_kicad_sch,
     import_kicad_symbol,
+    check_kicad_symbol,
     import_kicad_net,
     design_compare_netlist,
     diff_documents,

@@ -60,6 +60,7 @@ export type SupportLevel = 'supported' | 'partial' | 'unsupported';
 export type InspectCheck =
     | 'erc'
     | 'electrical'
+    | 'drivers'
     | 'bus'
     | 'drc'
     | 'nets'
@@ -1557,6 +1558,34 @@ export interface KicadSymbolImportResult {
     readonly symbols: readonly KicadSymbol[];
     readonly totals: { readonly symbols: number; readonly pins: number };
     /** Constructs outside the imported subset; empty when nothing was lost. */
+    readonly losses: readonly KicadImportLoss[];
+}
+
+/** One finding of `OpenEDA.checkKicadSymbol()`. */
+export interface KicadSymbolFinding {
+    /** Stable code such as `library/duplicate-pin-number`. */
+    readonly code: string;
+    readonly severity: 'error' | 'warning';
+    /** Symbol the finding belongs to. */
+    readonly symbol: string;
+    /** Pin number the finding belongs to, or `null` for a symbol-level finding. */
+    readonly pin: string | null;
+    /** Unit the pin belongs to, or `null` for a symbol-level finding. */
+    readonly unit: number | null;
+    readonly detail: string;
+}
+
+/** Result of `OpenEDA.checkKicadSymbol()`. */
+export interface KicadSymbolCheckResult {
+    readonly kind: 'kicad_sym';
+    readonly format: 'open-eda-library-check';
+    readonly version: 1;
+    readonly symbols: number;
+    readonly pins: number;
+    readonly findings: readonly KicadSymbolFinding[];
+    /** False only when at least one finding is an error. */
+    readonly passed: boolean;
+    /** Constructs the reader skipped; these never fail the check on their own. */
     readonly losses: readonly KicadImportLoss[];
 }
 

@@ -61,6 +61,7 @@ import type {
     KicadImportOptions,
     KicadImportResult,
     KicadNetImportResult,
+    KicadSymbolCheckResult,
     KicadSymbolImportResult,
     LabelInput,
     LabelListResult,
@@ -240,6 +241,19 @@ export class OpenEDA {
     async importKicadSymbol(source: string): Promise<KicadSymbolImportResult> {
         this.assertActive();
         return service.importKicadSymbol(source);
+    }
+
+    /**
+     * Validates a KiCad `.kicad_sym` symbol library.
+     *
+     * The report names every duplicate symbol, empty symbol, repeated pin
+     * number and nameless pin with its symbol, pin and unit, beside the reader's
+     * losses. It neither writes a file nor opens a design handle; `passed` is
+     * false only when a finding is an error.
+     */
+    async checkKicadSymbol(source: string): Promise<KicadSymbolCheckResult> {
+        this.assertActive();
+        return service.checkKicadSymbol(source);
     }
 
     /**
