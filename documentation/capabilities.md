@@ -280,7 +280,12 @@ it writes no graphic body, value or footprint.
 ### Presentation and assembly
 
 - `svg` draws the frame, wires, junctions, text and component boxes with
-  reference and value labels.
+  reference and value labels. Two-pin `R`, `C`, `L` and `D` references are
+  painted as standard resistor, capacitor, inductor and diode symbols (LED
+  values gain emission arrows, `+` values gain a polarity sign), and three-pin
+  `Q`/`J` parts gain an enclosing transistor ring; pin connection points never
+  move and every other part keeps the generic box. `pdf` paints the same
+  geometry.
 - `bom` groups by value and footprint and emits
   `Comment,Footprint,Designator,Quantity` with compressed designator ranges
   (`R5-R7` for three or more consecutive numbers). A variant filters DNP

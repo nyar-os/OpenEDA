@@ -7665,6 +7665,144 @@ fn component_extents(component: &Component) -> ([f64; 2], [f64; 2]) {
     (min, max)
 }
 
+/// Schematic body class derived from the reference prefix.
+#[derive(Clone, Copy)]
+enum SymbolClass {
+    Resistor,
+    Capacitor,
+    Inductor,
+    Diode,
+    /// Three-pin `Q`/`J` part: the generic box stays and gains the enclosing circle.
+    Transistor,
+    /// Generic multi-pin and `U` parts, painted exactly as before.
+    Box,
+}
+
+/// One unrotated body primitive in design units, centred on the component.
+enum SymbolPrimitive {
+    /// Open polyline stroked in the symbol colour.
+    Stroke(Vec<[f64; 2]>),
+    /// Closed polygon filled and stroked in the symbol colour.
+    Fill(Vec<[f64; 2]>),
+}
+
+/// Classifies one component from its first alphabetic reference character.
+///
+/// Only two-pin `R`/`C`/`L`/`D` parts and three-pin `Q`/`J` transistors leave
+/// the generic box, so pin connection points never move for any other part.
+fn symbol_class(component: &Component) -> SymbolClass {
+    let prefix =
+        component.reference.chars().find(|character| character.is_alphabetic()).map(|character| character.to_ascii_uppercase());
+    match (component.pins.len(), prefix) {
+        (2, Some('R')) => SymbolClass::Resistor,
+        (2, Some('C')) => SymbolClass::Capacitor,
+        (2, Some('L')) => SymbolClass::Inductor,
+        (2, Some('D')) => SymbolClass::Diode,
+        (3, Some('Q')) | (3, Some('J')) => SymbolClass::Transistor,
+        _ => SymbolClass::Box,
+    }
+}
+
+/// Body artwork for one symbol class, in unrotated design units centred on
+/// the component origin, and whether the generic box is still painted.
+///
+/// The two-pin bodies and their leads span about ten grid units between the
+/// [`PIN_LENGTH`] stub roots, so the stubs and their [`PinShape::end`]
+/// connection points stay exactly as [`component_pins`] places them.
+fn symbol_artwork(component: &Component) -> (Vec<SymbolPrimitive>, bool) {
+    let cx = component.x;
+    let cy = component.y;
+    let left_root = [cx - COMPONENT_HALF_WIDTH, cy];
+    let right_root = [cx + COMPONENT_HALF_WIDTH, cy];
+    let body = 5.08;
+    match symbol_class(component) {
+        SymbolClass::Box => (Vec::new(), false),
+        SymbolClass::Transistor => {
+            let radius = COMPONENT_HALF_WIDTH + PIN_LENGTH + 0.64;
+            let ring = (0..=24)
+                .map(|step| {
+                    let angle = std::f64::consts::TAU * step as f64 / 24.0;
+                    [cx + radius * angle.cos(), cy + radius * angle.sin()]
+                })
+                .collect();
+            (vec![SymbolPrimitive::Stroke(ring)], true)
+        }
+        SymbolClass::Resistor => {
+            let zigzag = vec![
+                [cx - body, cy],
+                [cx - 3.81, cy - 2.54],
+                [cx - 1.27, cy + 2.54],
+                [cx + 1.27, cy - 2.54],
+                [cx + 3.81, cy + 2.54],
+                [cx + body, cy],
+            ];
+            let primitives = vec![
+                SymbolPrimitive::Stroke(vec![left_root, [cx - body, cy]]),
+                SymbolPrimitive::Stroke(zigzag),
+                SymbolPrimitive::Stroke(vec![[cx + body, cy], right_root]),
+            ];
+            (primitives, false)
+        }
+        SymbolClass::Capacitor => {
+            let plate = 1.27;
+            let mut primitives = vec![
+                SymbolPrimitive::Stroke(vec![left_root, [cx - plate, cy]]),
+                SymbolPrimitive::Stroke(vec![[cx - plate, cy - 2.54], [cx - plate, cy + 2.54]]),
+                SymbolPrimitive::Stroke(vec![[cx + plate, cy - 2.54], [cx + plate, cy + 2.54]]),
+                SymbolPrimitive::Stroke(vec![[cx + plate, cy], right_root]),
+            ];
+            if component.value.contains('+') {
+                primitives.push(SymbolPrimitive::Stroke(vec![[cx - 5.08, cy - 3.81], [cx - 2.54, cy - 3.81]]));
+                primitives.push(SymbolPrimitive::Stroke(vec![[cx - 3.81, cy - 5.08], [cx - 3.81, cy - 2.54]]));
+            }
+            (primitives, false)
+        }
+        SymbolClass::Inductor => {
+            let mut coil = vec![[cx - body, cy]];
+            for bump in 0..4 {
+                for step in 1..=12 {
+                    let angle = std::f64::consts::PI * (12.0 - step as f64) / 12.0;
+                    coil.push([cx - body + 2.54 * bump as f64 + 1.27 + 1.27 * angle.cos(), cy - 1.27 * angle.sin()]);
+                }
+            }
+            let primitives = vec![
+                SymbolPrimitive::Stroke(vec![left_root, [cx - body, cy]]),
+                SymbolPrimitive::Stroke(coil),
+                SymbolPrimitive::Stroke(vec![[cx + body, cy], right_root]),
+            ];
+            (primitives, false)
+        }
+        SymbolClass::Diode => {
+            let mut primitives = vec![
+                SymbolPrimitive::Stroke(vec![left_root, [cx - 2.54, cy]]),
+                SymbolPrimitive::Fill(vec![[cx - 2.54, cy - 2.54], [cx - 2.54, cy + 2.54], [cx + 2.54, cy]]),
+                SymbolPrimitive::Stroke(vec![[cx + 2.54, cy - 2.54], [cx + 2.54, cy + 2.54]]),
+                SymbolPrimitive::Stroke(vec![[cx + 2.54, cy], right_root]),
+            ];
+            if component.value.to_ascii_uppercase().contains("LED") {
+                for offset in [0.0, 1.27] {
+                    let tip = [cx + 3.81 + offset, cy - 5.08];
+                    primitives.push(SymbolPrimitive::Stroke(vec![[cx + 1.27 + offset, cy - 2.54], tip]));
+                    primitives.push(SymbolPrimitive::Stroke(vec![[tip[0] - 1.27, tip[1]], tip]));
+                    primitives.push(SymbolPrimitive::Stroke(vec![[tip[0], tip[1] + 1.27], tip]));
+                }
+            }
+            (primitives, false)
+        }
+    }
+}
+
+/// Paints one body primitive inside the component's already-rotated SVG group.
+fn push_svg_symbol(svg: &mut String, primitive: &SymbolPrimitive) {
+    let (points, filled) = match primitive {
+        SymbolPrimitive::Stroke(points) => (points, false),
+        SymbolPrimitive::Fill(points) => (points, true),
+    };
+    let rendered = points.iter().map(|point| format!("{:.2},{:.2}", point[0], point[1])).collect::<Vec<_>>().join(" ");
+    let (tag, fill) = if filled { ("polygon", "#1f6feb") } else { ("polyline", "none") };
+    svg.push_str(&format!("      <{tag} points=\"{rendered}\" fill=\"{fill}\" stroke=\"#1f6feb\" stroke-width=\"0.5\"/>\n"));
+}
+
 fn render_svg(design: &Design) -> String {
     let sheets: Vec<&Sheet> = design.sheets.iter().collect();
     svg_projection(&sheets).document
@@ -7764,6 +7902,8 @@ fn svg_projection(sheets: &[&Sheet]) -> SvgProjection {
             ));
         }
         for component in &sheet.components {
+            let (artwork, keeps_box) = symbol_artwork(component);
+            let inside_box = keeps_box || artwork.is_empty();
             svg.push_str(&format!(
                 "    <g transform=\"rotate({:.2} {:.2} {:.2})\" data-ref=\"{}\">\n",
                 component.rotation,
@@ -7771,13 +7911,18 @@ fn svg_projection(sheets: &[&Sheet]) -> SvgProjection {
                 component.y,
                 escape_xml(&component.reference)
             ));
-            svg.push_str(&format!(
-                "      <rect x=\"{:.2}\" y=\"{:.2}\" width=\"{:.2}\" height=\"{:.2}\" fill=\"#f6faff\" stroke=\"#1f6feb\" stroke-width=\"0.5\"/>\n",
-                component.x - COMPONENT_HALF_WIDTH,
-                component.y - component_half_height(component),
-                COMPONENT_HALF_WIDTH * 2.0,
-                component_half_height(component) * 2.0
-            ));
+            if inside_box {
+                svg.push_str(&format!(
+                    "      <rect x=\"{:.2}\" y=\"{:.2}\" width=\"{:.2}\" height=\"{:.2}\" fill=\"#f6faff\" stroke=\"#1f6feb\" stroke-width=\"0.5\"/>\n",
+                    component.x - COMPONENT_HALF_WIDTH,
+                    component.y - component_half_height(component),
+                    COMPONENT_HALF_WIDTH * 2.0,
+                    component_half_height(component) * 2.0
+                ));
+            }
+            for primitive in &artwork {
+                push_svg_symbol(&mut svg, primitive);
+            }
             for pin in component_pins(component) {
                 svg.push_str(&format!(
                     "      <line x1=\"{:.2}\" y1=\"{:.2}\" x2=\"{:.2}\" y2=\"{:.2}\" stroke=\"#1f6feb\" stroke-width=\"0.35\"/>\n",
@@ -7788,23 +7933,24 @@ fn svg_projection(sheets: &[&Sheet]) -> SvgProjection {
                     pin.end[0], pin.end[1]
                 ));
                 let (x, anchor) = if pin.left { (pin.root[0] + 0.9, "start") } else { (pin.root[0] - 0.9, "end") };
+                let name_y = if inside_box { pin.root[1] + 0.7 } else { pin.root[1] - 1.2 };
                 svg.push_str(&format!(
                     "      <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"{PIN_NAME_SIZE:.1}\" text-anchor=\"{anchor}\" fill=\"#334155\">{}</text>\n",
                     x,
-                    pin.root[1] + 0.7,
+                    name_y,
                     escape_xml(&pin.name)
                 ));
             }
             svg.push_str(&format!(
                 "      <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"3.2\" text-anchor=\"middle\">{}</text>\n",
                 component.x,
-                component.y - 0.6,
+                if inside_box { component.y - 0.6 } else { component.y - 4.5 },
                 escape_xml(&component.reference)
             ));
             svg.push_str(&format!(
                 "      <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"2.6\" text-anchor=\"middle\">{}</text>\n",
                 component.x,
-                component.y + 3.0,
+                if inside_box { component.y + 3.0 } else { component.y + 4.5 },
                 escape_xml(&component.value)
             ));
             svg.push_str("    </g>\n");
@@ -8389,23 +8535,45 @@ fn render_pdf(design: &Design) -> String {
         }
         for component in &sheet.components {
             let half_height = component_half_height(component);
-            let corners = [
-                [component.x - COMPONENT_HALF_WIDTH, component.y - half_height],
-                [component.x + COMPONENT_HALF_WIDTH, component.y - half_height],
-                [component.x + COMPONENT_HALF_WIDTH, component.y + half_height],
-                [component.x - COMPONENT_HALF_WIDTH, component.y + half_height],
-            ];
-            let mut path = String::new();
-            for (index, corner) in corners.iter().enumerate() {
-                let point = rotate_about(component, *corner);
-                if index == 0 {
-                    path.push_str(&format!("{:.2} {:.2} m", map_x(point[0]), map_y(point[1])));
+            let (artwork, keeps_box) = symbol_artwork(component);
+            let inside_box = keeps_box || artwork.is_empty();
+            if inside_box {
+                let corners = [
+                    [component.x - COMPONENT_HALF_WIDTH, component.y - half_height],
+                    [component.x + COMPONENT_HALF_WIDTH, component.y - half_height],
+                    [component.x + COMPONENT_HALF_WIDTH, component.y + half_height],
+                    [component.x - COMPONENT_HALF_WIDTH, component.y + half_height],
+                ];
+                let mut path = String::new();
+                for (index, corner) in corners.iter().enumerate() {
+                    let point = rotate_about(component, *corner);
+                    if index == 0 {
+                        path.push_str(&format!("{:.2} {:.2} m", map_x(point[0]), map_y(point[1])));
+                    }
+                    else {
+                        path.push_str(&format!(" {:.2} {:.2} l", map_x(point[0]), map_y(point[1])));
+                    }
                 }
-                else {
-                    path.push_str(&format!(" {:.2} {:.2} l", map_x(point[0]), map_y(point[1])));
-                }
+                content.push_str(&format!("0.7 w {path} h S\n"));
             }
-            content.push_str(&format!("0.7 w {path} h S\n"));
+            for primitive in &artwork {
+                let (points, closed) = match primitive {
+                    SymbolPrimitive::Stroke(points) => (points, false),
+                    SymbolPrimitive::Fill(points) => (points, true),
+                };
+                let mut path = String::new();
+                for (index, point) in points.iter().enumerate() {
+                    let rotated = rotate_about(component, *point);
+                    if index == 0 {
+                        path.push_str(&format!("{:.2} {:.2} m", map_x(rotated[0]), map_y(rotated[1])));
+                    }
+                    else {
+                        path.push_str(&format!(" {:.2} {:.2} l", map_x(rotated[0]), map_y(rotated[1])));
+                    }
+                }
+                let operator = if closed { "h B" } else { "S" };
+                content.push_str(&format!("0.6 w {path} {operator}\n"));
+            }
             for pin in component_pins(component) {
                 let root = rotate_about(component, pin.root);
                 let end = rotate_about(component, pin.end);
@@ -8416,8 +8584,13 @@ fn render_pdf(design: &Design) -> String {
                     map_x(end[0]),
                     map_y(end[1])
                 ));
-                let name_at =
-                    rotate_about(component, [if pin.left { pin.root[0] + 0.9 } else { pin.root[0] - 0.9 }, pin.root[1] + 0.7]);
+                let name_at = rotate_about(
+                    component,
+                    [
+                        if pin.left { pin.root[0] + 0.9 } else { pin.root[0] - 0.9 },
+                        if inside_box { pin.root[1] + 0.7 } else { pin.root[1] - 1.2 },
+                    ],
+                );
                 let x =
                     if pin.left { map_x(name_at[0]) } else { map_x(name_at[0]) - pdf_text_width(&pin.name, label_size * 0.7) };
                 content.push_str(&format!(
@@ -8430,7 +8603,7 @@ fn render_pdf(design: &Design) -> String {
             content.push_str(&format!(
                 "BT /F1 {label_size:.2} Tf {:.2} {:.2} Td {} Tj ET\n",
                 map_x(component.x),
-                map_y(component.y) + 2.0,
+                map_y(component.y) + if inside_box { 2.0 } else { 4.5 * scale },
                 pdf_text(&component.reference)
             ));
             if !component.value.is_empty() {
@@ -8438,7 +8611,7 @@ fn render_pdf(design: &Design) -> String {
                     "BT /F1 {:.2} Tf {:.2} {:.2} Td {} Tj ET\n",
                     label_size * 0.85,
                     map_x(component.x),
-                    map_y(component.y) - label_size - 1.0,
+                    map_y(component.y) - if inside_box { label_size + 1.0 } else { 4.5 * scale + label_size * 0.85 + 1.0 },
                     pdf_text(&component.value)
                 ));
             }

@@ -5622,3 +5622,108 @@ fn hierarchy_check_needs_a_document_path_and_stays_out_of_inspect() {
     assert_eq!(report["passed"], true);
     close(handle).expect("close");
 }
+
+#[test]
+fn two_pin_parts_render_standard_symbols_without_moving_connection_points() {
+    let dir = TempDir::new("symbols");
+    let svg_path = dir.join("symbols.svg");
+    let created = create(CreateRequest::default()).expect("create");
+    let handle = created["handle"].as_u64().expect("handle");
+    let parts = [
+        ("U1", "MCU", 60.0, 40.0, vec!["VCC".to_string(), "GND".to_string(), "IO1".to_string(), "IO2".to_string()]),
+        ("R1", "10k", 20.0, 20.0, vec!["1".to_string(), "2".to_string()]),
+        ("C1", "+100n", 20.0, 40.0, vec!["1".to_string(), "2".to_string()]),
+        ("L1", "10u", 20.0, 60.0, vec!["1".to_string(), "2".to_string()]),
+        ("D1", "LED", 20.0, 80.0, vec!["A".to_string(), "K".to_string()]),
+        ("Q1", "2N2222", 20.0, 100.0, vec!["B".to_string(), "C".to_string(), "E".to_string()]),
+    ];
+    for (reference, value, x, y, pins) in parts {
+        add_component(
+            handle,
+            AddComponentRequest { sheet: None, reference: reference.into(), value: value.into(), x, y, rotation: 0.0, pins },
+        )
+        .expect(reference);
+    }
+    export(handle, "svg", &svg_path).expect("export svg");
+    let svg = fs::read_to_string(&svg_path).expect("read svg");
+
+    // The resistor zigzag sits between the unchanged stub roots, whose pin-end
+    // connection points and stub lines must stay exactly where they were.
+    assert!(
+        svg.contains("<polyline points=\"14.92,20.00 16.19,17.46 18.73,22.54 21.27,17.46 23.81,22.54 25.08,20.00\""),
+        "{svg}"
+    );
+    assert!(svg.contains("<polyline points=\"7.30,20.00 14.92,20.00\""), "{svg}");
+    assert!(svg.contains("<polyline points=\"25.08,20.00 32.70,20.00\""), "{svg}");
+    assert!(svg.contains("<line x1=\"7.30\" y1=\"20.00\" x2=\"4.76\" y2=\"20.00\""), "{svg}");
+    assert!(svg.contains("<circle cx=\"4.76\" cy=\"20.00\" r=\"0.45\""), "{svg}");
+    assert!(svg.contains("<circle cx=\"35.24\" cy=\"20.00\" r=\"0.45\""), "{svg}");
+    // The generic box is gone from the two-pin part, and its labels moved out.
+    assert!(!svg.contains("<rect x=\"7.30\" y=\"12.38\""), "{svg}");
+    assert!(svg.contains("<text x=\"20.00\" y=\"15.50\" font-family=\"monospace\" font-size=\"3.2\""), "{svg}");
+    assert!(svg.contains("<text x=\"20.00\" y=\"24.50\" font-family=\"monospace\" font-size=\"2.6\""), "{svg}");
+
+    // The polarised capacitor paints two parallel plates and a plus sign.
+    assert!(svg.contains("<polyline points=\"18.73,37.46 18.73,42.54\""), "{svg}");
+    assert!(svg.contains("<polyline points=\"21.27,37.46 21.27,42.54\""), "{svg}");
+    assert!(svg.contains("<polyline points=\"14.92,36.19 17.46,36.19\""), "{svg}");
+    assert!(svg.contains("<circle cx=\"4.76\" cy=\"40.00\" r=\"0.45\""), "{svg}");
+    assert!(svg.contains("<circle cx=\"35.24\" cy=\"40.00\" r=\"0.45\""), "{svg}");
+
+    // The inductor paints four coil bumps between the same connection points.
+    assert!(svg.contains("<polyline points=\"14.92,60.00 14.96,59.67"), "{svg}");
+    assert!(svg.contains("25.08,60.00 32.70,60.00\""), "{svg}");
+
+    // The LED paints a filled triangle, a cathode bar and two outward arrows.
+    assert!(svg.contains("<polygon points=\"17.46,77.46 17.46,82.54 22.54,80.00\" fill=\"#1f6feb\""), "{svg}");
+    assert!(svg.contains("<polyline points=\"22.54,77.46 22.54,82.54\""), "{svg}");
+    assert!(svg.contains("<polyline points=\"21.27,77.46 23.81,74.92\""), "{svg}");
+    assert!(svg.contains("<polyline points=\"22.54,74.92 23.81,74.92\""), "{svg}");
+    assert!(svg.contains("<circle cx=\"4.76\" cy=\"80.00\" r=\"0.45\""), "{svg}");
+    assert!(svg.contains("<circle cx=\"35.24\" cy=\"80.00\" r=\"0.45\""), "{svg}");
+
+    // The transistor keeps its box and pin artwork and gains the ring.
+    assert!(svg.contains("<rect x=\"7.30\" y=\"92.38\" width=\"25.40\" height=\"15.24\""), "{svg}");
+    assert!(svg.contains("<polyline points=\"35.88,100.00"), "{svg}");
+
+    // The four-pin IC is untouched, box, stubs and inside-box labels alike.
+    assert!(svg.contains("<rect x=\"47.30\" y=\"32.38\" width=\"25.40\" height=\"15.24\""), "{svg}");
+    assert!(svg.contains("<text x=\"48.20\" y=\"39.43\" font-family=\"monospace\" font-size=\"2.0\""), "{svg}");
+    assert!(svg.contains("<text x=\"60.00\" y=\"39.40\" font-family=\"monospace\" font-size=\"3.2\""), "{svg}");
+    close(handle).expect("close");
+}
+
+#[test]
+fn pdf_replaces_the_resistor_box_with_the_zigzag_and_keeps_stub_endpoints() {
+    let dir = TempDir::new("symbol-pdf");
+    let path = dir.join("blinker.pdf");
+    let created =
+        create(CreateRequest { title: Some("Blinker".to_string()), rev: None, company: None, date: None, template: None })
+            .expect("create");
+    let handle = created["handle"].as_u64().expect("handle");
+    add_component(
+        handle,
+        AddComponentRequest {
+            sheet: None,
+            reference: "R1".to_string(),
+            value: "10k".to_string(),
+            x: 20.0,
+            y: 20.0,
+            rotation: 0.0,
+            pins: vec!["1".to_string(), "2".to_string()],
+        },
+    )
+    .expect("add R1");
+
+    export(handle, "pdf", &path).expect("export pdf");
+    let text = fs::read_to_string(&path).expect("read pdf");
+    // The zigzag body between the unchanged stub roots, mapped at the same
+    // scale as before because the component extents did not move.
+    assert!(text.contains("292.67 228.50 m 324.75 292.67 l"), "{text}");
+    // The pin stub and its connection points are unchanged.
+    assert!(text.contains("0.5 w 100.17 228.50 m 36.00 228.50 l S"), "{text}");
+    // The generic box path is gone.
+    assert!(!text.contains("100.17 421.00 m"), "{text}");
+    assert!(text.contains("(10k) Tj") && text.contains("(R1) Tj"), "{text}");
+    close(handle).expect("close");
+}
