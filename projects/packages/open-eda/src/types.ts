@@ -81,6 +81,7 @@ export type ExportTarget =
     | 'net'
     | 'net_csv'
     | 'net_hier'
+    | 'net_class'
     | 'spice'
     | 'spice_subckt'
     | 'gbr'

@@ -163,6 +163,15 @@ test('document core: edit, inspect, save/open round trip and projections', { ski
         const csvText = fs.readFileSync(csvPath, 'utf8');
         assert.ok(csvText.startsWith('Sheet,Net,Ref,Pin\n'));
         assert.ok(csvText.includes('Sheet 1,VCC,R1,1'));
+        const classPath = path.join(directory, 'blinker-classes.csv');
+        const netClass = await reopened.export({ format: 'net_class', target: classPath });
+        assert.equal(netClass.format, 'net_class');
+        assert.equal(netClass.artifact.classes, 0);
+        assert.equal(netClass.artifact.rows, 4);
+        assert.equal(netClass.artifact.unclassifiedRows, 4);
+        const classText = fs.readFileSync(classPath, 'utf8');
+        assert.ok(classText.startsWith('Class,Sheet,Net,Ref,Pin,Role\n'));
+        assert.ok(classText.includes(',Sheet 1,VCC,R1,1,'));
         const spice = await reopened.export({ format: 'spice', target: spicePath });
         assert.equal(spice.format, 'spice');
         assert.ok(fs.readFileSync(spicePath, 'utf8').includes('* OpenEDA SPICE netlist v1'));
