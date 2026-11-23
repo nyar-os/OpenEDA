@@ -8,7 +8,8 @@ Unsupported work answers with `capability/not-implemented` (exit code `1`)
 instead of degrading silently.
 
 Read-only queries are reported next to `checks` but are not rule checks:
-`queries.trace` is `supported` and `inspect --checks` never accepts `trace`.
+`queries.trace` and `queries.netAudit` are `supported` and `inspect --checks`
+never accepts `trace` or `netAudit`.
 A check reports findings on one revision; a query returns one deterministic
 answer about the document, such as a pin-to-pin path.
 
@@ -30,6 +31,7 @@ answer about the document, such as a pin-to-pin path.
 | pin trace `trace` | supported | read-only shortest hop path between two `REF.PIN` pins; tagged `open-eda-trace`; reported as `queries.trace`, not as an `inspect --checks` check |
 | component detail `component show` | supported | read-only detail of one component by reference: placement, value, footprint, custom properties and per-pin nets; tagged `open-eda-component`; pins keep declaration order and net names keep document order |
 | net detail `net show` | supported | read-only detail of one declared net by name across every sheet, or one with `--sheet`: per-sheet net id and nodes, wires and labels that reference the name, aggregated node count, and the matching declared bus and net class; tagged `open-eda-net`; an unknown name is `net/not-found` |
+| net audit `net audit` | supported | read-only per-net health report of every declared net in document order: node count, placed-pin count, same-sheet wire and label counts, wire length and the claiming net class; reports `net/empty`, `net/single-pin` and `net/no-wire` as warnings; tagged `open-eda-net-audit` and reported as `queries.netAudit`; never writes the document, opens a child sheet or bumps the revision |
 | component update `component update` | supported | partial edit of one placed component by reference: only the fields the request names change; one revision per call; `capabilities()` reports `edits.components` |
 | read-only listings `component list`, `net list`, `bus list`, `net-class list`, `wire list`, `label list`, `text list`, `sheet list` | supported | document order with 0-based indices where the model edits by index |
 | wire merge `wire merge` | supported | merges two wires of one sheet by 0-based index when they name the same net, share exactly one endpoint within a scaled `1e-9` tolerance and are collinear with the shared point at opposite ends; the first wire keeps its identity, order and net and the second is removed; a junction at the shared point is `wire/merge-junction`, other disagreements are `wire/merge-mismatch` and a zero-length result is `session/argument-invalid` |
@@ -245,6 +247,24 @@ fail the report.
   component's declaration order and each pin's `nets` keeps document order
   without duplicates. A reference no sheet places fails with
   `object/not-found`. The query never writes a document and adds no revision.
+- `net audit` (`netAudit()` in the SDK) walks the declared nets in document
+  order (sheet order, then declaration order) and returns
+  `{report: "open-eda-net-audit", version: 1, revision, netCount, pinCount,
+  wireCount, totalLength, status, nets, issues}`. Each `nets` entry is
+  `{name, class, nodes, pins, wires, labels, junctions, length, connected}`:
+  `nodes` counts the declared `REF.PIN` nodes, `pins` only those that name a
+  placed component pin, `wires` and `labels` the same-sheet wires and labels
+  that carry the net name, `junctions` is always `0` because the model does not
+  associate junctions with a net, `length` is the sum of the straight wire
+  segments rounded to four decimals, and `connected` is true when the net has at
+  least two nodes or some wire or label. `class` is the declared net-class name
+  that claims the net, or `null`. Three warnings follow net declaration order:
+  `net/empty` for no nodes, `net/single-pin` for exactly one node and
+  `net/no-wire` for several nodes but no wire and no label. `status` is `pass`
+  when there is no issue and `warn` otherwise. `pinCount` sums the declared
+  nodes, `wireCount` the contributing wires and `totalLength` the per-net
+  lengths. The audit never writes the document, opens a child sheet or bumps
+  the revision.
 - The trace joins objects with the same rules the connectivity check reads: a
   pin joins the wires of its declared net, wires join at coincident endpoints
   or a T-junction, a junction joins every wire it lies on, and a label joins
@@ -393,6 +413,9 @@ Every file is written through a temporary file and a rename.
   `session/argument-invalid` refusals, `changed: false` with no revision,
   revision counting, undo/redo, save/reopen persistence and byte-identical
   output.
+- `projects/crates/eda-model/tests/unit/net_audit.rs` — per-net counts, placed
+  pins, wire length, net class, all three warning codes in declaration order,
+  deterministic re-runs, unchanged revisions and the `design/not-found` error.
 - `projects/crates/eda-model/tests/unit/clearance.rs` — component-body overlap
   pairs, edge contact, rotation, sheets, severity and waivers.
 - `projects/crates/eda-model/tests/unit/pins.rs` — pin add, remove and rename

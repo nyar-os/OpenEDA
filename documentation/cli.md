@@ -68,6 +68,17 @@ pair is a successful query (exit `0`); an unknown reference or pin is exit `1`.
 `--json` returns the same report as `open-eda-trace`. The command never writes
 the document and never opens a child document.
 
+### Net audit
+
+`net audit <file>` prints one line per declared net in document order with its
+net class, node and placed-pin counts, same-sheet wire and label counts, wire
+length and whether it is connected, followed by one line per warning. The
+warnings are `net/empty` (no nodes), `net/single-pin` (exactly one node) and
+`net/no-wire` (several nodes but no wire and no label). Warnings do not change
+the exit code, so a document with warnings still exits `0`; `--json` returns the
+`open-eda-net-audit` report. The command never writes the document, never opens a
+child sheet and never bumps the revision.
+
 ## Components
 
 | Command | Description |
@@ -102,6 +113,7 @@ Pin roles: `input`, `output`, `bidirectional`, `tri_state`, `passive`,
 | `open-eda net rename <file> --id <net> --name <name> [--sheet <id>]` | Rename a declared net across every sheet; declarations keep their nodes and wires, labels, net-class and bus alias assignments follow; an unknown net is `net/not-found`, a name another net declares is refused, and an already-matching name reports `changed: false` without a new revision |
 | `open-eda net merge <file> --target <net> --source <net> [--sheet <id>]` | Merge two nets |
 | `open-eda net show <file> <net> [--sheet <id>]` | Report one net's nodes, wires, labels and matching bus and net class |
+| `open-eda net audit <file>` | Report the per-net health of every declared net: nodes, placed pins, wires, labels and length, with `net/empty`, `net/single-pin` and `net/no-wire` warnings |
 | `open-eda net list <file> [--sheet <id>]` | List nets and nodes |
 | `open-eda net delete <file> --net <name> [--sheet <id>]` | Delete a net |
 | `open-eda bus add <file> --name <name> --width <n> [--aliases <list>]` | Declare a bus |
