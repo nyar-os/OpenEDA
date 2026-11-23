@@ -172,6 +172,18 @@ test('document core: edit, inspect, save/open round trip and projections', { ski
         const classText = fs.readFileSync(classPath, 'utf8');
         assert.ok(classText.startsWith('Class,Sheet,Net,Ref,Pin,Role\n'));
         assert.ok(classText.includes(',Sheet 1,VCC,R1,1,'));
+        const lengthPath = path.join(directory, 'blinker-lengths.csv');
+        const netLength = await reopened.export({ format: 'net_length', target: lengthPath });
+        assert.equal(netLength.format, 'net_length');
+        assert.equal(netLength.artifact.kind, 'net_length');
+        assert.equal(netLength.artifact.nets, 2);
+        assert.equal(netLength.artifact.wires, 1);
+        assert.equal(netLength.artifact.unrouted, 1);
+        assert.equal(netLength.artifact.length, '30');
+        assert.equal(
+            fs.readFileSync(lengthPath, 'utf8'),
+            'Sheet,Net,Length,Wires,Unrouted\nSheet 1,VCC,30,1,no\nSheet 1,GND,0,0,yes\n',
+        );
         const spice = await reopened.export({ format: 'spice', target: spicePath });
         assert.equal(spice.format, 'spice');
         assert.ok(fs.readFileSync(spicePath, 'utf8').includes('* OpenEDA SPICE netlist v1'));
@@ -424,6 +436,31 @@ test('pin electrical types drive the electrical check', { skip: withoutAddon }, 
             design.setPinType({ reference: 'U1', pin: '1', pinType: 'bogus' as never }),
             (error: unknown) => error instanceof OpenEDAError && error.code === 'session/argument-invalid',
         );
+        await design.close();
+    } finally {
+        await eda.dispose();
+    }
+});
+
+test('pin_types check reports role conflicts the other checks leave open', { skip: withoutAddon }, async () => {
+    const eda = new OpenEDA();
+    try {
+        const design = await eda.create({ title: 'PinTypes' });
+        await design.addComponent({ reference: 'U1', value: 'buffer', x: 0, y: 0, pins: ['OUT', 'VCC', 'BUS'] });
+        await design.addComponent({ reference: 'U2', value: 'regulator', x: 20, y: 0, pins: ['PWR'] });
+        await design.connectNet({ net: 'SUPPLY_IN', nodes: ['U1.OUT', 'U1.VCC'] });
+        await design.connectNet({ net: 'BUS_DRIVE', nodes: ['U2.PWR', 'U1.BUS'] });
+        await design.connectNet({ net: 'CLEAN', nodes: ['U2.PWR', 'U1.VCC'] });
+        await design.setPinType({ reference: 'U1', pin: 'OUT', pinType: 'output' });
+        await design.setPinType({ reference: 'U1', pin: 'VCC', pinType: 'power_in' });
+        await design.setPinType({ reference: 'U1', pin: 'BUS', pinType: 'tri_state' });
+        await design.setPinType({ reference: 'U2', pin: 'PWR', pinType: 'power_out' });
+
+        const report = await design.inspect({ checks: ['pin_types'] });
+        const codes = report.issues.map((issue) => issue.code);
+        assert.deepEqual(codes, ['erc/output-power-in-conflict', 'erc/power-output-driver-conflict']);
+        assert.equal(report.passed, false);
+        assert.ok(report.issues.every((issue) => issue.severity === 'error'));
         await design.close();
     } finally {
         await eda.dispose();
