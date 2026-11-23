@@ -60,6 +60,7 @@ fn capability_matrix_reports_only_the_implemented_entries() {
     assert_eq!(matrix["exportTargets"]["net"], "supported");
     assert_eq!(matrix["exportTargets"]["net_csv"], "supported");
     assert_eq!(matrix["exportTargets"]["net_hier"], "supported");
+    assert_eq!(matrix["exportTargets"]["net_class"], "supported");
     assert_eq!(matrix["exportTargets"]["spice"], "supported");
     assert_eq!(matrix["exportTargets"]["spice_subckt"], "supported");
     assert_eq!(matrix["exportTargets"]["svg"], "supported");
@@ -94,6 +95,123 @@ fn empty_design_passes_inspection() {
     let codes: Vec<&str> =
         report["issues"].as_array().expect("issues").iter().filter_map(|issue| issue["code"].as_str()).collect();
     assert_eq!(codes, vec!["sheet-empty"]);
+    close(handle).expect("close");
+}
+
+#[test]
+fn net_class_export_groups_rows_by_declared_class_and_reports_pin_roles() {
+    let dir = TempDir::new("net-class");
+    let path = dir.join("blinker-classes.csv");
+    let created = create(CreateRequest::default()).expect("create");
+    let handle = created["handle"].as_u64().expect("handle");
+    for (reference, value, pins) in [
+        ("R1", "10k", vec!["1".to_string(), "2".to_string()]),
+        ("U1", "Buffer", vec!["VCC".to_string(), "OUT".to_string()]),
+        ("C1", "100n", vec!["1".to_string(), "2".to_string()]),
+    ] {
+        add_component(
+            handle,
+            AddComponentRequest {
+                sheet: None,
+                reference: reference.to_string(),
+                value: value.to_string(),
+                x: 0.0,
+                y: 0.0,
+                rotation: 0.0,
+                pins,
+            },
+        )
+        .expect("add component");
+    }
+    add_bus(handle, AddBusRequest { name: "DATA".to_string(), width: 2, aliases: vec!["D".to_string()] }).expect("add bus");
+    connect_net(
+        handle,
+        ConnectNetRequest { sheet: None, net: "VCC".to_string(), nodes: vec!["R1.1".to_string(), "U1.VCC".to_string()] },
+    )
+    .expect("connect VCC");
+    connect_net(handle, ConnectNetRequest { sheet: None, net: "DATA".to_string(), nodes: vec!["U1.OUT".to_string()] })
+        .expect("connect DATA");
+    connect_net(
+        handle,
+        ConnectNetRequest { sheet: None, net: "SIG".to_string(), nodes: vec!["C1.1".to_string(), "C1.2".to_string()] },
+    )
+    .expect("connect SIG");
+    set_pin_type(
+        handle,
+        SetPinTypeRequest {
+            sheet: None,
+            reference: "U1".to_string(),
+            pin: "VCC".to_string(),
+            pin_type: Some(PinType::PowerIn),
+        },
+    )
+    .expect("type VCC pin");
+    set_pin_type(
+        handle,
+        SetPinTypeRequest { sheet: None, reference: "U1".to_string(), pin: "OUT".to_string(), pin_type: Some(PinType::Output) },
+    )
+    .expect("type OUT pin");
+    set_pin_type(
+        handle,
+        SetPinTypeRequest { sheet: None, reference: "R1".to_string(), pin: "1".to_string(), pin_type: Some(PinType::Passive) },
+    )
+    .expect("type R1 pin");
+    add_net_class(
+        handle,
+        NetClassRequest {
+            name: "HighSpeed".to_string(),
+            width: 0.25,
+            clearance: 0.2,
+            via: 0.6,
+            nets: vec!["VCC".to_string()],
+            buses: vec!["DATA".to_string()],
+        },
+    )
+    .expect("add net class");
+
+    let report = export(handle, "net_class", &path).expect("export net_class");
+    assert_eq!(report["format"], "net_class");
+    assert_eq!(report["artifact"]["kind"], "net_class");
+    assert_eq!(report["artifact"]["classes"], 1);
+    assert_eq!(report["artifact"]["rows"], 6);
+    assert_eq!(report["artifact"]["unclassifiedRows"], 2);
+    assert_eq!(
+        fs::read_to_string(&path).expect("read net class csv"),
+        "Class,Sheet,Net,Ref,Pin,Role\n\
+         HighSpeed,Sheet 1,VCC,R1,1,passive\n\
+         HighSpeed,Sheet 1,VCC,U1,VCC,power_in\n\
+         HighSpeed,Sheet 1,DATA0,U1,OUT,output\n\
+         HighSpeed,Sheet 1,DATA1,U1,OUT,output\n\
+         ,Sheet 1,SIG,C1,1,\n\
+         ,Sheet 1,SIG,C1,2,\n"
+    );
+    assert_eq!(export_with_variant(handle, "net_class", &path, Some("lite")).unwrap_err().code, "session/argument-invalid");
+    close(handle).expect("close");
+}
+
+#[test]
+fn bom_export_sorts_designators_numerically_before_compressing_ranges() {
+    let dir = TempDir::new("bom-natural");
+    let path = dir.join("resistors.csv");
+    let created = create(CreateRequest::default()).expect("create");
+    let handle = created["handle"].as_u64().expect("handle");
+    for index in 1..=12 {
+        add_component(
+            handle,
+            AddComponentRequest {
+                sheet: None,
+                reference: format!("R{index}"),
+                value: "10k".to_string(),
+                x: 0.0,
+                y: 0.0,
+                rotation: 0.0,
+                pins: vec!["1".to_string()],
+            },
+        )
+        .expect("add resistor");
+    }
+    export(handle, "bom", &path).expect("export bom");
+    assert_eq!(fs::read_to_string(&path).expect("read bom"), "Comment,Footprint,Designator,Quantity\n10k,,R1-R12,12\n");
     close(handle).expect("close");
 }
 

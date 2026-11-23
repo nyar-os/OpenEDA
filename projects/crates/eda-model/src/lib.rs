@@ -62,6 +62,7 @@ const EXPORT_TARGETS: &[&str] = &[
     "net",
     "net_csv",
     "net_hier",
+    "net_class",
     "spice",
     "spice_subckt",
     "gbr",
@@ -81,6 +82,7 @@ const SUPPORTED_EXPORTS: &[&str] = &[
     "net",
     "net_csv",
     "net_hier",
+    "net_class",
     "spice",
     "spice_subckt",
     "svg",
@@ -4912,6 +4914,16 @@ pub fn export_with_variant(handle: u64, format: &str, path: &Path, variant: Opti
             });
             (render_hierarchical_netlist(&design), artifact)
         }
+        "net_class" => {
+            let (contents, rows, unclassified) = render_net_class_csv(&design);
+            let artifact = json!({
+                "kind": "net_class",
+                "classes": design.rules.net_classes.len(),
+                "rows": rows,
+                "unclassifiedRows": unclassified,
+            });
+            (contents, artifact)
+        }
         "spice" => {
             let (contents, spice_losses) = render_spice(&design);
             losses = spice_losses;
@@ -6910,6 +6922,23 @@ fn port_direction_name(direction: PortDirection) -> &'static str {
     }
 }
 
+/// Stable spelling of one pin electrical role, matching the document schema and
+/// the KiCad pin types.
+fn pin_role_name(pin_type: PinType) -> &'static str {
+    match pin_type {
+        PinType::Input => "input",
+        PinType::Output => "output",
+        PinType::Bidirectional => "bidirectional",
+        PinType::TriState => "tri_state",
+        PinType::Passive => "passive",
+        PinType::PowerIn => "power_in",
+        PinType::PowerOut => "power_out",
+        PinType::OpenCollector => "open_collector",
+        PinType::OpenEmitter => "open_emitter",
+        PinType::Unspecified => "unspecified",
+    }
+}
+
 /// Builds the connection graph and the pin lookup of one design.
 ///
 /// Pins join the wires of their declared net, wires join by the same endpoint
@@ -7356,6 +7385,81 @@ fn render_net_csv(design: &Design) -> (String, usize) {
         }
     }
     (text, rows)
+}
+
+/// Projects one design to a CSV pin-level netlist grouped by net class.
+///
+/// The header is `Class,Sheet,Net,Ref,Pin,Role`. Rows are grouped by the declared
+/// net classes in declaration order, and the nets no class assigns come last
+/// with an empty `Class`. A class claims a net it explicitly assigns or, through
+/// a declared bus it assigns, every member of that bus. A net whose name equals
+/// a bus name or alias expands into the same member nets the other netlists
+/// write, so all projections agree. `Role` is the pin's electrical role in the
+/// snake_case vocabulary, or empty for an untyped pin.
+///
+/// The returned tuple is the CSV, its data-row count and how many of those rows
+/// belong to the unclassified group.
+fn render_net_class_csv(design: &Design) -> (String, usize, usize) {
+    let mut text = String::from("Class,Sheet,Net,Ref,Pin,Role\n");
+    let mut rows = 0usize;
+    let mut unclassified = 0usize;
+    for group in 0..=design.rules.net_classes.len() {
+        let group_name = design.rules.net_classes.get(group).map(|class| class.name.as_str());
+        for sheet in &design.sheets {
+            for net in &sheet.nets {
+                if net_class_for_net(design, &net.name).map(|class| class.name.as_str()) != group_name {
+                    continue;
+                }
+                let members: Vec<String> = match bus_for_net(design, &net.name) {
+                    Some(bus) => (0..bus.width).map(|index| format!("{}{index}", bus.name)).collect(),
+                    None => vec![net.name.clone()],
+                };
+                for member in members {
+                    for node in &net.nodes {
+                        let role = sheet
+                            .components
+                            .iter()
+                            .find(|component| component.reference == node.reference)
+                            .and_then(|component| component.pin_types.get(&node.pin))
+                            .map(|pin_type| pin_role_name(*pin_type))
+                            .unwrap_or("");
+                        text.push_str(&format!(
+                            "{},{},{},{},{},{}\n",
+                            csv_field(group_name.unwrap_or("")),
+                            csv_field(&sheet.name),
+                            csv_field(&member),
+                            csv_field(&node.reference),
+                            csv_field(&node.pin),
+                            role
+                        ));
+                        rows += 1;
+                        if group_name.is_none() {
+                            unclassified += 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    (text, rows, unclassified)
+}
+
+/// Resolves the net class that claims one net name.
+///
+/// An explicit net assignment wins; otherwise a declared bus assigns the net
+/// when the class names the bus and the net is that bus, one of its aliases or
+/// one of its members. Classes are visited in declaration order, so the first
+/// claim is stable.
+fn net_class_for_net<'a>(design: &'a Design, name: &str) -> Option<&'a NetClass> {
+    design.rules.net_classes.iter().find(|class| {
+        class.nets.iter().any(|net| net == name)
+            || design.buses.iter().any(|bus| {
+                class.buses.contains(&bus.name)
+                    && (bus.name == name
+                        || bus.aliases.iter().any(|alias| alias == name)
+                        || (0..bus.width).any(|index| format!("{}{index}", bus.name) == name))
+            })
+    })
 }
 
 /// Projects one design to a hierarchical netlist whose net names carry the
@@ -8085,10 +8189,55 @@ fn bom_rows(design: &Design, variant: Option<&Variant>) -> Vec<BomRow> {
     groups
         .into_iter()
         .map(|((comment, footprint), mut designators)| {
-            designators.sort();
+            designators.sort_by(|left, right| natural_compare(left, right));
             BomRow { comment, footprint, designators }
         })
         .collect()
+}
+
+/// Compares two designators the way a human reads them: digit runs compare by
+/// numeric value instead of text, so `R2` precedes `R10` and adjacent numbers
+/// stay together for [`designator_ranges`]. Equal numeric runs fall back to the
+/// run length, keeping the order total and deterministic.
+fn natural_compare(left: &str, right: &str) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    let mut left = left;
+    let mut right = right;
+    loop {
+        match (left.chars().next(), right.chars().next()) {
+            (None, None) => return Ordering::Equal,
+            (None, Some(_)) => return Ordering::Less,
+            (Some(_), None) => return Ordering::Greater,
+            (Some(left_char), Some(right_char)) => {
+                if left_char.is_ascii_digit() && right_char.is_ascii_digit() {
+                    let left_len = left.find(|character: char| !character.is_ascii_digit()).unwrap_or(left.len());
+                    let right_len = right.find(|character: char| !character.is_ascii_digit()).unwrap_or(right.len());
+                    let left_run = &left[..left_len];
+                    let right_run = &right[..right_len];
+                    let left_digits = left_run.trim_start_matches('0');
+                    let right_digits = right_run.trim_start_matches('0');
+                    let ordering = left_digits.len().cmp(&right_digits.len()).then_with(|| left_digits.cmp(right_digits));
+                    if ordering != Ordering::Equal {
+                        return ordering;
+                    }
+                    let ordering = left_len.cmp(&right_len);
+                    if ordering != Ordering::Equal {
+                        return ordering;
+                    }
+                    left = &left[left_len..];
+                    right = &right[right_len..];
+                }
+                else {
+                    let ordering = left_char.cmp(&right_char);
+                    if ordering != Ordering::Equal {
+                        return ordering;
+                    }
+                    left = &left[left_char.len_utf8()..];
+                    right = &right[right_char.len_utf8()..];
+                }
+            }
+        }
+    }
 }
 
 fn render_bom(rows: &[BomRow]) -> String {
@@ -8112,7 +8261,13 @@ fn render_bom(rows: &[BomRow]) -> String {
 /// never participates in a range.
 fn split_designator(reference: &str) -> (&str, Option<u64>) {
     let digits = reference.len() - reference.trim_end_matches(|character: char| character.is_ascii_digit()).len();
-    if digits == 0 { (reference, None) } else { (reference.split_at(digits).0, reference[digits..].parse::<u64>().ok()) }
+    if digits == 0 {
+        (reference, None)
+    }
+    else {
+        let split = reference.len() - digits;
+        (reference.split_at(split).0, reference[split..].parse::<u64>().ok())
+    }
 }
 
 /// Compresses consecutive designators into inclusive ranges.
