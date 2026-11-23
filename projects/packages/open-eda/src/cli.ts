@@ -1322,6 +1322,32 @@ netCommand
     });
 
 netCommand
+    .command('audit', 'cli.cmd.net-audit')
+    .actionCtx(async (options, _args, ctx) => {
+        const file = input(options);
+        if (file === undefined) {
+            ctx.fail('open-eda.cli.file-required', { message: 'a design document is required' });
+            return 2;
+        }
+        const report = await withDesign(file, (design) => design.netAudit());
+        const lines = [
+            `net audit revision=${report.revision} nets=${report.netCount} pins=${report.pinCount} ` +
+                `wires=${report.wireCount} length=${report.totalLength} status=${report.status}`,
+        ];
+        for (const net of report.nets) {
+            lines.push(
+                `  ${net.name} class=${net.class ?? '-'} nodes=${net.nodes} pins=${net.pins} wires=${net.wires} ` +
+                    `labels=${net.labels} length=${net.length} connected=${net.connected ? 'yes' : 'no'}`,
+            );
+        }
+        for (const issue of report.issues) {
+            lines.push(`  ${issue.severity} ${issue.code} ${issue.net} sheet=${issue.sheet}: ${issue.message}`);
+        }
+        ctx.emitResult(report, lines.join('\n'));
+        return 0;
+    });
+
+netCommand
     .command('list', 'cli.cmd.net-list')
     .option('--sheet <sheet>', 'cli.opt.sheet')
     .actionCtx(async (options, _args, ctx) => {

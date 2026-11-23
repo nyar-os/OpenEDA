@@ -45,6 +45,7 @@
             "component-delete": "Delete a placed component and its net nodes in place",
             "net": "Edit electrical nets",
             "net-show": "Show one net's nodes, wires, labels and matching bus and net class",
+            "net-audit": "Report the per-net health: nodes, pins, wires, labels, length and warning codes",
             "net-list": "List the nets of a sheet with their REF.PIN nodes",
             "net-connect": "Connect REF.PIN nodes to a named net in place",
             "net-rename": "Rename a declared net across every sheet; wires, labels, net-class and bus alias assignments follow",
