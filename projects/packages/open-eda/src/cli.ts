@@ -111,6 +111,7 @@ const exportTargets: readonly ExportTarget[] = [
     'net_csv',
     'net_hier',
     'net_class',
+    'net_length',
     'spice',
     'spice_subckt',
     'gbr',
@@ -3048,7 +3049,7 @@ cli
         const format = asExportTarget(text(options, 'format'));
         if (format === undefined) {
             ctx.fail('open-eda.cli.format-required', {
-                message: '`--format` must be one of kicad_sch, kicad_sym, kicad_pcb, net, net_csv, net_hier, net_class, spice, spice_subckt, gbr, pdf, svg, bom, bom_json, bom_html, report, json',
+                message: '`--format` must be one of kicad_sch, kicad_sym, kicad_pcb, net, net_csv, net_hier, net_class, net_length, spice, spice_subckt, gbr, pdf, svg, bom, bom_json, bom_html, report, json',
             });
             return 2;
         }
