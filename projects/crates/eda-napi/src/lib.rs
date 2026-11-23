@@ -478,6 +478,14 @@ fn design_net_show(ctx: CallContext) -> Result<JsValue> {
     respond(&ctx, &report)
 }
 
+/// Reports the per-net health of one open design.
+#[function]
+fn design_net_audit(ctx: CallContext) -> Result<JsValue> {
+    let handle = handle(&ctx, 0)?;
+    let report = open_eda_model::net_audit(handle).map_err(fail)?;
+    respond(&ctx, &report)
+}
+
 /// Declares one design-level bus.
 #[function]
 fn design_add_bus(ctx: CallContext) -> Result<JsValue> {
@@ -1804,6 +1812,7 @@ register_module![
     design_list_components,
     design_list_nets,
     design_net_show,
+    design_net_audit,
     design_add_bus,
     design_update_bus,
     design_remove_bus,

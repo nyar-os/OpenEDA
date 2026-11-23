@@ -135,6 +135,23 @@ test('document core: edit, inspect, save/open round trip and projections', { ski
         );
         assert.deepEqual(connectivity.sheets[0]?.unconnectedPins, []);
 
+        const audit = await design.netAudit();
+        assert.equal(audit.report, 'open-eda-net-audit');
+        assert.equal(audit.status, 'warn');
+        assert.equal(audit.netCount, 2);
+        assert.equal(audit.pinCount, 4);
+        assert.equal(audit.wireCount, 1);
+        assert.equal(audit.totalLength, 30);
+        assert.deepEqual(
+            audit.nets.map((net) => `${net.name}:${net.nodes}:${net.wires}:${net.connected}`),
+            ['VCC:2:1:true', 'GND:2:0:true'],
+        );
+        assert.deepEqual(
+            audit.issues.map((issue) => issue.code),
+            ['net/no-wire'],
+        );
+        assert.equal((await eda.capabilities()).queries.netAudit, 'supported');
+
         const saved = await design.save({ target: document, overwrite: true });
         assert.ok(saved.bytes > 0);
         assert.ok(fs.readFileSync(document, 'utf8').includes('"open-eda-design"'));

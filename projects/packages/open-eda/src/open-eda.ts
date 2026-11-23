@@ -73,6 +73,7 @@ import type {
     MergeWireResult,
     MoveComponentInput,
     Net,
+    NetAuditReport,
     NetClass,
     NetClassInput,
     NetLabel,
@@ -871,6 +872,9 @@ function attach(opened: service.DesignHandle, options: AttachOptions): Design {
         },
         async netShow(name: string, options?: { readonly sheet?: string }): Promise<NetReport> {
             return service.netShow(handle, name, options?.sheet);
+        },
+        async netAudit(): Promise<NetAuditReport> {
+            return service.netAudit(handle);
         },
         async listComponents(options?: { readonly sheet?: string }): Promise<readonly Component[]> {
             return service.listComponents(handle, options?.sheet).components;

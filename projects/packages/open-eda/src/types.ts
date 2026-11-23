@@ -124,7 +124,7 @@ export interface DesignCapabilities {
         readonly annotate: SupportLevel;
     };
     /** Read-only queries that are not rule checks, such as the pin trace. */
-    readonly queries: { readonly trace: SupportLevel };
+    readonly queries: { readonly trace: SupportLevel; readonly netAudit: SupportLevel };
 }
 
 /** Options of `OpenEDA.create()`. */
@@ -508,6 +508,60 @@ export interface NetReport {
     readonly nodeCount: number;
     readonly bus: NetBusDetail | null;
     readonly netClass: NetClassDetail | null;
+}
+
+/** One declared net of `design.netAudit()`. */
+export interface NetAuditNet {
+    readonly name: string;
+    /** Declared net class that claims the name, or `null`. */
+    readonly class: string | null;
+    /** Declared `REF.PIN` nodes. */
+    readonly nodes: number;
+    /** Nodes that name a placed component pin. */
+    readonly pins: number;
+    /** Wire segments of the same sheet whose declared net is this name. */
+    readonly wires: number;
+    /** Net labels of the same sheet whose text is this name. */
+    readonly labels: number;
+    /** Junctions on this net; always `0` because the model does not associate them. */
+    readonly junctions: number;
+    /** Sum of the straight wire segment lengths, rounded to four decimals. */
+    readonly length: number;
+    /** True when the net has at least two nodes or some wire or label. */
+    readonly connected: boolean;
+}
+
+/** Warning codes of `design.netAudit()`. */
+export type NetAuditIssueCode = 'net/single-pin' | 'net/empty' | 'net/no-wire';
+
+/** One warning of `design.netAudit()`. */
+export interface NetAuditIssue {
+    readonly code: NetAuditIssueCode;
+    readonly severity: 'warning';
+    readonly net: string;
+    readonly sheet: SheetId;
+    readonly message: string;
+}
+
+/** Result of `design.netAudit()`, tagged `open-eda-net-audit`. */
+export interface NetAuditReport {
+    readonly report: 'open-eda-net-audit';
+    readonly version: number;
+    readonly revision: number;
+    /** Declared nets across every sheet. */
+    readonly netCount: number;
+    /** Declared net nodes across every sheet. */
+    readonly pinCount: number;
+    /** Wire segments that name a declared net. */
+    readonly wireCount: number;
+    /** Sum of the per-net lengths. */
+    readonly totalLength: number;
+    /** `warn` when the report has at least one issue, `pass` otherwise. */
+    readonly status: 'pass' | 'warn';
+    /** One entry per declared net in document order. */
+    readonly nets: readonly NetAuditNet[];
+    /** Warnings in net declaration order. */
+    readonly issues: readonly NetAuditIssue[];
 }
 
 /** One schematic junction (connection dot). */
@@ -1992,6 +2046,8 @@ export interface Design {
     componentReport(reference: string): Promise<ComponentReport>;
     /** Reports one declared net's nodes, wires, labels and matching bus and net class. */
     netShow(name: string, options?: { readonly sheet?: SheetId }): Promise<NetReport>;
+    /** Reports the read-only health of every declared net. */
+    netAudit(): Promise<NetAuditReport>;
     listComponents(options?: { readonly sheet?: SheetId }): Promise<readonly Component[]>;
     listNets(options?: { readonly sheet?: SheetId }): Promise<readonly Net[]>;
     close(): Promise<void>;

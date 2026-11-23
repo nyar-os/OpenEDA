@@ -67,6 +67,7 @@ import type {
     MergeWireResult,
     MoveComponentInput,
     Net,
+    NetAuditReport,
     NetClassInput,
     NetClassListResult,
     NetClassResult,
@@ -523,6 +524,11 @@ export function netShow(handle: number, name: string, sheet?: string): NetReport
     return decode<NetReport>(() =>
         sheet === undefined ? native.design_net_show(handle, name) : native.design_net_show(handle, name, sheet),
     );
+}
+
+/** Reports the per-net health of one open design, tagged `open-eda-net-audit`. */
+export function netAudit(handle: number): NetAuditReport {
+    return decode<NetAuditReport>(() => binding('design.netAudit').design_net_audit(handle));
 }
 
 /** Adds one component to an open design. */
