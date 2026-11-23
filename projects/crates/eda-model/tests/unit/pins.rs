@@ -282,6 +282,111 @@ fn pin_edits_persist_across_save_and_reopen() {
 }
 
 #[test]
+fn pin_swap_moves_net_nodes_and_no_connect_flags() {
+    let created = create(CreateRequest::default()).expect("create");
+    let handle = created["handle"].as_u64().expect("handle");
+    add_resistor(handle, "U1", &["1", "2", "3"], None);
+    connect_net(handle, ConnectNetRequest { sheet: None, net: "N1".to_string(), nodes: vec!["U1.1".to_string()] })
+        .expect("connect U1.1");
+    connect_net(handle, ConnectNetRequest { sheet: None, net: "N2".to_string(), nodes: vec!["U1.2".to_string()] })
+        .expect("connect U1.2");
+    add_no_connect(
+        handle,
+        AddNoConnectRequest {
+            sheet: None,
+            x: 40.0,
+            y: 30.0,
+            node: Some(Node { reference: "U1".to_string(), pin: "3".to_string() }),
+        },
+    )
+    .expect("flag U1.3");
+
+    let swapped = swap_pins(
+        handle,
+        SwapPinsRequest { sheet: None, reference: "U1".to_string(), pin_a: "1".to_string(), pin_b: "2".to_string() },
+    )
+    .expect("swap U1.1 and U1.2");
+    assert_eq!(swapped["changed"], true);
+    assert_eq!(swapped["pinA"], "1");
+    assert_eq!(swapped["pinB"], "2");
+    let nets = list_nets(handle, None).expect("nets");
+    assert_eq!(nets["nets"][0]["nodes"], json!([{ "ref": "U1", "pin": "2" }]), "N1 follows the swapped pin");
+    assert_eq!(nets["nets"][1]["nodes"], json!([{ "ref": "U1", "pin": "1" }]), "N2 follows the swapped pin");
+
+    let transferred = swap_pins(
+        handle,
+        SwapPinsRequest { sheet: None, reference: "U1".to_string(), pin_a: "2".to_string(), pin_b: "3".to_string() },
+    )
+    .expect("swap U1.2 and the flagged U1.3");
+    assert_eq!(transferred["changed"], true);
+    let nets = list_nets(handle, None).expect("nets after the second swap");
+    assert_eq!(nets["nets"][0]["nodes"], json!([{ "ref": "U1", "pin": "3" }]), "the connection transfers to the open pin");
+    let flags = list_no_connects(handle, None).expect("no-connects");
+    assert_eq!(flags["noConnects"][0]["node"], json!({ "ref": "U1", "pin": "2" }), "the flag follows the connection state");
+
+    undo(handle).expect("undo the second swap");
+    let restored = list_nets(handle, None).expect("nets after undo");
+    assert_eq!(restored["nets"][0]["nodes"], json!([{ "ref": "U1", "pin": "2" }]), "undo restores the node");
+    redo(handle).expect("redo the second swap");
+    let redone = list_nets(handle, None).expect("nets after redo");
+    assert_eq!(redone["nets"][0]["nodes"], json!([{ "ref": "U1", "pin": "3" }]), "redo replays the swap");
+    close(handle).expect("close");
+}
+
+#[test]
+fn pin_swap_validates_inputs_and_skips_unconnected_pairs() {
+    let created = create(CreateRequest::default()).expect("create");
+    let handle = created["handle"].as_u64().expect("handle");
+    add_resistor(handle, "R1", &["1", "2"], None);
+    let revision = summary(handle).expect("summary")["revision"].as_u64().expect("revision");
+
+    let noop = swap_pins(
+        handle,
+        SwapPinsRequest { sheet: None, reference: "R1".to_string(), pin_a: "1".to_string(), pin_b: "2".to_string() },
+    )
+    .expect("swap of two open pins");
+    assert_eq!(noop["changed"], false);
+    assert_eq!(noop["revision"], revision, "an unconnected swap adds no revision");
+
+    let same = swap_pins(
+        handle,
+        SwapPinsRequest { sheet: None, reference: "R1".to_string(), pin_a: "1".to_string(), pin_b: "1".to_string() },
+    )
+    .unwrap_err();
+    assert_eq!(same.code, "session/argument-invalid");
+    let empty = swap_pins(
+        handle,
+        SwapPinsRequest { sheet: None, reference: "R1".to_string(), pin_a: " ".to_string(), pin_b: "2".to_string() },
+    )
+    .unwrap_err();
+    assert_eq!(empty.code, "session/argument-invalid");
+    let missing_component = swap_pins(
+        handle,
+        SwapPinsRequest { sheet: None, reference: "R9".to_string(), pin_a: "1".to_string(), pin_b: "2".to_string() },
+    )
+    .unwrap_err();
+    assert_eq!(missing_component.code, "object/not-found");
+    let missing_pin = swap_pins(
+        handle,
+        SwapPinsRequest { sheet: None, reference: "R1".to_string(), pin_a: "1".to_string(), pin_b: "9".to_string() },
+    )
+    .unwrap_err();
+    assert_eq!(missing_pin.code, "pin/not-found");
+    let missing_sheet = swap_pins(
+        handle,
+        SwapPinsRequest {
+            sheet: Some("missing".to_string()),
+            reference: "R1".to_string(),
+            pin_a: "1".to_string(),
+            pin_b: "2".to_string(),
+        },
+    )
+    .unwrap_err();
+    assert_eq!(missing_sheet.code, "sheet/not-found");
+    close(handle).expect("close");
+}
+
+#[test]
 fn svg_projection_draws_pin_stubs_and_names() {
     let created = create(CreateRequest::default()).expect("create");
     let handle = created["handle"].as_u64().expect("handle");

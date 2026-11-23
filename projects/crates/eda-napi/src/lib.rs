@@ -27,8 +27,8 @@ use open_eda_model::{
     CopyComponentRequest, CreateRequest, DeleteNetRequest, DisconnectNetRequest, InspectOptions, MergeNetsRequest,
     MoveComponentRequest, NetClassRequest, ReferencePrefixRequest, RemoveComponentPropertyRequest, RemoveHierarchyPortRequest,
     RemovePinRequest, RenameNetRequest, RenamePinRequest, ServiceError, SetComponentPropertyRequest, SetFootprintRequest,
-    SetPinTypeRequest, SplitWireRequest, TranslateRequest, UpdateComponentRequest, UpdateDesignRequest, UpdateLabelRequest,
-    UpdateTextRequest, UpdateWireRequest,
+    SetPinTypeRequest, SplitWireRequest, SwapPinsRequest, TranslateRequest, UpdateComponentRequest, UpdateDesignRequest,
+    UpdateLabelRequest, UpdateTextRequest, UpdateWireRequest,
 };
 use serde_json::{Value, json};
 use wae::{
@@ -270,6 +270,15 @@ fn design_rename_pin(ctx: CallContext) -> Result<JsValue> {
     let handle = handle(&ctx, 0)?;
     let request: RenamePinRequest = decode(serde_json::from_str(&text(&ctx, 1)?))?;
     let report = open_eda_model::rename_pin(handle, request).map_err(fail)?;
+    respond(&ctx, &report)
+}
+
+/// Swaps the net connections of two pins of one placed component.
+#[function]
+fn design_swap_pins(ctx: CallContext) -> Result<JsValue> {
+    let handle = handle(&ctx, 0)?;
+    let request: SwapPinsRequest = decode(serde_json::from_str(&text(&ctx, 1)?))?;
+    let report = open_eda_model::swap_pins(handle, request).map_err(fail)?;
     respond(&ctx, &report)
 }
 
@@ -1750,6 +1759,7 @@ register_module![
     design_add_pin,
     design_remove_pin,
     design_rename_pin,
+    design_swap_pins,
     design_annotate,
     design_inspect,
     design_inspect_with,

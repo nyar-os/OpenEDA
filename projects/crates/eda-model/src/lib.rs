@@ -1149,6 +1149,21 @@ pub struct RenamePinRequest {
     pub to: String,
 }
 
+/// Request of [`swap_pins`].
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SwapPinsRequest {
+    /// Target sheet id or name; the first sheet is used when omitted.
+    #[serde(default)]
+    pub sheet: Option<String>,
+    /// Reference designator of the placed component.
+    pub reference: String,
+    /// First pin name as declared by the component.
+    pub pin_a: String,
+    /// Second pin name as declared by the component.
+    pub pin_b: String,
+}
+
 /// Request of [`rename_net`].
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1410,6 +1425,7 @@ pub fn capabilities() -> Value {
         "junctions": level("edit.junctions".to_string()),
         "noConnects": level("edit.noConnects".to_string()),
         "pins": level("edit.pins".to_string()),
+        "pinSwap": level("edit.pin-swap".to_string()),
         "annotate": level("edit.annotate".to_string()),
         "netRename": level("edit.net-rename".to_string()),
     });
@@ -1459,6 +1475,7 @@ fn capability_matrix() -> CapabilityMatrix {
     matrix.insert(Capability::new("edit.junctions", "edit", Support::Supported));
     matrix.insert(Capability::new("edit.noConnects", "edit", Support::Supported));
     matrix.insert(Capability::new("edit.pins", "edit", Support::Supported));
+    matrix.insert(Capability::new("edit.pin-swap", "edit", Support::Supported));
     matrix.insert(Capability::new("edit.annotate", "edit", Support::Supported));
     matrix.insert(Capability::new("edit.net-rename", "edit", Support::Supported));
     matrix.insert(Capability::new("query.component", "query", Support::Supported));
@@ -3007,6 +3024,90 @@ pub fn rename_pin(handle: u64, request: RenamePinRequest) -> Result<Value, Servi
         payload.insert("component".to_string(), json!(component));
         payload.insert("from".to_string(), json!(from));
         payload.insert("to".to_string(), json!(to));
+        Ok(payload)
+    })
+}
+
+/// Swaps the net connections of two pins of one placed component.
+///
+/// Each pin takes the other pin's connection: a net node that named `pin_a`
+/// is rewritten to `pin_b` and a node that named `pin_b` to `pin_a`, so when
+/// one pin is unconnected the connection of the other transfers to it.
+/// No-connect flags follow the same swap, so the deliberately-open marking
+/// moves with the connection state and the `erc` check keeps its verdict on
+/// the right pin. The component must be placed on the target sheet, both
+/// pins must be declared by it (`pin/not-found`) and the names must differ
+/// (`session/argument-invalid`). A swap where neither pin carries a net node
+/// or a no-connect flag is a no-op and adds no revision.
+pub fn swap_pins(handle: u64, request: SwapPinsRequest) -> Result<Value, ServiceError> {
+    let pin_a = request.pin_a.trim().to_string();
+    let pin_b = request.pin_b.trim().to_string();
+    if pin_a.is_empty() || pin_b.is_empty() {
+        return Err(ServiceError::new("session/argument-invalid", "pin names must not be empty"));
+    }
+    if pin_a == pin_b {
+        return Err(ServiceError::new("session/argument-invalid", "a pin cannot be swapped with itself"));
+    }
+    mutate(handle, |design| {
+        let index = sheet_index(design, request.sheet.as_deref())?;
+        let position =
+            design.sheets[index].components.iter().position(|component| component.reference == request.reference).ok_or_else(
+                || not_found(format!("no component with reference `{}` is placed on this sheet", request.reference)),
+            )?;
+        let component = &design.sheets[index].components[position];
+        if !component.pins.contains(&pin_a) {
+            return Err(ServiceError::new(
+                "pin/not-found",
+                format!("component `{}` declares no pin `{pin_a}`", request.reference),
+            ));
+        }
+        if !component.pins.contains(&pin_b) {
+            return Err(ServiceError::new(
+                "pin/not-found",
+                format!("component `{}` declares no pin `{pin_b}`", request.reference),
+            ));
+        }
+        let mut changed = false;
+        for sheet in &mut design.sheets {
+            for net in &mut sheet.nets {
+                for node in &mut net.nodes {
+                    if node.reference != request.reference {
+                        continue;
+                    }
+                    if node.pin == pin_a {
+                        node.pin = pin_b.clone();
+                        changed = true;
+                    }
+                    else if node.pin == pin_b {
+                        node.pin = pin_a.clone();
+                        changed = true;
+                    }
+                }
+            }
+            for flag in &mut sheet.no_connects {
+                if let Some(node) = &mut flag.node
+                    && node.reference == request.reference
+                {
+                    if node.pin == pin_a {
+                        node.pin = pin_b.clone();
+                        changed = true;
+                    }
+                    else if node.pin == pin_b {
+                        node.pin = pin_a.clone();
+                        changed = true;
+                    }
+                }
+            }
+        }
+        if changed {
+            design.revision += 1;
+        }
+        let component = design.sheets[index].components[position].clone();
+        let mut payload = Map::new();
+        payload.insert("component".to_string(), json!(component));
+        payload.insert("pinA".to_string(), json!(pin_a));
+        payload.insert("pinB".to_string(), json!(pin_b));
+        payload.insert("changed".to_string(), json!(changed));
         Ok(payload)
     })
 }

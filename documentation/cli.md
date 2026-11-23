@@ -66,6 +66,7 @@ the document and never opens a child document.
 | `open-eda component pin add <file> --ref <ref> --pin <pin> [--sheet <id>]` | Add a pin to a placed component |
 | `open-eda component pin remove <file> --ref <ref> --pin <pin> [--sheet <id>]` | Remove an unreferenced pin |
 | `open-eda component pin rename <file> --ref <ref> --from <pin> --to <pin> [--sheet <id>]` | Rename a pin; net and no-connect nodes follow |
+| `open-eda component pin swap <file> --ref <ref> --pin-a <pin> --pin-b <pin> [--sheet <id>]` | Swap the net connections of two pins; each pin takes the other pin's connection |
 | `open-eda component property-set <file> --ref <ref> --key <key> --value <text> [--sheet <id>]` | Set a custom property |
 | `open-eda component property-list <file> --ref <ref> [--sheet <id>]` | List custom properties |
 | `open-eda component property-remove <file> --ref <ref> --key <key> [--sheet <id>]` | Remove a custom property |

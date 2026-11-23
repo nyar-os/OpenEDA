@@ -22,6 +22,7 @@ export interface NativeBinding {
     design_add_pin(handle: number, requestJson: string): string;
     design_remove_pin(handle: number, requestJson: string): string;
     design_rename_pin(handle: number, requestJson: string): string;
+    design_swap_pins(handle: number, requestJson: string): string;
     design_annotate(handle: number): string;
     design_inspect(handle: number, checksJson?: string): string;
     design_inspect_with(handle: number, optionsJson: string): string;

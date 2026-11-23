@@ -1177,6 +1177,30 @@ export interface RenamePinInput {
     readonly to: string;
 }
 
+/** Input of `design.swapPins()`; the two pins exchange their net connections. */
+export interface SwapPinsInput {
+    readonly sheet?: SheetId;
+    readonly reference: string;
+    /** First pin name. */
+    readonly pinA: string;
+    /** Second pin name. */
+    readonly pinB: string;
+}
+
+/** Result of `design.swapPins()`. */
+export interface SwapPinsResult {
+    readonly revision: number;
+    readonly design: DesignSummary;
+    readonly canUndo: boolean;
+    readonly canRedo: boolean;
+    /** The component whose pins were swapped; its declaration list is unchanged. */
+    readonly component: Component;
+    readonly pinA: string;
+    readonly pinB: string;
+    /** `false` when neither pin carried a net node or no-connect flag; no revision was added. */
+    readonly changed: boolean;
+}
+
 /** Input of `design.moveComponent()`. */
 export interface MoveComponentInput {
     readonly sheet?: SheetId;
@@ -1771,6 +1795,8 @@ export interface Design {
     removePin(input: RemovePinInput): Promise<Component>;
     /** Renames one pin; every net node and no-connect flag that named it follows. */
     renamePin(input: RenamePinInput): Promise<Component>;
+    /** Swaps the net connections of two pins of one component; each pin takes the other pin's connection. */
+    swapPins(input: SwapPinsInput): Promise<SwapPinsResult>;
     /** Renumbers every reference designator by sheet and placement order; net nodes follow. */
     annotate(): Promise<AnnotateResult>;
     /** Restores the snapshot taken before the newest edit. */

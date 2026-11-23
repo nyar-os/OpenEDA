@@ -75,6 +75,7 @@ fn capability_matrix_reports_only_the_implemented_entries() {
     assert_eq!(matrix["edits"]["junctions"], "supported");
     assert_eq!(matrix["edits"]["noConnects"], "supported");
     assert_eq!(matrix["edits"]["pins"], "supported");
+    assert_eq!(matrix["edits"]["pinSwap"], "supported");
     assert_eq!(matrix["edits"]["annotate"], "supported");
     assert_eq!(matrix["edits"]["netRename"], "supported");
     assert_eq!(matrix["queries"]["component"], "supported");

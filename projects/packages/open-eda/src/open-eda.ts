@@ -101,6 +101,8 @@ import type {
     SheetListResult,
     SplitWireInput,
     SplitWireResult,
+    SwapPinsInput,
+    SwapPinsResult,
     SymbolLibraryResult,
     TextInput,
     TextLabel,
@@ -488,6 +490,20 @@ function attach(opened: service.DesignHandle, options: AttachOptions): Design {
             const result = await mutate(() => service.renamePin(handle, input));
             current = result.design;
             return result.component;
+        },
+        async swapPins(input: SwapPinsInput): Promise<SwapPinsResult> {
+            const result = await mutate(() => service.swapPins(handle, input));
+            current = result.design;
+            return {
+                revision: result.revision,
+                design: result.design,
+                canUndo: result.canUndo,
+                canRedo: result.canRedo,
+                component: result.component,
+                pinA: result.pinA,
+                pinB: result.pinB,
+                changed: result.changed,
+            };
         },
         async annotate(): Promise<AnnotateResult> {
             const result = await mutate(() => service.annotate(handle));

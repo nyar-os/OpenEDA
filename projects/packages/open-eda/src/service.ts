@@ -93,6 +93,8 @@ import type {
     SheetListResult,
     SplitWireInput,
     SplitWireResult,
+    SwapPinsInput,
+    SwapPinsResult,
     SymbolLibraryResult,
     TextInput,
     TextLabel,
@@ -369,6 +371,16 @@ export function renamePin(handle: number, input: RenamePinInput): ComponentResul
         binding('design.renamePin').design_rename_pin(
             handle,
             JSON.stringify({ sheet: input.sheet, reference: input.reference, from: input.from, to: input.to }),
+        ),
+    );
+}
+
+/** Swaps the net connections of two pins of one placed component. */
+export function swapPins(handle: number, input: SwapPinsInput): SwapPinsResult {
+    return decode<SwapPinsResult>(() =>
+        binding('design.swapPins').design_swap_pins(
+            handle,
+            JSON.stringify({ sheet: input.sheet, reference: input.reference, pinA: input.pinA, pinB: input.pinB }),
         ),
     );
 }

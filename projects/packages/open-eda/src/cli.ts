@@ -1187,6 +1187,48 @@ pinCommand
         return 0;
     });
 
+pinCommand
+    .command('swap', 'cli.cmd.component-pin-swap')
+    .option('--ref <ref>', 'cli.opt.ref')
+    .option('--pin-a <pin>', 'cli.opt.pin-a')
+    .option('--pin-b <pin>', 'cli.opt.pin-b')
+    .option('--sheet <sheet>', 'cli.opt.sheet')
+    .actionCtx(async (options, _args, ctx) => {
+        const file = input(options);
+        if (file === undefined) {
+            ctx.fail('open-eda.cli.file-required', { message: 'a design document is required' });
+            return 2;
+        }
+        const reference = text(options, 'ref');
+        const pinA = text(options, 'pin-a');
+        const pinB = text(options, 'pin-b');
+        if (
+            reference === undefined ||
+            reference.trim().length === 0 ||
+            pinA === undefined ||
+            pinA.trim().length === 0 ||
+            pinB === undefined ||
+            pinB.trim().length === 0
+        ) {
+            ctx.fail('open-eda.cli.arguments-invalid', { message: '`--ref`, `--pin-a` and `--pin-b` are required' });
+            return 2;
+        }
+        const { result, saved } = await withDesign(file, async (design) => {
+            const result = await design.swapPins({
+                sheet: text(options, 'sheet'),
+                reference,
+                pinA,
+                pinB,
+            });
+            return { result, saved: await savedReport(design) };
+        });
+        ctx.emitResult(
+            { ...saved, revision: saved.revision, swap: result },
+            `swapped pins ${reference}.${pinA} and ${reference}.${pinB} in ${file} revision=${saved.revision}`,
+        );
+        return 0;
+    });
+
 componentCommand
     .command('delete', 'cli.cmd.component-delete')
     .option('--ref <ref>', 'cli.opt.ref')
