@@ -44,6 +44,8 @@ fn capability_matrix_reports_only_the_implemented_entries() {
         assert_eq!(matrix["formats"][format]["lossCodes"], expected_losses, "format {format}");
     }
     assert_eq!(matrix["checks"]["erc"], "supported");
+    assert_eq!(matrix["checks"]["electrical"], "supported");
+    assert_eq!(matrix["checks"]["drivers"], "supported");
     assert_eq!(matrix["checks"]["bus"], "supported");
     assert_eq!(matrix["checks"]["nets"], "supported");
     assert_eq!(matrix["checks"]["connectivity"], "supported");
@@ -2341,6 +2343,85 @@ fn electrical_pin_types_report_conflicts_and_unpowered_inputs() {
 }
 
 #[test]
+fn drivers_check_reports_undriven_inputs_and_open_power_pins() {
+    let created = create(CreateRequest::default()).expect("create");
+    let handle = created["handle"].as_u64().expect("handle");
+    let add = |reference: &str, x: f64| {
+        add_component(
+            handle,
+            AddComponentRequest {
+                sheet: None,
+                reference: reference.to_string(),
+                value: "gate".to_string(),
+                x,
+                y: 0.0,
+                rotation: 0.0,
+                pins: vec!["1".to_string(), "2".to_string()],
+            },
+        )
+        .expect("add component")
+    };
+    add("U1", 0.0);
+    add("U2", 20.0);
+    connect_net(
+        handle,
+        ConnectNetRequest { sheet: None, net: "SIGNAL".to_string(), nodes: vec!["U1.1".to_string(), "U2.1".to_string()] },
+    )
+    .expect("connect signal");
+    connect_net(
+        handle,
+        ConnectNetRequest { sheet: None, net: "VCC".to_string(), nodes: vec!["U1.2".to_string(), "U2.2".to_string()] },
+    )
+    .expect("connect rail");
+    let set = |reference: &str, pin: &str, pin_type: Option<PinType>| {
+        set_pin_type(
+            handle,
+            SetPinTypeRequest { sheet: None, reference: reference.to_string(), pin: pin.to_string(), pin_type },
+        )
+        .expect("set pin type")
+    };
+    let codes = || {
+        inspect_with_options(handle, InspectOptions { checks: Some(vec!["drivers".to_string()]), ..InspectOptions::default() })
+            .expect("inspect")["issues"]
+            .as_array()
+            .expect("issues")
+            .iter()
+            .map(|issue| issue["code"].as_str().unwrap_or("").to_string())
+            .collect::<Vec<_>>()
+    };
+
+    set("U1", "1", Some(PinType::Input));
+    set("U1", "2", Some(PinType::PowerIn));
+    let undriven = codes();
+    assert!(undriven.iter().any(|code| code == "erc/undriven-input"), "{undriven:?}");
+    assert!(!undriven.iter().any(|code| code == "erc/unconnected-power-pin"), "the power pin reaches VCC");
+
+    set("U2", "1", Some(PinType::Output));
+    assert!(!codes().iter().any(|code| code == "erc/undriven-input"), "an output drives SIGNAL");
+
+    add("U3", 40.0);
+    set("U3", "1", Some(PinType::PowerIn));
+    assert!(codes().iter().any(|code| code == "erc/unconnected-power-pin"));
+
+    add_no_connect(
+        handle,
+        AddNoConnectRequest {
+            sheet: None,
+            x: 40.0,
+            y: 0.0,
+            node: Some(Node { reference: "U3".to_string(), pin: "1".to_string() }),
+        },
+    )
+    .expect("add no-connect");
+    assert!(!codes().iter().any(|code| code == "erc/unconnected-power-pin"), "the flag marks the pin open");
+
+    set("U2", "1", None);
+    let passive_only = codes();
+    assert!(passive_only.iter().any(|code| code == "erc/undriven-input"), "an untyped driver does not count");
+    close(handle).expect("close");
+}
+
+#[test]
 fn drawing_properties_are_edited_and_written_to_the_title_block() {
     let dir = TempDir::new("properties");
     let document = dir.join("title.oeda");
@@ -2779,6 +2860,73 @@ fn kicad_symbol_library_rejects_other_documents() {
     let report = import_kicad_symbol("(kicad_symbol_lib (version 20211014))").expect("empty library");
     assert_eq!(report["totals"], json!({ "symbols": 0, "pins": 0 }));
     assert_eq!(report["losses"], json!([]));
+}
+
+#[test]
+fn kicad_symbol_library_check_reports_duplicates_and_nameless_pins() {
+    let text = "\
+(kicad_symbol_lib (version 20211014) (generator kicad_symbol_editor)
+  (symbol \"AMP\"
+    (symbol \"AMP_1_1\"
+      (pin input line (at 0 0 0) (length 2.54)
+        (name \"+\" (effects (font (size 1.27 1.27))))
+        (number \"1\" (effects (font (size 1.27 1.27)))))
+      (pin input line (at 0 0 0) (length 2.54)
+        (name \"-\" (effects (font (size 1.27 1.27))))
+        (number \"1\" (effects (font (size 1.27 1.27)))))
+      (pin passive line (at 0 0 0) (length 2.54)
+        (name \"\" (effects (font (size 1.27 1.27))))
+        (number \"3\" (effects (font (size 1.27 1.27)))))))
+  (symbol \"AMP\"
+    (symbol \"AMP_1_1\"
+      (pin input line (at 0 0 0) (length 2.54)
+        (name \"A\" (effects (font (size 1.27 1.27))))
+        (number \"1\" (effects (font (size 1.27 1.27)))))))
+  (symbol \"EMPTY\")
+)
+";
+    let report = check_kicad_symbol(text).expect("check kicad_sym");
+    assert_eq!(report["format"], "open-eda-library-check");
+    assert_eq!(report["version"], 1);
+    assert_eq!(report["symbols"], 3);
+    assert_eq!(report["pins"], 4);
+    assert_eq!(report["passed"], false);
+    let findings = report["findings"].as_array().expect("findings");
+    let codes = findings.iter().map(|finding| finding["code"].as_str().unwrap_or("")).collect::<Vec<_>>();
+    assert_eq!(
+        codes,
+        vec![
+            "library/duplicate-pin-number",
+            "library/pin-without-name",
+            "library/duplicate-symbol",
+            "library/symbol-without-pins",
+        ]
+    );
+    assert_eq!(findings[0]["severity"], "error");
+    assert_eq!(findings[0]["symbol"], "AMP");
+    assert_eq!(findings[0]["pin"], "1");
+    assert_eq!(findings[0]["unit"], 1);
+    assert_eq!(findings[1]["severity"], "warning");
+    assert_eq!(findings[1]["pin"], "3");
+    assert_eq!(findings[2]["pin"], Value::Null);
+    assert_eq!(findings[3]["symbol"], "EMPTY");
+
+    let clean = "\
+(kicad_symbol_lib (version 20211014) (generator kicad_symbol_editor)
+  (symbol \"R\"
+    (symbol \"R_1_1\"
+      (pin passive line (at 0 0 0) (length 2.54)
+        (name \"~\" (effects (font (size 1.27 1.27))))
+        (number \"1\" (effects (font (size 1.27 1.27)))))
+      (pin passive line (at 0 0 0) (length 2.54)
+        (name \"~\" (effects (font (size 1.27 1.27))))
+        (number \"2\" (effects (font (size 1.27 1.27)))))))
+)
+";
+    let passed = check_kicad_symbol(clean).expect("check clean library");
+    assert_eq!(passed["passed"], true);
+    assert_eq!(passed["findings"], json!([]));
+    assert_eq!(check_kicad_symbol("(kicad_sch (version 1))").unwrap_err().code, "format/invalid");
 }
 
 fn wire(handle: u64, net: Option<&str>, from: [f64; 2], to: [f64; 2]) {

@@ -45,11 +45,11 @@ pub const DESIGN_FORMATS: &[&str] =
 
 /// Rule checks declared by the studio inspector.
 const INSPECT_CHECKS: &[&str] =
-    &["erc", "electrical", "bus", "drc", "nets", "connectivity", "footprints", "clearance", "power", "references"];
+    &["erc", "electrical", "drivers", "bus", "drc", "nets", "connectivity", "footprints", "clearance", "power", "references"];
 
 /// Rule checks this build actually runs.
 const SUPPORTED_CHECKS: &[&str] =
-    &["erc", "electrical", "bus", "nets", "connectivity", "footprints", "clearance", "power", "references"];
+    &["erc", "electrical", "drivers", "bus", "nets", "connectivity", "footprints", "clearance", "power", "references"];
 
 /// Render targets declared for preview surfaces.
 const RENDER_FORMATS: &[&str] = &["svg", "png", "pdf"];
@@ -1371,7 +1371,10 @@ pub struct Waiver {
 /// declared net would be written twice as a bus member, and
 /// `net-bus-alias-collision` when two nets on one sheet resolve to the same bus
 /// through an alias. The JSON keys of this
-/// report are unchanged.
+/// report are unchanged. The `drivers` check reads typed pins only and reports
+/// `erc/undriven-input` for a net whose inputs no driving pin reaches, and
+/// `erc/unconnected-power-pin` for a typed power input that no net and no
+/// no-connect flag covers.
 ///
 /// Junctions and no-connect flags are editable, not read-only: the matrix
 /// reports `edits.junctions` and `edits.noConnects` as `supported` because
@@ -5121,6 +5124,19 @@ pub fn import_kicad_symbol(text: &str) -> Result<Value, ServiceError> {
     kicad::import_symbol_library(text)
 }
 
+/// Validates one KiCad `.kicad_sym` symbol library.
+///
+/// The check reads the same declaration subset [`import_kicad_symbol`] reads and
+/// never writes a file. It reports `library/duplicate-symbol`,
+/// `library/symbol-without-pins`, `library/duplicate-pin-number` and
+/// `library/pin-without-name` with the symbol, pin number and unit each finding
+/// concerns, and returns the reader's `kicad_sym/unsupported-element` losses next
+/// to the findings. `passed` is false only when a finding is an error, so an
+/// unsupported construct that the reader skipped does not fail the check.
+pub fn check_kicad_symbol(text: &str) -> Result<Value, ServiceError> {
+    kicad::check_symbol_library(text)
+}
+
 /// Renders one sheet of an open design for a read-only preview.
 ///
 /// Only `svg` is a preview projection; `png` and `pdf` stay export targets, so
@@ -6021,6 +6037,83 @@ fn inspect_design(design: &Design, checks: &[String]) -> Vec<Value> {
                             power_inputs.len()
                         ),
                     ));
+                }
+            }
+        }
+    }
+    if checks.iter().any(|check| check == "drivers") {
+        // Only typed pins carry a direction, so an untyped pin is never counted
+        // as a driver or as a load. A driving pin sources or sinks the net: an
+        // output, a bidirectional, tri-state or open-collector/emitter pin, and
+        // a power output. An input that no driver reaches is an undriven input.
+        for sheet in &design.sheets {
+            let mut open_pins: HashSet<(&str, &str)> = HashSet::new();
+            for flag in &sheet.no_connects {
+                if let Some(node) = &flag.node {
+                    open_pins.insert((node.reference.as_str(), node.pin.as_str()));
+                }
+            }
+            for net in &sheet.nets {
+                let mut inputs = Vec::new();
+                let mut drivers = Vec::new();
+                for node in &net.nodes {
+                    let Some(component) = sheet.components.iter().find(|component| component.reference == node.reference)
+                    else {
+                        continue;
+                    };
+                    let Some(pin_type) = component.pin_types.get(&node.pin).copied()
+                    else {
+                        continue;
+                    };
+                    match pin_type {
+                        PinType::Input => inputs.push(format!("{}.{}", node.reference, node.pin)),
+                        PinType::Output
+                        | PinType::Bidirectional
+                        | PinType::TriState
+                        | PinType::PowerOut
+                        | PinType::OpenCollector
+                        | PinType::OpenEmitter => drivers.push(format!("{}.{}", node.reference, node.pin)),
+                        PinType::PowerIn | PinType::Passive | PinType::Unspecified => {}
+                    }
+                }
+                if !inputs.is_empty() && drivers.is_empty() {
+                    issues.push(issue(
+                        "erc/undriven-input",
+                        "error",
+                        design.revision,
+                        &sheet.id,
+                        &net.id,
+                        true,
+                        format!("net `{}` connects input pin(s) {} but no pin drives it", net.name, inputs.join(", ")),
+                    ));
+                }
+            }
+            // A power input that reaches no net is open. A no-connect flag that
+            // names the pin makes that deliberate, so only an unmarked pin is
+            // reported.
+            for component in &sheet.components {
+                for (pin, pin_type) in &component.pin_types {
+                    if *pin_type != PinType::PowerIn {
+                        continue;
+                    }
+                    let connected = sheet
+                        .nets
+                        .iter()
+                        .any(|net| net.nodes.iter().any(|node| node.reference == component.reference && node.pin == *pin));
+                    if !connected && !open_pins.contains(&(component.reference.as_str(), pin.as_str())) {
+                        issues.push(issue(
+                            "erc/unconnected-power-pin",
+                            "error",
+                            design.revision,
+                            &sheet.id,
+                            &component.id,
+                            true,
+                            format!(
+                                "power-input pin `{pin}` of component `{}` is not connected to any net",
+                                component.reference
+                            ),
+                        ));
+                    }
                 }
             }
         }

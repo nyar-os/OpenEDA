@@ -1163,6 +1163,11 @@ pub(crate) fn render_symbol_library(design: &Design) -> String {
     out
 }
 
+/// Tag written into the deterministic symbol library check report.
+pub(crate) const LIBRARY_CHECK_FORMAT: &str = "open-eda-library-check";
+/// Version written into the symbol library check report.
+pub(crate) const LIBRARY_CHECK_VERSION: u64 = 1;
+
 /// Reads a KiCad 6/7 symbol library and reports the symbols it declares.
 ///
 /// Only the declaration is read: each symbol reports its name, unit count and
@@ -1203,6 +1208,99 @@ pub(crate) fn import_symbol_library(text: &str) -> Result<Value, ServiceError> {
         "totals": { "symbols": symbol_count, "pins": total_pins },
         "losses": losses,
     }))
+}
+
+/// Reads a KiCad 6/7 symbol library and validates its declarations.
+///
+/// The check reads the same subset [`import_symbol_library`] reads and never
+/// writes a file. It reports `library/duplicate-symbol` when two symbols share
+/// a name, `library/symbol-without-pins` when a symbol declares no pin,
+/// `library/duplicate-pin-number` when one unit declares a pin number twice and
+/// `library/pin-without-name` when a pin carries an empty name. Symbols and
+/// pins keep their declaration order, so one library always produces the same
+/// report. `passed` is false only when a finding is an error; the
+/// `kicad_sym/unsupported-element` losses of the reader are returned next to
+/// the findings and never fail the check on their own.
+pub(crate) fn check_symbol_library(text: &str) -> Result<Value, ServiceError> {
+    let imported = import_symbol_library(text)?;
+    let empty = Vec::new();
+    let symbols = imported["symbols"].as_array().unwrap_or(&empty);
+    let mut findings = Vec::new();
+    let mut seen_symbols = HashSet::new();
+    let mut pin_count = 0usize;
+    for symbol in symbols {
+        let name = symbol["name"].as_str().unwrap_or("");
+        if !seen_symbols.insert(name) {
+            findings.push(library_finding(
+                "library/duplicate-symbol",
+                "error",
+                name,
+                None,
+                None,
+                format!("symbol `{name}` is declared more than once"),
+            ));
+        }
+        let pins = symbol["pins"].as_array().unwrap_or(&empty);
+        if pins.is_empty() {
+            findings.push(library_finding(
+                "library/symbol-without-pins",
+                "warning",
+                name,
+                None,
+                None,
+                format!("symbol `{name}` declares no pin"),
+            ));
+        }
+        let mut seen_numbers: HashSet<(u64, &str)> = HashSet::new();
+        for pin in pins {
+            pin_count += 1;
+            let number = pin["number"].as_str().unwrap_or("");
+            let unit = pin["unit"].as_u64().unwrap_or(1);
+            if !seen_numbers.insert((unit, number)) {
+                findings.push(library_finding(
+                    "library/duplicate-pin-number",
+                    "error",
+                    name,
+                    Some(number),
+                    Some(unit),
+                    format!("symbol `{name}` declares pin number `{number}` twice in unit {unit}"),
+                ));
+            }
+            if pin["name"].as_str().unwrap_or("").trim().is_empty() {
+                findings.push(library_finding(
+                    "library/pin-without-name",
+                    "warning",
+                    name,
+                    Some(number),
+                    Some(unit),
+                    format!("pin `{number}` of symbol `{name}` has no name"),
+                ));
+            }
+        }
+    }
+    let passed = !findings.iter().any(|finding| finding["severity"] == "error");
+    Ok(json!({
+        "kind": "kicad_sym",
+        "format": LIBRARY_CHECK_FORMAT,
+        "version": LIBRARY_CHECK_VERSION,
+        "symbols": imported["totals"]["symbols"].as_u64().unwrap_or(0),
+        "pins": pin_count,
+        "findings": findings,
+        "passed": passed,
+        "losses": imported["losses"],
+    }))
+}
+
+/// One finding of [`check_symbol_library`].
+fn library_finding(code: &str, severity: &str, symbol: &str, pin: Option<&str>, unit: Option<u64>, detail: String) -> Value {
+    json!({
+        "code": code,
+        "severity": severity,
+        "symbol": symbol,
+        "pin": pin,
+        "unit": unit,
+        "detail": detail,
+    })
 }
 
 /// Reads one top-level library symbol and the pins of every nested unit symbol.
