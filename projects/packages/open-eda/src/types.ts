@@ -66,6 +66,7 @@ export type InspectCheck =
     | 'drc'
     | 'nets'
     | 'connectivity'
+    | 'dangling'
     | 'footprints'
     | 'clearance'
     | 'power'
@@ -1384,6 +1385,12 @@ export interface InspectIssue {
     readonly objectId?: ObjectId;
     readonly recoverable: boolean;
     readonly message: string;
+    /** Dangling-endpoint findings only: 0 is the wire `from` point, 1 is `to`. */
+    readonly endpoint?: number;
+    /** Dangling-endpoint findings only: endpoint X coordinate in design units. */
+    readonly x?: number;
+    /** Dangling-endpoint findings only: endpoint Y coordinate in design units. */
+    readonly y?: number;
     /** True only on findings returned in `InspectReport.waived`. */
     readonly waived?: boolean;
 }

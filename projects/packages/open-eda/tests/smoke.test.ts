@@ -510,6 +510,38 @@ test('drivers check reports undriven inputs and open power pins', { skip: withou
     }
 });
 
+test('dangling check reports unattached wire endpoints', { skip: withoutAddon }, async () => {
+    const eda = new OpenEDA();
+    try {
+        const design = await eda.create({ title: 'Dangling' });
+        await design.addWire({ net: 'SIG', from: [0, 0], to: [10, 0] });
+
+        const floating = await design.inspect({ checks: ['dangling'] });
+        assert.deepEqual(
+            floating.issues.map((issue) => [issue.code, issue.objectId, issue.endpoint, issue.x, issue.y]),
+            [
+                ['wire/dangling-endpoint', 'wire-1', 0, 0, 0],
+                ['wire/dangling-endpoint', 'wire-1', 1, 10, 0],
+            ],
+        );
+        assert.ok(floating.issues.every((issue) => issue.severity === 'warning'));
+        assert.equal(floating.passed, true);
+
+        await design.addJunction({ x: 0, y: 0 });
+        const attached = await design.inspect({ checks: ['dangling'] });
+        assert.deepEqual(
+            attached.issues.map((issue) => issue.endpoint),
+            [1],
+        );
+
+        await design.addComponent({ reference: 'R1', value: '10k', x: 10, y: 0, pins: ['1'] });
+        assert.deepEqual((await design.inspect({ checks: ['dangling'] })).issues, []);
+        await design.close();
+    } finally {
+        await eda.dispose();
+    }
+});
+
 test('component custom properties persist and stay addressable', { skip: withoutAddon }, async () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'open-eda-component-properties-'));
     const document = path.join(directory, 'properties.oeda');
