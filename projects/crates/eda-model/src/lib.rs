@@ -16,6 +16,7 @@
 #![deny(missing_docs)]
 
 mod connectivity;
+mod dangling;
 mod diff;
 mod kicad;
 mod net_audit;
@@ -56,6 +57,7 @@ const INSPECT_CHECKS: &[&str] = &[
     "drc",
     "nets",
     "connectivity",
+    "dangling",
     "footprints",
     "clearance",
     "power",
@@ -71,6 +73,7 @@ const SUPPORTED_CHECKS: &[&str] = &[
     "bus",
     "nets",
     "connectivity",
+    "dangling",
     "footprints",
     "clearance",
     "power",
@@ -5750,6 +5753,10 @@ fn bus_claims_net(bus: &Bus, name: &str) -> bool {
 
 fn inspect_design(design: &Design, checks: &[String]) -> Vec<Value> {
     let mut issues = CheckReport::new();
+    // Dangling endpoints keep the required sheet, wire and endpoint order, so
+    // they are appended after the shared report normalisation instead of being
+    // re-sorted by code and message.
+    let mut appended = Vec::new();
     if checks.iter().any(|check| check == "erc") {
         let mut seen = HashSet::new();
         for sheet in &design.sheets {
@@ -6474,6 +6481,26 @@ fn inspect_design(design: &Design, checks: &[String]) -> Vec<Value> {
             }
         }
     }
+    if checks.iter().any(|check| check == "dangling") {
+        for (index, sheet) in design.sheets.iter().enumerate() {
+            for finding in dangling::findings(design, index) {
+                appended.push(issue_json(
+                    &issue(
+                        dangling::DANGLING_ENDPOINT,
+                        "warning",
+                        design.revision,
+                        &sheet.id,
+                        &finding.wire_id,
+                        true,
+                        finding.message,
+                    )
+                    .with_detail("endpoint", finding.endpoint.to_string())
+                    .with_detail("x", finding.x.to_string())
+                    .with_detail("y", finding.y.to_string()),
+                ));
+            }
+        }
+    }
     if checks.iter().any(|check| check == "power") {
         let mut rails: BTreeMap<String, Vec<(&str, &str)>> = BTreeMap::new();
         for sheet in &design.sheets {
@@ -6612,7 +6639,9 @@ fn inspect_design(design: &Design, checks: &[String]) -> Vec<Value> {
         }
     }
     issues.normalize();
-    issues.issues.iter().map(issue_json).collect()
+    let mut values: Vec<Value> = issues.issues.iter().map(issue_json).collect();
+    values.extend(appended);
+    values
 }
 
 /// Whether a net name is a power rail, matched case-insensitively by prefix.
@@ -6650,8 +6679,11 @@ fn severity_of(severity: &str) -> Severity {
 }
 
 /// Projects one shared issue back to the report JSON the surfaces already read.
+///
+/// `endpoint`, `x` and `y` appear only on findings that carry them, such as the
+/// dangling-endpoint check; the other findings keep the same shape as before.
 fn issue_json(issue: &Issue) -> Value {
-    json!({
+    let mut value = json!({
         "code": issue.code,
         "severity": issue.severity.as_str(),
         "revision": issue.details.get("revision").and_then(|value| value.parse::<u64>().ok()).unwrap_or(0),
@@ -6659,7 +6691,20 @@ fn issue_json(issue: &Issue) -> Value {
         "objectId": issue.details.get("objectId"),
         "recoverable": issue.details.get("recoverable").is_some_and(|value| value == "true"),
         "message": issue.message,
-    })
+    });
+    let Some(map) = value.as_object_mut()
+    else {
+        return value;
+    };
+    if let Some(endpoint) = issue.details.get("endpoint").and_then(|value| value.parse::<u64>().ok()) {
+        map.insert("endpoint".to_string(), json!(endpoint));
+    }
+    for key in ["x", "y"] {
+        if let Some(number) = issue.details.get(key).and_then(|value| value.parse::<f64>().ok()) {
+            map.insert(key.to_string(), json!(number));
+        }
+    }
+    value
 }
 
 /// Lists the symbol library a design actually uses.
@@ -9117,3 +9162,7 @@ mod net_rename_tests;
 #[cfg(test)]
 #[path = "../tests/unit/net_audit.rs"]
 mod net_audit_tests;
+
+#[cfg(test)]
+#[path = "../tests/unit/dangling.rs"]
+mod dangling_tests;
