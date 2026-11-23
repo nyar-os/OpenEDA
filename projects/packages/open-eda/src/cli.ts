@@ -33,6 +33,7 @@ import type {
     InspectReport,
     InspectSeverity,
     InspectWaiver,
+    KicadSymbolCheckResult,
     KicadSymbolImportResult,
     PinType,
     PortDirection,
@@ -276,11 +277,29 @@ function describeSymbols(library: SymbolLibraryResult): string {
     return lines.join('\n');
 }
 
-function describeKicadSymbolLibrary(library: KicadSymbolImportResult): string {
+function describeKicadSymbolLibrary(library: KicadSymbolImportResult, pins = false): string {
     const totals = library.totals;
     const lines = [`kicad_sym symbols=${totals.symbols} pins=${totals.pins} losses=${library.losses.length}`];
     for (const symbol of library.symbols) {
         lines.push(`  ${symbol.name} units=${symbol.unitCount} pins=${symbol.pins.length}`);
+        if (pins) {
+            for (const pin of symbol.pins) {
+                const name = pin.name.length > 0 ? pin.name : '(unnamed)';
+                lines.push(`    unit ${pin.unit} pin ${pin.number} ${name} ${pin.type}`);
+            }
+        }
+    }
+    return lines.join('\n');
+}
+
+function describeLibraryCheck(report: KicadSymbolCheckResult): string {
+    const lines = [
+        `library-check symbols=${report.symbols} pins=${report.pins} findings=${report.findings.length} passed=${report.passed} losses=${report.losses.length}`,
+    ];
+    for (const finding of report.findings) {
+        const pin = finding.pin === null ? '' : ` pin=${finding.pin}`;
+        const unit = finding.unit === null ? '' : ` unit=${finding.unit}`;
+        lines.push(`  ${finding.severity} ${finding.code} ${finding.symbol}${pin}${unit}: ${finding.detail}`);
     }
     return lines.join('\n');
 }
@@ -556,15 +575,29 @@ cli.command('symbols', 'cli.cmd.symbols').actionCtx(async (options, _args, ctx) 
     return 0;
 });
 
-cli.command('library', 'cli.cmd.library').actionCtx(async (options, _args, ctx) => {
+cli
+    .command('library', 'cli.cmd.library')
+    .option('--pins', 'cli.opt.library-pins')
+    .actionCtx(async (options, _args, ctx) => {
+        const file = input(options);
+        if (file === undefined) {
+            ctx.fail('open-eda.cli.file-required', { message: 'a KiCad symbol library is required' });
+            return 2;
+        }
+        const report = await app.importKicadSymbol(file);
+        ctx.emitResult(report, describeKicadSymbolLibrary(report, flag(options, 'pins')));
+        return 0;
+    });
+
+cli.command('library-check', 'cli.cmd.library-check').actionCtx(async (options, _args, ctx) => {
     const file = input(options);
     if (file === undefined) {
         ctx.fail('open-eda.cli.file-required', { message: 'a KiCad symbol library is required' });
         return 2;
     }
-    const report = await app.importKicadSymbol(file);
-    ctx.emitResult(report, describeKicadSymbolLibrary(report));
-    return 0;
+    const report = await app.checkKicadSymbol(file);
+    ctx.emitResult(report, describeLibraryCheck(report));
+    return report.passed ? 0 : 1;
 });
 
 cli.command('connectivity', 'cli.cmd.connectivity').actionCtx(async (options, _args, ctx) => {

@@ -421,6 +421,32 @@ test('pin electrical types drive the electrical check', { skip: withoutAddon }, 
     }
 });
 
+test('drivers check reports undriven inputs and open power pins', { skip: withoutAddon }, async () => {
+    const eda = new OpenEDA();
+    try {
+        const design = await eda.create({ title: 'Drivers' });
+        await design.addComponent({ reference: 'U1', value: 'gate', x: 0, y: 0, pins: ['1', '2'] });
+        await design.addComponent({ reference: 'U2', value: 'gate', x: 20, y: 0, pins: ['1', '2'] });
+        await design.connectNet({ net: 'SIGNAL', nodes: ['U1.1', 'U2.1'] });
+        await design.connectNet({ net: 'VCC', nodes: ['U1.2', 'U2.2'] });
+        await design.setPinType({ reference: 'U1', pin: '1', pinType: 'input' });
+        await design.setPinType({ reference: 'U1', pin: '2', pinType: 'power_in' });
+
+        const undriven = await design.inspect({ checks: ['drivers'] });
+        assert.ok(undriven.issues.some((issue) => issue.code === 'erc/undriven-input'));
+        assert.ok(!undriven.issues.some((issue) => issue.code === 'erc/unconnected-power-pin'));
+        assert.equal(undriven.passed, false);
+
+        await design.setPinType({ reference: 'U2', pin: '1', pinType: 'output' });
+        const driven = await design.inspect({ checks: ['drivers'] });
+        assert.ok(!driven.issues.some((issue) => issue.code === 'erc/undriven-input'));
+        assert.equal(driven.passed, true);
+        await design.close();
+    } finally {
+        await eda.dispose();
+    }
+});
+
 test('component custom properties persist and stay addressable', { skip: withoutAddon }, async () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'open-eda-component-properties-'));
     const document = path.join(directory, 'properties.oeda');
@@ -1070,6 +1096,67 @@ test('hierarchy check command reports a document without changing it', { skip: w
             fs.rmSync(generatedLocales, { recursive: true, force: true });
         }
         await eda.dispose();
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
+});
+
+test('library and library-check read and validate a kicad_sym file', { skip: withoutAddon }, () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'open-eda-library-'));
+    const clean = path.join(directory, 'clean.kicad_sym');
+    const broken = path.join(directory, 'broken.kicad_sym');
+    const testDirectory = path.dirname(fileURLToPath(import.meta.url));
+    const cli = fileURLToPath(new URL('../src/cli.js', import.meta.url));
+    const generatedLocales = path.resolve(testDirectory, '../locales');
+    const sourceLocales = path.resolve(testDirectory, '../../locales');
+    const copiedLocales = !fs.existsSync(generatedLocales);
+    if (copiedLocales) {
+        fs.cpSync(sourceLocales, generatedLocales, { recursive: true });
+    }
+    const library = (pins: string) => `(kicad_symbol_lib (version 20211014) (generator kicad_symbol_editor)
+  (symbol "GATE"
+    (symbol "GATE_1_1"
+${pins})))
+`;
+    fs.writeFileSync(
+        clean,
+        library(`      (pin input line (at 0 0 0) (length 2.54)
+        (name "A" (effects (font (size 1.27 1.27))))
+        (number "1" (effects (font (size 1.27 1.27)))))
+      (pin output line (at 0 0 0) (length 2.54)
+        (name "Y" (effects (font (size 1.27 1.27))))
+        (number "2" (effects (font (size 1.27 1.27)))))`),
+    );
+    fs.writeFileSync(
+        broken,
+        library(`      (pin input line (at 0 0 0) (length 2.54)
+        (name "A" (effects (font (size 1.27 1.27))))
+        (number "1" (effects (font (size 1.27 1.27)))))
+      (pin input line (at 0 0 0) (length 2.54)
+        (name "B" (effects (font (size 1.27 1.27))))
+        (number "1" (effects (font (size 1.27 1.27)))))`),
+    );
+    const run = (...args: string[]) => spawnSync(process.execPath, [cli, ...args], { encoding: 'utf8' });
+    try {
+        let result = run('library', clean, '--pins');
+        assert.equal(result.status, 0, result.stderr);
+        assert.match(result.stdout, /unit 1 pin 1 A input/);
+        assert.match(result.stdout, /unit 1 pin 2 Y output/);
+
+        result = run('library-check', clean);
+        assert.equal(result.status, 0, result.stderr);
+        assert.match(result.stdout, /library-check symbols=1 pins=2 findings=0 passed=true/);
+
+        result = run('library-check', broken);
+        assert.equal(result.status, 1);
+        assert.match(result.stdout + result.stderr, /library\/duplicate-pin-number/);
+
+        result = run('library-check');
+        assert.equal(result.status, 1);
+        assert.match(result.stdout + result.stderr, /open-eda\.cli\.file-required/);
+    } finally {
+        if (copiedLocales) {
+            fs.rmSync(generatedLocales, { recursive: true, force: true });
+        }
         fs.rmSync(directory, { recursive: true, force: true });
     }
 });
