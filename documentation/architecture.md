@@ -66,9 +66,10 @@ machine:
 
 ## Errors and exit codes
 
-Every failure carries a stable code. The CLI maps its own argument errors to
-exit code `2`, `capability/*` to `2`, and other failures to `1`. An unsupported
-operation is never approximated silently.
+Every failure carries a stable code. The CLI exits `0` on success and `1` on
+every failure, including its own argument errors and an unsupported capability;
+the code distinguishes the class. An unsupported operation is never approximated
+silently.
 
 ## Workspace layout
 

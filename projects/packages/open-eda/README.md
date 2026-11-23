@@ -74,7 +74,7 @@ pnpm exec open-eda export blinker.oeda --format svg --out blinker.svg
 `clearance`, `power` and `references`, with per-code `severity` overrides and
 `waivers`; `checkHierarchy` separately walks the declared hierarchy and reports
 `hierarchy/*` issues.
-`export` writes `net`, `net_csv`, `net_hier`, `spice`, `spice_subckt`, `svg`, `bom`, `bom_json`,
+`export` writes `net`, `net_csv`, `net_hier`, `net_class`, `spice`, `spice_subckt`, `svg`, `bom`, `bom_json`,
 `bom_html`, `pdf`, `report`, `json`, `kicad_sch` and `kicad_sym`.
 `importKicadSch` reads the supported KiCad schematic subset and returns a loss
 ledger for everything else.

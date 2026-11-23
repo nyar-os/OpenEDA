@@ -4,7 +4,7 @@
 claim in this repository. `open-eda capabilities` prints it verbatim. A method
 name, CLI flag or file extension is not evidence that a capability exists.
 
-Unsupported work answers with `capability/not-implemented` (exit code `2`)
+Unsupported work answers with `capability/not-implemented` (exit code `1`)
 instead of degrading silently.
 
 Read-only queries are reported next to `checks` but are not rule checks:
@@ -36,7 +36,7 @@ answer about the document, such as a pin-to-pin path.
 | junction and no-connect editing | supported | add a junction by coordinate and remove it by 0-based index; add a no-connect flag with or without a `REF.PIN` node and remove it by index; a duplicate junction coordinate is refused (`junction/duplicate`) and so is a second flag on one pin (`no-connect/duplicate`); `capabilities()` reports `edits.junctions` and `edits.noConnects` |
 | component pin editing | supported | add, remove and rename pins after placement; an empty or `REF.PIN`-breaking name is `session/argument-invalid`, a repeated name `pin/duplicate`, a missing pin `pin/not-found` and a removal that a net node or no-connect flag still uses `pin/in-use`; a rename follows every net node, no-connect node and electrical role; `capabilities()` reports `edits.pins` |
 | component pin swapping | supported | swap the net connections of two pins of one placed component; each pin takes the other pin's connection, an unconnected pin receives the transferred one, no-connect flags follow the swap, a self-swap or empty name is `session/argument-invalid`, a missing component `object/not-found` and an undeclared pin `pin/not-found`; an unconnected pair adds no revision; `capabilities()` reports `edits.pinSwap` |
-| export `net`, `net_csv`, `net_hier`, `spice`, `spice_subckt`, `svg`, `bom`, `bom_json`, `bom_html`, `pdf`, `report`, `json`, `kicad_sch`, `kicad_sym` | supported | read-only projections; `kicad_pcb` and `gbr` are unsupported |
+| export `net`, `net_csv`, `net_hier`, `net_class`, `spice`, `spice_subckt`, `svg`, `bom`, `bom_json`, `bom_html`, `pdf`, `report`, `json`, `kicad_sch`, `kicad_sym` | supported | read-only projections; `kicad_pcb` and `gbr` are unsupported |
 | import `kicad_sch` | supported | symbols, wires, junctions, no-connect flags, text, labels, hierarchical sheet symbols and ports; other constructs are reported as losses |
 | hierarchy editing | supported | add/list/remove parent symbol declarations and their ports; editing never reads the child files |
 | hierarchy check `hierarchy check` | supported | read-only depth-first walk of `.oeda` children; reports extension, missing file, parse, cycle, depth and port/label mismatches as `hierarchy/*` issues |
@@ -292,6 +292,12 @@ an error, so the reader's losses never fail the check on their own.
 - `net_hier` prefixes nets with a sanitized sheet path (`NET Main/VCC`) and emits
   `SHEET <path>` lines.
 - `net_csv` emits `Sheet,Net,Ref,Pin` rows with CSV quoting.
+- `net_class` emits `Class,Sheet,Net,Ref,Pin,Role` rows grouped by the declared
+  net classes in declaration order, with every net no class claims last and an
+  empty `Class`. A class claims a net it assigns directly and, through a bus it
+  assigns, that bus and each of its members. `Role` is the pin's electrical role
+  in the document vocabulary, empty for an untyped pin. Nets and nodes follow the
+  same order and bus expansion as `net_csv`.
 - `spice` emits one element line per component by reference prefix (`R`/`C`/`L`
   two-pin, `D` two-pin with model, `Q`/`J` three-pin, `V`/`I` sources, `U`/`X`
   subcircuits, unknown prefixes as generic `X`). An unconnected pin becomes a
@@ -310,9 +316,10 @@ an error, so the reader's losses never fail the check on their own.
   geometry.
 - `bom` groups by value and footprint and emits
   `Comment,Footprint,Designator,Quantity` with compressed designator ranges
-  (`R5-R7` for three or more consecutive numbers). A variant filters DNP
-  designators and applies value overrides; every referenced designator must
-  already be placed.
+  (`R5-R7` for three or more consecutive numbers). Designators sort numerically
+  inside their letter prefix, so `R2` precedes `R10` and multi-digit runs
+  compress as one range. A variant filters DNP designators and applies value
+  overrides; every referenced designator must already be placed.
 - `bom_json` and `bom_html` project the same rows as deterministic JSON and a
   self-contained table.
 - `pdf` writes a complete one-page A4 landscape vector document.
@@ -345,8 +352,9 @@ Every file is written through a temporary file and a rename.
 ## Tests
 
 - `projects/crates/eda-model/tests/unit/lib.rs` — create, edit, inspect, save
-  and reopen, writers, statistics, annotation, labels, variants, properties,
-  partial component updates, the `drivers` check, the symbol-library
+  and reopen, writers (including the net-class grouped netlist), statistics,
+  annotation, labels, variants, properties, partial component updates, numeric
+  BOM designator ordering, the `drivers` check, the symbol-library
   `library-check` findings, determinism and KiCad round-trips.
 - `projects/crates/eda-model/tests/unit/kicad.rs` — parser and writer subset.
 - `projects/crates/eda-model/tests/unit/diff.rs` — structural comparison.

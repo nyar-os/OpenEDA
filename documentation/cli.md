@@ -4,8 +4,9 @@
 one session or `Design` method, prints the result and returns an exit code.
 
 - Exit `0` — success.
-- Exit `1` — invalid input, an unbuildable design or an IO failure.
-- Exit `2` — a CLI argument error or a capability the build does not implement.
+- Exit `1` — every failure: invalid input, an unbuildable design, an IO failure,
+  a CLI argument error or a capability the build does not implement. The stable
+  error code printed with the message identifies the class.
 
 The design document is the first positional argument unless a command documents
 something else. List options take comma-separated values (`--refs R1,C1`).
@@ -170,10 +171,11 @@ Port directions: `input`, `output`, `bidirectional`, `tri_state`, `passive`.
 | `open-eda export <file> --format <format> --out <target> [--variant <name>]` | Write a read-only projection |
 | `open-eda netlist <file> --out <file.net> [--overwrite]` | Write the flat netlist |
 
-Export formats: `net`, `net_csv`, `net_hier`, `spice`, `spice_subckt`, `svg`,
-`bom`, `bom_json`, `bom_html`, `pdf`, `report`, `json`, `kicad_sch`, `kicad_sym`.
-A variant is accepted by `bom`, `bom_json` and `bom_html` only; other targets
-reject it instead of ignoring it.
+Export formats: `net`, `net_csv`, `net_hier`, `net_class`, `spice`,
+`spice_subckt`, `svg`, `bom`, `bom_json`, `bom_html`, `pdf`, `report`, `json`,
+`kicad_sch`, `kicad_sym`. `net_class` groups pin rows by declared net class and
+adds the pin electrical role. A variant is accepted by `bom`, `bom_json` and
+`bom_html` only; other targets reject it instead of ignoring it.
 
 ## Worked example
 

@@ -44,7 +44,7 @@ open-eda connectivity <file.oeda>
 open-eda inspect <file.oeda> [--checks erc,electrical,bus,nets,connectivity,footprints,power,references] [--severity code=level,...] [--waive code[@objectId|@sheetId/objectId],...]
 open-eda diff <left.oeda> <right.oeda>
 open-eda annotate <file.oeda>
-open-eda export <file.oeda> --format net|net_csv|net_hier|spice|spice_subckt|svg|bom|bom_json|bom_html|pdf|report|kicad_sch|kicad_sym --out <file> [--variant <name>]
+open-eda export <file.oeda> --format net|net_csv|net_hier|net_class|spice|spice_subckt|svg|bom|bom_json|bom_html|pdf|report|kicad_sch|kicad_sym --out <file> [--variant <name>]
 open-eda variant add <file.oeda> --name <name> [--dnp R1,R2] [--values R1=22k]
 open-eda variant list <file.oeda>
 open-eda variant remove <file.oeda> --name <name>
@@ -388,6 +388,10 @@ and `design.updateText()`.
   is the sanitized sheet name, a numeric suffix keeps it unique, and a name with
   no usable characters falls back to the sheet id. A `SHEET <path>` line precedes
   that sheet's nets, and declared buses expand like the flat netlist.
+- `net_class` writes `Class,Sheet,Net,Ref,Pin,Role` rows grouped by the declared
+  net classes in declaration order, with unclassified nets last and an empty
+  `Class`. A class claims its assigned nets plus the members of an assigned bus;
+  `Role` is the pin's electrical role or empty when the pin is untyped.
 - `spice` writes a deterministic `.cir` netlist; open pins become
   `NC_<ref>_<pin>` and are reported with `spice/open-pin`.
 - `spice_subckt` writes one `.SUBCKT <name> <ports>` block per sheet, with the
@@ -397,8 +401,9 @@ and `design.updateText()`.
 - `svg` writes a sheet frame, wires and component boxes with reference and value
   labels; the viewBox is derived from the placed geometry.
 - `bom` writes `Comment,Footprint,Designator,Quantity`, grouped by value and
-  footprint with sorted designators compressed into inclusive ranges (`R5-R7`
-  for three or more consecutive numbers). Footprint text is whatever was
+  footprint with numerically sorted designators compressed into inclusive ranges
+  (`R5-R7`, and `R1-R12` across a digit-count boundary).
+  Footprint text is whatever was
   assigned with `component footprint`; the model never picks one.
   `--variant <name>` drops that variant's DNP designators and applies its value
   overrides.
