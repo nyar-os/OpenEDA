@@ -8329,8 +8329,7 @@ fn svg_projection(design: &Design, sheets: &[&Sheet]) -> SvgProjection {
             ));
         }
         for (net, (from, to)) in net_name_anchors(sheet) {
-            let mid_x = (from[0] + to[0]) / 2.0;
-            let mid_y = (from[1] + to[1]) / 2.0 - 1.0;
+            let [mid_x, mid_y] = net_name_point(sheet, from, to, &net);
             svg.push_str(&format!(
                 "    <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"2.2\" text-anchor=\"middle\" fill=\"#64748b\" data-net=\"{}\">{}</text>\n",
                 mid_x,
@@ -8485,6 +8484,33 @@ fn net_name_anchors(sheet: &Sheet) -> Vec<(String, ([f64; 2], [f64; 2]))> {
         }
     }
     best.into_values().map(|(net, _, segment)| (net, segment)).collect()
+}
+
+/// Baseline point of a net-name annotation in model coordinates.
+///
+/// The default spot is one unit above the wire midpoint; when that box would
+/// collide with a label of any scope, the annotation is lifted one text line
+/// per collision (at most three lines) so the grey net name never sits on top
+/// of a green local label or a boxed global label.
+fn net_name_point(sheet: &Sheet, from: [f64; 2], to: [f64; 2], net: &str) -> [f64; 2] {
+    let mid_x = (from[0] + to[0]) / 2.0;
+    let mut baseline = (from[1] + to[1]) / 2.0 - 1.0;
+    let half = net.chars().count() as f64 * 2.2 * 0.3;
+    let collides = |baseline: f64| {
+        sheet.labels.iter().any(|label| {
+            let width = label.text.chars().count() as f64 * 2.8 * 0.6;
+            label.x < mid_x + half + 0.4
+                && label.x + width > mid_x - half - 0.4
+                && label.y - 2.8 < baseline
+                && baseline - 2.2 < label.y + 0.6
+        })
+    };
+    let mut lifts = 0;
+    while collides(baseline) && lifts < 3 {
+        baseline -= 3.0;
+        lifts += 1;
+    }
+    [mid_x, baseline]
 }
 
 /// Paints the title-block strip along the bottom of the sheet frame.
@@ -9272,11 +9298,12 @@ fn render_pdf(design: &Design) -> String {
         }
         for (net, (from, to)) in net_name_anchors(sheet) {
             let size = (2.2 * scale).clamp(5.0, 7.0);
+            let [name_x, name_y] = net_name_point(sheet, from, to, &net);
             content.push_str(&format!(
                 "0.39 0.45 0.55 rg BT /F1 {size:.2} Tf {x:.2} {y:.2} Td {} Tj ET\n",
                 pdf_text(&net),
-                x = map_x((from[0] + to[0]) / 2.0) - pdf_text_width(&net, size) / 2.0,
-                y = map_y((from[1] + to[1]) / 2.0) + 1.0 * scale,
+                x = map_x(name_x) - pdf_text_width(&net, size) / 2.0,
+                y = map_y(name_y),
             ));
         }
         for label in &sheet.labels {
