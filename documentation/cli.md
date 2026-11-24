@@ -202,7 +202,7 @@ Port directions: `input`, `output`, `bidirectional`, `tri_state`, `passive`.
 | `open-eda import <file.kicad_sch> --out <file.oeda> [--overwrite]` | Import the supported KiCad schematic subset |
 | `open-eda library <file.kicad_sym> [--pins]` | Report a KiCad symbol library without creating a design; `--pins` prints each pin's unit, number, name and role |
 | `open-eda library-check <file.kicad_sym>` | Validate a KiCad symbol library; exit `1` when a finding is an error |
-| `open-eda export <file> --format <format> --out <target> [--variant <name>]` | Write a read-only projection |
+| `open-eda export <file> --format <format> --out <target> [--variant <name>] [--sheet <id>]` | Write a read-only projection |
 | `open-eda netlist <file> --out <file.net> [--overwrite]` | Write the flat netlist |
 
 Export formats: `net`, `net_csv`, `net_hier`, `net_class`, `net_length`, `spice`,
@@ -213,6 +213,13 @@ adds the pin electrical role. `net_length` writes
 drawn wire segments the net names, and `Unrouted` is `yes` when no wire names
 the net. A variant is accepted by `bom`, `bom_json` and
 `bom_html` only; other targets reject it instead of ignoring it.
+
+`--sheet <id|name>` limits the drawing projections `svg` and `pdf` to one sheet;
+every other target rejects it. `pdf` writes one page per sheet by default, and
+`--sheet` writes a single page for that sheet; each page is centred between the
+margins and the title block. `svg` has a single viewport, so by default it paints
+every sheet and a multi-sheet design overlaps them; use `--sheet` to isolate a
+sheet without losing the rest of the document.
 
 ## Worked example
 
@@ -229,6 +236,7 @@ open-eda inspect blinker.oeda --checks erc,electrical,nets,connectivity
 open-eda stats blinker.oeda
 open-eda export blinker.oeda --format net --out blinker.net
 open-eda export blinker.oeda --format bom --variant lite --out blinker-lite.csv
-open-eda export blinker.oeda --format svg --out blinker.svg
+open-eda export blinker.oeda --format svg --sheet sheet-1 --out blinker.svg
+open-eda export blinker.oeda --format pdf --out blinker.pdf
 open-eda export blinker.oeda --format kicad_sch --out blinker.kicad_sch
 ```

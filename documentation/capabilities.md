@@ -46,7 +46,7 @@ answer about the document, such as a pin-to-pin path.
 | import `kicad_sym` | supported | read-only symbol declarations: unit count and each pin's number, name, role and unit |
 | export `kicad_sym` | supported | one library symbol per derived library id, with pins and roles; no symbol body is invented |
 | KiCad board, Gerber, drill, STEP | unsupported | declared in the capability matrix only |
-| interactive schematic/board renderer | unsupported | the preview is an SVG/PDF projection that draws component bodies, pin stubs on a 2.54 pitch, wires, junctions, labels and text |
+| interactive schematic/board renderer | unsupported | the preview is an SVG/PDF projection that draws component bodies, pin stubs on a 2.54 pitch, wires, junctions, labels and text; there is no PNG raster export |
 | DRC | unsupported | `capability/not-implemented` |
 | board layout, routing, simulation | unsupported | not modelled |
 
@@ -376,6 +376,11 @@ an error, so the reader's losses never fail the check on their own.
   `Q`/`J` parts gain an enclosing transistor ring; pin connection points never
   move and every other part keeps the generic box. `pdf` paints the same
   geometry.
+- `svg` projects every sheet into one viewport by default. Sheets share a
+  drawing origin, so a multi-sheet design overlaps them; pass
+  `--sheet <id|name>` to paint exactly one sheet. The default keeps every sheet
+  instead of dropping any, and a selected export reports only that sheet's
+  component and wire counts. SVG has no pagination.
 - `bom` groups by value and footprint and emits
   `Comment,Footprint,Designator,Quantity` with compressed designator ranges
   (`R5-R7` for three or more consecutive numbers). Designators sort numerically
@@ -384,10 +389,15 @@ an error, so the reader's losses never fail the check on their own.
   overrides; every referenced designator must already be placed.
 - `bom_json` and `bom_html` project the same rows as deterministic JSON and a
   self-contained table.
-- `pdf` writes a complete one-page A4 landscape vector document. Text uses the
-  base-14 Helvetica encoding, so characters outside printable ASCII are written
-  as `?` and the export reports one `pdf/text-encoding` loss with the dropped
-  character count; `svg` keeps full Unicode.
+- `pdf` writes a complete A4 landscape vector document with one page per sheet.
+  Every page has its own header and title block naming only that page's sheet,
+  and the drawing is scaled to fit and centred both horizontally and vertically
+  between the page margins and the bottom title-block strip, so the content no
+  longer collects against the bottom edge. `--sheet <id|name>` writes a
+  single-page PDF for that sheet. Text uses the base-14 Helvetica encoding, so
+  characters outside printable ASCII are written as `?` and the export reports
+  one `pdf/text-encoding` loss with the dropped character count; `svg` keeps
+  full Unicode.
 - `report` writes deterministic Markdown with a design header, per-sheet object
   counts, per-sheet `Net | Nodes | Pins` tables and inspection findings by
   severity.
