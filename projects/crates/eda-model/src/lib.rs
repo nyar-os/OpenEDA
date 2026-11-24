@@ -8473,14 +8473,18 @@ fn svg_projection(design: &Design, sheets: &[&Sheet]) -> SvgProjection {
     SvgProjection { document: svg, width, height }
 }
 
+/// One painted net name and the segment it annotates.
+type NetAnchor = (String, ([f64; 2], [f64; 2]));
+
 /// Picks one anchor wire per net: the longest segment carrying that net name.
 ///
 /// The net name is painted once at the midpoint of that segment so the sheet
 /// reads like an annotated schematic without repeating the label on every
 /// wire. Nets without a name (free wires) are skipped. Deterministic: equal
 /// lengths keep the first wire in document order.
-fn net_name_anchors(sheet: &Sheet) -> Vec<(String, ([f64; 2], [f64; 2]))> {
-    let mut best: BTreeMap<&str, (String, f64, ([f64; 2], [f64; 2]))> = BTreeMap::new();
+fn net_name_anchors(sheet: &Sheet) -> Vec<NetAnchor> {
+    type Anchor = (String, f64, ([f64; 2], [f64; 2]));
+    let mut best: BTreeMap<&str, Anchor> = BTreeMap::new();
     for wire in &sheet.wires {
         let Some(net) = &wire.net
         else {
