@@ -6182,3 +6182,24 @@ fn pdf_replaces_the_resistor_box_with_the_zigzag_and_keeps_stub_endpoints() {
     assert!(text.contains("(10k) Tj") && text.contains("(R1) Tj"), "{text}");
     close(handle).expect("close");
 }
+
+#[test]
+fn empty_design_exports_every_supported_format_without_panic() {
+    let dir = TempDir::new("empty-export");
+    let created = create(CreateRequest {
+        title: Some("Empty".to_string()),
+        rev: None,
+        company: None,
+        date: None,
+        template: None,
+    })
+    .expect("an empty design is created");
+    let handle = created["handle"].as_u64().expect("the handle is a number");
+    for format in SUPPORTED_EXPORTS {
+        let target = dir.join(&format!("empty.{format}"));
+        let report = export(handle, format, &target).unwrap_or_else(|error| panic!("`{format}` failed: {}", error.message));
+        let bytes = report["bytes"].as_u64().expect("the report counts bytes");
+        assert!(bytes > 0, "`{format}` wrote an empty file for an empty design");
+    }
+    close(handle).expect("close");
+}
