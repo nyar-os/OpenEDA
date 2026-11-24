@@ -383,7 +383,10 @@ an error, so the reader's losses never fail the check on their own.
   overrides; every referenced designator must already be placed.
 - `bom_json` and `bom_html` project the same rows as deterministic JSON and a
   self-contained table.
-- `pdf` writes a complete one-page A4 landscape vector document.
+- `pdf` writes a complete one-page A4 landscape vector document. Text uses the
+  base-14 Helvetica encoding, so characters outside printable ASCII are written
+  as `?` and the export reports one `pdf/text-encoding` loss with the dropped
+  character count; `svg` keeps full Unicode.
 - `report` writes deterministic Markdown with a design header, per-sheet object
   counts, per-sheet `Net | Nodes | Pins` tables and inspection findings by
   severity.

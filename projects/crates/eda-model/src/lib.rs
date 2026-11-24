@@ -175,6 +175,10 @@ const SPICE_OPEN_PIN: &str = "spice/open-pin";
 /// Loss code reported when an element has fewer pins than its SPICE mapping needs.
 const SPICE_PIN_COUNT: &str = "spice/pin-count";
 
+/// Loss code reported when the PDF writer replaces characters the base-14
+/// Helvetica encoding cannot carry.
+const PDF_TEXT_ENCODING: &str = "pdf/text-encoding";
+
 /// Import sources this build actually reads.
 const SUPPORTED_IMPORTS: &[&str] = &["kicad_sch", "net"];
 
@@ -5043,6 +5047,13 @@ pub fn export_with_variant(handle: u64, format: &str, path: &Path, variant: Opti
             (render_bom_html(&design, &rows, selected), artifact)
         }
         "pdf" => {
+            let (contents, dropped) = render_pdf(&design);
+            if dropped > 0 {
+                losses.push(json!({
+                    "code": PDF_TEXT_ENCODING,
+                    "detail": format!("{dropped} character(s) outside printable ASCII were written as `?` in the PDF; export SVG for full Unicode text"),
+                }));
+            }
             let artifact = json!({
                 "kind": "pdf",
                 "pages": 1,
@@ -5050,7 +5061,7 @@ pub fn export_with_variant(handle: u64, format: &str, path: &Path, variant: Opti
                 "components": design.sheets.iter().map(|sheet| sheet.components.len()).sum::<usize>(),
                 "wires": design.sheets.iter().map(|sheet| sheet.wires.len()).sum::<usize>(),
             });
-            (render_pdf(&design), artifact)
+            (contents, artifact)
         }
         "report" => {
             let (contents, sections, issue_count) = render_report(&design);
@@ -5116,7 +5127,7 @@ pub fn export_with_variant(handle: u64, format: &str, path: &Path, variant: Opti
         "editable": false,
         "artifact": artifact,
     });
-    if format == "spice" || format == "spice_subckt" {
+    if format == "spice" || format == "spice_subckt" || format == "pdf" {
         report["losses"] = json!(losses);
     }
     Ok(report)
@@ -9185,7 +9196,7 @@ const PDF_TITLE_BLOCK_PT: f64 = 40.0;
 /// The writer emits the catalog, page tree, font and content stream with a
 /// cross-reference table, so the file opens in a viewer instead of only
 /// starting with a PDF header.
-fn render_pdf(design: &Design) -> String {
+fn render_pdf(design: &Design) -> (String, usize) {
     let mut min_x = f64::INFINITY;
     let mut min_y = f64::INFINITY;
     let mut max_x = f64::NEG_INFINITY;
@@ -9254,6 +9265,12 @@ fn render_pdf(design: &Design) -> String {
     let map_y = |y: f64| PDF_MARGIN + (max_y - y) * scale;
     let label_size = (7.0f64).max((3.2 * scale).min(9.0));
 
+    let mut dropped = 0usize;
+    let mut pdf_literal = |text: &str| {
+        let (literal, count) = pdf_text(text);
+        dropped += count;
+        literal
+    };
     let mut content = String::new();
     content.push_str(&format!("0.4 w 0 0 {PDF_PAGE_WIDTH:.2} {PDF_PAGE_HEIGHT:.2} re S\n"));
     let sheets_label =
@@ -9262,7 +9279,7 @@ fn render_pdf(design: &Design) -> String {
         "BT /F1 9 Tf {:.2} {:.2} Td {} Tj ET\n",
         PDF_MARGIN,
         PDF_PAGE_HEIGHT - 16.0,
-        pdf_text(&format!("OpenEDA {} revision {} | {}", design.id, design.revision, sheets_label))
+        pdf_literal(&format!("OpenEDA {} revision {} | {}", design.id, design.revision, sheets_label))
     ));
     for sheet in &design.sheets {
         for wire in &sheet.wires {
@@ -9301,7 +9318,7 @@ fn render_pdf(design: &Design) -> String {
             let [name_x, name_y] = net_name_point(sheet, from, to, &net);
             content.push_str(&format!(
                 "0.39 0.45 0.55 rg BT /F1 {size:.2} Tf {x:.2} {y:.2} Td {} Tj ET\n",
-                pdf_text(&net),
+                pdf_literal(&net),
                 x = map_x(name_x) - pdf_text_width(&net, size) / 2.0,
                 y = map_y(name_y),
             ));
@@ -9315,7 +9332,7 @@ fn render_pdf(design: &Design) -> String {
                 LabelScope::Local => {
                     content.push_str(&format!(
                         "0.06 0.46 0.43 rg BT /F1 {size:.2} Tf {text_x:.2} {text_y:.2} Td {} Tj ET\n",
-                        pdf_text(&label.text)
+                        pdf_literal(&label.text)
                     ));
                     content.push_str(&format!(
                         "0.06 0.46 0.43 RG 0.3 w {text_x:.2} {:.2} m {:.2} {:.2} l S\n",
@@ -9333,7 +9350,7 @@ fn render_pdf(design: &Design) -> String {
                     ));
                     content.push_str(&format!(
                         "0.72 0.11 0.11 rg BT /F1 {size:.2} Tf {text_x:.2} {text_y:.2} Td {} Tj ET\n",
-                        pdf_text(&label.text)
+                        pdf_literal(&label.text)
                     ));
                 }
                 LabelScope::Hierarchical => {
@@ -9352,7 +9369,7 @@ fn render_pdf(design: &Design) -> String {
                     content.push_str(&format!(
                         "0.08 0.5 0.24 rg BT /F1 {size:.2} Tf {:.2} {text_y:.2} Td {} Tj ET\n",
                         text_x + 1.8 * scale,
-                        pdf_text(&label.text)
+                        pdf_literal(&label.text)
                     ));
                 }
             }
@@ -9363,7 +9380,7 @@ fn render_pdf(design: &Design) -> String {
                 "0 0 0 rg BT /F1 {size:.2} Tf {:.2} {:.2} Td {} Tj ET\n",
                 map_x(text.x),
                 map_y(text.y),
-                pdf_text(&text.text)
+                pdf_literal(&text.text)
             ));
         }
         for component in &sheet.components {
@@ -9430,14 +9447,14 @@ fn render_pdf(design: &Design) -> String {
                     "BT /F1 {:.2} Tf {x:.2} {:.2} Td {} Tj ET\n",
                     label_size * 0.7,
                     map_y(name_at[1]),
-                    pdf_text(&pin.name)
+                    pdf_literal(&pin.name)
                 ));
             }
             content.push_str(&format!(
                 "BT /F1 {label_size:.2} Tf {:.2} {:.2} Td {} Tj ET\n",
                 map_x(component.x),
                 map_y(component.y) + if inside_box { 2.0 } else { 4.5 * scale },
-                pdf_text(&component.reference)
+                pdf_literal(&component.reference)
             ));
             if !component.value.is_empty() {
                 content.push_str(&format!(
@@ -9445,12 +9462,12 @@ fn render_pdf(design: &Design) -> String {
                     label_size * 0.85,
                     map_x(component.x),
                     map_y(component.y) - if inside_box { label_size + 1.0 } else { 4.5 * scale + label_size * 0.85 + 1.0 },
-                    pdf_text(&component.value)
+                    pdf_literal(&component.value)
                 ));
             }
         }
     }
-    push_pdf_title_block(&mut content, design);
+    push_pdf_title_block(&mut content, design, &mut dropped);
 
     let objects = [
         "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
@@ -9476,7 +9493,7 @@ fn render_pdf(design: &Design) -> String {
         pdf.push_str(&format!("{offset:010} 00000 n \n"));
     }
     pdf.push_str(&format!("trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n", objects.len() + 1));
-    pdf
+    (pdf, dropped)
 }
 
 /// Appends the PDF title-block strip along the bottom of the page.
@@ -9484,7 +9501,7 @@ fn render_pdf(design: &Design) -> String {
 /// The strip mirrors the SVG title block: design title, sheet identity,
 /// revision and content counts, all taken from the document so the page stays
 /// byte-deterministic.
-fn push_pdf_title_block(content: &mut String, design: &Design) {
+fn push_pdf_title_block(content: &mut String, design: &Design, dropped: &mut usize) {
     let strip_top = PDF_MARGIN + PDF_TITLE_BLOCK_PT;
     let left = PDF_MARGIN;
     let right = PDF_PAGE_WIDTH - PDF_MARGIN;
@@ -9503,7 +9520,9 @@ fn push_pdf_title_block(content: &mut String, design: &Design) {
     }
     let cell_x = |index: usize| left + width * columns[..index].iter().sum::<f64>() + 3.0;
     let mut line = |x: f64, y: f64, size: f64, gray: &str, text: &str| {
-        content.push_str(&format!("{gray} {gray} {gray} rg BT /F1 {size:.2} Tf {x:.2} {y:.2} Td {} Tj ET\n", pdf_text(text)));
+        let (literal, count) = pdf_text(text);
+        *dropped += count;
+        content.push_str(&format!("{gray} {gray} {gray} rg BT /F1 {size:.2} Tf {x:.2} {y:.2} Td {literal} Tj ET\n"));
     };
     line(cell_x(0), strip_top - 12.0, 9.0, "0", title);
     if !design.company.trim().is_empty() || !design.date.trim().is_empty() {
@@ -9529,10 +9548,11 @@ fn pdf_text_width(text: &str, size: f64) -> f64 {
     text.chars().count() as f64 * size * 0.5
 }
 
-/// Escapes a string for a PDF literal string, dropping characters the byte
-/// offsets cannot represent.
-fn pdf_text(text: &str) -> String {
+/// Escapes a string for a PDF literal string and counts the characters the
+/// base-14 font cannot encode; those are written as `?`.
+fn pdf_text(text: &str) -> (String, usize) {
     let mut escaped = String::from("(");
+    let mut dropped = 0;
     for character in text.chars() {
         match character {
             '\\' => escaped.push_str("\\\\"),
@@ -9540,11 +9560,14 @@ fn pdf_text(text: &str) -> String {
             ')' => escaped.push_str("\\)"),
             '\n' | '\r' | '\t' => escaped.push(' '),
             character if character.is_ascii() && !character.is_ascii_control() => escaped.push(character),
-            _ => escaped.push('?'),
+            _ => {
+                escaped.push('?');
+                dropped += 1;
+            }
         }
     }
     escaped.push(')');
-    escaped
+    (escaped, dropped)
 }
 
 fn write_atomic(path: &Path, contents: &str, overwrite: bool) -> Result<usize, ServiceError> {

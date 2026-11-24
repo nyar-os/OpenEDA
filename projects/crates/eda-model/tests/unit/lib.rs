@@ -1828,6 +1828,42 @@ fn pdf_export_writes_a_complete_vector_document() {
 }
 
 #[test]
+fn pdf_export_reports_characters_the_base_font_cannot_encode() {
+    let dir = TempDir::new("pdf-loss");
+    let path = dir.join("unicode.pdf");
+    let created = create(CreateRequest {
+        title: Some("电源模块".to_string()),
+        rev: None,
+        company: None,
+        date: None,
+        template: None,
+    })
+    .expect("create");
+    let handle = created["handle"].as_u64().expect("handle");
+    add_component(
+        handle,
+        AddComponentRequest {
+            sheet: None,
+            reference: "R1".to_string(),
+            value: "10k".to_string(),
+            x: 20.0,
+            y: 20.0,
+            rotation: 0.0,
+            pins: vec!["1".to_string(), "2".to_string()],
+        },
+    )
+    .expect("add R1");
+
+    let report = export(handle, "pdf", &path).expect("export pdf");
+    assert_eq!(report["losses"][0]["code"], "pdf/text-encoding");
+    assert!(report["losses"][0]["detail"].as_str().expect("detail").starts_with("4 character(s)"));
+    let text = fs::read_to_string(&path).expect("read pdf");
+    assert!(text.contains("(????) Tj"), "the Chinese title is written as question marks");
+
+    close(handle).expect("close");
+}
+
+#[test]
 fn open_rejects_unknown_tags_versions_and_inconsistent_documents() {
     let dir = TempDir::new("invalid");
     let path = dir.join("broken.oeda");
