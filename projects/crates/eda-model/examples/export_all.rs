@@ -3,9 +3,9 @@
 use std::path::Path;
 
 use open_eda_model::{
-    AddComponentRequest, AddJunctionRequest, AddLabelRequest, AddNoConnectRequest, AddTextRequest, AddWireRequest, ConnectNetRequest,
-    CreateRequest, LabelScope, add_component, add_junction, add_label, add_no_connect, add_text, add_wire, connect_net, create, derive_nets,
-    export,
+    AddComponentRequest, AddJunctionRequest, AddLabelRequest, AddNoConnectRequest, AddTextRequest, AddWireRequest,
+    ConnectNetRequest, CreateRequest, LabelScope, add_component, add_junction, add_label, add_no_connect, add_text, add_wire,
+    connect_net, create, derive_nets, export,
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -31,7 +31,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ("J1", "CONN", 145.0, 25.0, vec!["1".to_string(), "2".to_string()]),
     ];
     for (reference, value, x, y, pins) in parts {
-        add_component(handle, AddComponentRequest { sheet: None, reference: reference.into(), value: value.into(), x, y, rotation: 0.0, pins })?;
+        add_component(
+            handle,
+            AddComponentRequest { sheet: None, reference: reference.into(), value: value.into(), x, y, rotation: 0.0, pins },
+        )?;
     }
 
     let wires = [
@@ -58,12 +61,50 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for x in [44.76, 145.24] {
         add_junction(handle, AddJunctionRequest { sheet: None, x, y: 64.0 })?;
     }
-    add_label(handle, AddLabelRequest { sheet: None, text: "VCC".into(), x: 60.0, y: 15.2, scope: Some(LabelScope::Global), rotation: None, justify: None })?;
-    add_label(handle, AddLabelRequest { sheet: None, text: "IO1".into(), x: 77.5, y: 33.0, scope: Some(LabelScope::Local), rotation: None, justify: None })?;
-    add_label(handle, AddLabelRequest { sheet: None, text: "LED".into(), x: 110.24, y: 54.2, scope: Some(LabelScope::Hierarchical), rotation: None, justify: None })?;
+    add_label(
+        handle,
+        AddLabelRequest {
+            sheet: None,
+            text: "VCC".into(),
+            x: 60.0,
+            y: 15.2,
+            scope: Some(LabelScope::Global),
+            rotation: None,
+            justify: None,
+        },
+    )?;
+    add_label(
+        handle,
+        AddLabelRequest {
+            sheet: None,
+            text: "IO1".into(),
+            x: 77.5,
+            y: 33.0,
+            scope: Some(LabelScope::Local),
+            rotation: None,
+            justify: None,
+        },
+    )?;
+    add_label(
+        handle,
+        AddLabelRequest {
+            sheet: None,
+            text: "LED".into(),
+            x: 110.24,
+            y: 54.2,
+            scope: Some(LabelScope::Hierarchical),
+            rotation: None,
+            justify: None,
+        },
+    )?;
     add_no_connect(
         handle,
-        AddNoConnectRequest { sheet: None, x: 160.24, y: 25.0, node: Some(open_eda_model::Node { reference: "J1".into(), pin: "2".into() }) },
+        AddNoConnectRequest {
+            sheet: None,
+            x: 160.24,
+            y: 25.0,
+            node: Some(open_eda_model::Node { reference: "J1".into(), pin: "2".into() }),
+        },
     )?;
 
     // Register connectivity: derive net names from the wire labels, then attach
@@ -82,7 +123,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )?;
     }
 
-    for format in ["kicad_sch", "kicad_sym", "net", "net_csv", "net_hier", "net_class", "net_length", "spice", "spice_subckt", "svg", "pdf", "bom", "bom_json", "bom_html", "report", "json"] {
+    for format in [
+        "kicad_sch",
+        "kicad_sym",
+        "net",
+        "net_csv",
+        "net_hier",
+        "net_class",
+        "net_length",
+        "spice",
+        "spice_subckt",
+        "svg",
+        "pdf",
+        "bom",
+        "bom_json",
+        "bom_html",
+        "report",
+        "json",
+    ] {
         let target = out.join(format!("demo.{format}"));
         match export(handle, format, &target) {
             Ok(report) => println!("OK {format}: {report}"),

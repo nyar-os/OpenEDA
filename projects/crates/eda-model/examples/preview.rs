@@ -3,8 +3,8 @@
 use std::path::Path;
 
 use open_eda_model::{
-    AddComponentRequest, AddJunctionRequest, AddLabelRequest, AddNoConnectRequest, AddTextRequest, AddWireRequest, CreateRequest,
-    LabelScope, add_component, add_junction, add_label, add_no_connect, add_text, add_wire, create, export,
+    AddComponentRequest, AddJunctionRequest, AddLabelRequest, AddNoConnectRequest, AddTextRequest, AddWireRequest,
+    CreateRequest, LabelScope, add_component, add_junction, add_label, add_no_connect, add_text, add_wire, create, export,
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -72,13 +72,51 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         add_junction(handle, AddJunctionRequest { sheet: None, x, y: 64.0 })?;
     }
     // Net labels: a global power label, a local signal label and a hierarchy port.
-    add_label(handle, AddLabelRequest { sheet: None, text: "VCC".into(), x: 60.0, y: 13.5, scope: Some(LabelScope::Global), rotation: None, justify: None })?;
-    add_label(handle, AddLabelRequest { sheet: None, text: "IO1".into(), x: 78.5, y: 33.0, scope: Some(LabelScope::Local), rotation: None, justify: None })?;
-    add_label(handle, AddLabelRequest { sheet: None, text: "LED".into(), x: 112.5, y: 50.0, scope: Some(LabelScope::Hierarchical), rotation: None, justify: None })?;
+    add_label(
+        handle,
+        AddLabelRequest {
+            sheet: None,
+            text: "VCC".into(),
+            x: 60.0,
+            y: 13.5,
+            scope: Some(LabelScope::Global),
+            rotation: None,
+            justify: None,
+        },
+    )?;
+    add_label(
+        handle,
+        AddLabelRequest {
+            sheet: None,
+            text: "IO1".into(),
+            x: 78.5,
+            y: 33.0,
+            scope: Some(LabelScope::Local),
+            rotation: None,
+            justify: None,
+        },
+    )?;
+    add_label(
+        handle,
+        AddLabelRequest {
+            sheet: None,
+            text: "LED".into(),
+            x: 112.5,
+            y: 50.0,
+            scope: Some(LabelScope::Hierarchical),
+            rotation: None,
+            justify: None,
+        },
+    )?;
     // J1 pin 2 is deliberately left open.
     add_no_connect(
         handle,
-        AddNoConnectRequest { sheet: None, x: 160.24, y: 25.0, node: Some(open_eda_model::Node { reference: "J1".into(), pin: "2".into() }) },
+        AddNoConnectRequest {
+            sheet: None,
+            x: 160.24,
+            y: 25.0,
+            node: Some(open_eda_model::Node { reference: "J1".into(), pin: "2".into() }),
+        },
     )?;
 
     for format in ["svg", "pdf"] {
