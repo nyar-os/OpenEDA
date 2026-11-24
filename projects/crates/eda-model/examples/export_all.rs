@@ -58,9 +58,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for x in [44.76, 145.24] {
         add_junction(handle, AddJunctionRequest { sheet: None, x, y: 64.0 })?;
     }
-    add_label(handle, AddLabelRequest { sheet: None, text: "VCC".into(), x: 60.0, y: 13.5, scope: Some(LabelScope::Global), rotation: None, justify: None })?;
-    add_label(handle, AddLabelRequest { sheet: None, text: "IO1".into(), x: 78.5, y: 33.0, scope: Some(LabelScope::Local), rotation: None, justify: None })?;
-    add_label(handle, AddLabelRequest { sheet: None, text: "LED".into(), x: 112.5, y: 50.0, scope: Some(LabelScope::Hierarchical), rotation: None, justify: None })?;
+    add_label(handle, AddLabelRequest { sheet: None, text: "VCC".into(), x: 60.0, y: 15.2, scope: Some(LabelScope::Global), rotation: None, justify: None })?;
+    add_label(handle, AddLabelRequest { sheet: None, text: "IO1".into(), x: 77.5, y: 33.0, scope: Some(LabelScope::Local), rotation: None, justify: None })?;
+    add_label(handle, AddLabelRequest { sheet: None, text: "LED".into(), x: 110.24, y: 54.2, scope: Some(LabelScope::Hierarchical), rotation: None, justify: None })?;
     add_no_connect(
         handle,
         AddNoConnectRequest { sheet: None, x: 160.24, y: 25.0, node: Some(open_eda_model::Node { reference: "J1".into(), pin: "2".into() }) },
