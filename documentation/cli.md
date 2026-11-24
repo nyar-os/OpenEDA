@@ -142,7 +142,7 @@ Pin roles: `input`, `output`, `bidirectional`, `tri_state`, `passive`,
 |---------|-------------|
 | `open-eda wire add <file> --net <name> --from <x,y> --to <x,y> [--sheet <id>]` | Add a wire segment |
 | `open-eda wire update <file> --id <wire> --from <x,y> --to <x,y> [--sheet <id>]` | Move a wire endpoint |
-| `open-eda wire split <file> --id <wire> --x <n> --y <n> [--sheet <id>]` | Split a wire at a point on the segment |
+| `open-eda wire split <file> --id <wire> --x <n> --y <n> [--sheet <id>]` | Split a wire at a point strictly inside the segment; the original keeps its id and net and the new segment is appended |
 | `open-eda wire merge <file> --sheet <id> --a <index> --b <index>` | Merge two touching collinear wires of the same net |
 | `open-eda wire list <file> [--sheet <id>]` | List wires in document order |
 | `open-eda wire delete <file> --id <wire> [--sheet <id>]` | Delete a wire |
@@ -162,6 +162,13 @@ Pin roles: `input`, `output`, `bidirectional`, `tri_state`, `passive`,
 | `open-eda label list <file> [--sheet <id>]` | List net labels |
 | `open-eda label update <file> --id <label> [--text <text>] [--x <n>] [--y <n>] [--scope <scope>] [--rotation <deg>] [--justify <justify>] [--sheet <id>]` | Update a net label |
 | `open-eda label delete <file> --id <label> [--sheet <id>]` | Delete a net label |
+
+`wire split` requires a point on the segment and strictly between its
+endpoints, so both halves keep a non-zero length; the same tolerance the model
+uses for wire geometry applies. A point off the segment, at an endpoint or on a
+zero-length wire is `wire/split-point-not-interior`, and an id no wire on the
+sheet uses is `wire/not-found`. An accepted split adds exactly one revision and
+one sidecar history step, so `undo` restores the unsplit segment.
 
 ## Sheets and hierarchy
 

@@ -35,6 +35,7 @@ answer about the document, such as a pin-to-pin path.
 | component update `component update` | supported | partial edit of one placed component by reference: only the fields the request names change; one revision per call; `capabilities()` reports `edits.components` |
 | read-only listings `component list`, `net list`, `bus list`, `net-class list`, `wire list`, `label list`, `text list`, `sheet list` | supported | document order with 0-based indices where the model edits by index |
 | wire merge `wire merge` | supported | merges two wires of one sheet by 0-based index when they name the same net, share exactly one endpoint within a scaled `1e-9` tolerance and are collinear with the shared point at opposite ends; the first wire keeps its identity, order and net and the second is removed; a junction at the shared point is `wire/merge-junction`, other disagreements are `wire/merge-mismatch` and a zero-length result is `session/argument-invalid` |
+| wire split `wire split` | supported | splits one wire by id at a point strictly inside the segment: the original keeps its identity, place and net and now ends at the split point, while a new wire with the next free `wire-N` id runs from the split point to the old endpoint on the same sheet; the point must lie on the segment within the scaled `1e-9` tolerance and must not be an endpoint or sit on a zero-length wire (`wire/split-point-not-interior`); an unknown id is `wire/not-found`; an accepted split adds exactly one revision and one history step; `capabilities()` reports `edits.wireSplit` |
 | junction and no-connect editing | supported | add a junction by coordinate and remove it by 0-based index; add a no-connect flag with or without a `REF.PIN` node and remove it by index; a duplicate junction coordinate is refused (`junction/duplicate`) and so is a second flag on one pin (`no-connect/duplicate`); `capabilities()` reports `edits.junctions` and `edits.noConnects` |
 | component pin editing | supported | add, remove and rename pins after placement; an empty or `REF.PIN`-breaking name is `session/argument-invalid`, a repeated name `pin/duplicate`, a missing pin `pin/not-found` and a removal that a net node or no-connect flag still uses `pin/in-use`; a rename follows every net node, no-connect node and electrical role; `capabilities()` reports `edits.pins` |
 | component pin swapping | supported | swap the net connections of two pins of one placed component; each pin takes the other pin's connection, an unconnected pin receives the transferred one, no-connect flags follow the swap, a self-swap or empty name is `session/argument-invalid`, a missing component `object/not-found` and an undeclared pin `pin/not-found`; an unconnected pair adds no revision; `capabilities()` reports `edits.pinSwap` |
@@ -442,6 +443,10 @@ Every file is written through a temporary file and a rename.
   unattached wire endpoint, junction/label/no-connect/component/wire anchors,
   the root-only sheet-port anchor, the zero-length rule, sheet order, severity,
   waivers and deterministic re-runs.
+- `projects/crates/eda-model/tests/unit/wire_split.rs` — `wire split` at an
+  interior point, net and sheet retention, deterministic ids, both endpoints,
+  off-segment points, unknown ids, non-finite and zero-length refusals, one
+  revision and one undo step, and save/reopen persistence.
 - `projects/crates/eda-model/tests/unit/pins.rs` — pin add, remove and rename
   validation, reference-safe removal, net/no-connect rewrites, history and
   save/reopen persistence.
