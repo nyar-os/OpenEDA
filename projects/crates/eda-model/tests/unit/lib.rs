@@ -1791,14 +1791,9 @@ fn pdf_export_writes_a_complete_vector_document() {
 fn pdf_export_reports_characters_the_base_font_cannot_encode() {
     let dir = TempDir::new("pdf-loss");
     let path = dir.join("unicode.pdf");
-    let created = create(CreateRequest {
-        title: Some("电源模块".to_string()),
-        rev: None,
-        company: None,
-        date: None,
-        template: None,
-    })
-    .expect("create");
+    let created =
+        create(CreateRequest { title: Some("电源模块".to_string()), rev: None, company: None, date: None, template: None })
+            .expect("create");
     let handle = created["handle"].as_u64().expect("handle");
     add_component(
         handle,
@@ -1821,6 +1816,123 @@ fn pdf_export_reports_characters_the_base_font_cannot_encode() {
     assert!(text.contains("(????) Tj"), "the Chinese title is written as question marks");
 
     close(handle).expect("close");
+}
+
+/// Creates a design with one component per sheet and returns its handle.
+fn two_sheet_design() -> u64 {
+    let created =
+        create(CreateRequest { title: Some("Probe".to_string()), rev: None, company: None, date: None, template: None })
+            .expect("create");
+    let handle = created["handle"].as_u64().expect("handle");
+    add_component(
+        handle,
+        AddComponentRequest {
+            sheet: None,
+            reference: "R1".to_string(),
+            value: "ALPHAONLY".to_string(),
+            x: 20.0,
+            y: 20.0,
+            rotation: 0.0,
+            pins: vec!["1".to_string(), "2".to_string()],
+        },
+    )
+    .expect("add R1");
+    let second = add_sheet(handle, Some("Power")).expect("add sheet");
+    assert_eq!(second["sheet"]["id"], "sheet-2");
+    add_component(
+        handle,
+        AddComponentRequest {
+            sheet: Some("sheet-2".to_string()),
+            reference: "R2".to_string(),
+            value: "BETAONLY".to_string(),
+            x: 120.0,
+            y: 90.0,
+            rotation: 0.0,
+            pins: vec!["1".to_string(), "2".to_string()],
+        },
+    )
+    .expect("add R2");
+    handle
+}
+
+#[test]
+fn pdf_export_writes_one_page_per_sheet_without_crossing_sheet_content() {
+    let dir = TempDir::new("pdf-sheets");
+    let path = dir.join("two-sheets.pdf");
+    let handle = two_sheet_design();
+
+    let report = export(handle, "pdf", &path).expect("export pdf");
+    assert_eq!(report["artifact"]["pages"], 2);
+    assert_eq!(report["artifact"]["components"], 2);
+    let text = fs::read_to_string(&path).expect("read pdf");
+    assert_eq!(text.matches("/Type /Page /Parent").count(), 2);
+    let streams: Vec<&str> = text
+        .split("<< /Length ")
+        .skip(1)
+        .map(|chunk| chunk.split("stream\n").nth(1).expect("content stream"))
+        .map(|body| body.split("endstream").next().expect("stream body"))
+        .collect();
+    assert_eq!(streams.len(), 2);
+    assert!(streams[0].contains("(ALPHAONLY)") && !streams[0].contains("(BETAONLY)"), "page 1:\n{}", streams[0]);
+    assert!(streams[1].contains("(BETAONLY)") && !streams[1].contains("(ALPHAONLY)"), "page 2:\n{}", streams[1]);
+    assert!(!streams[0].contains("(Power)"), "page 1 must not name the second sheet");
+    assert!(!streams[1].contains("(Sheet 1)"), "page 2 must not name the first sheet");
+
+    close(handle).expect("close");
+}
+
+#[test]
+fn export_sheet_option_limits_the_drawing_to_one_sheet() {
+    let dir = TempDir::new("export-sheet");
+    let handle = two_sheet_design();
+
+    let svg_path = dir.join("power.svg");
+    let report = export_with_options(handle, "svg", &svg_path, None, Some("sheet-2")).expect("export svg");
+    assert_eq!(report["artifact"]["components"], 1);
+    let svg = fs::read_to_string(&svg_path).expect("read svg");
+    assert!(svg.contains(r#"data-sheet="sheet-2""#), "{svg}");
+    assert!(!svg.contains(r#"data-sheet="sheet-1""#), "a selected SVG must not paint the first sheet");
+    assert!(svg.contains("BETAONLY") && !svg.contains("ALPHAONLY"));
+
+    let pdf_path = dir.join("power.pdf");
+    let report = export_with_options(handle, "pdf", &pdf_path, None, Some("Power")).expect("export pdf by name");
+    assert_eq!(report["artifact"]["pages"], 1);
+    assert_eq!(report["artifact"]["components"], 1);
+    let pdf = fs::read_to_string(&pdf_path).expect("read pdf");
+    assert_eq!(pdf.matches("/Type /Page /Parent").count(), 1);
+    assert!(pdf.contains("(BETAONLY)") && !pdf.contains("(ALPHAONLY)"));
+
+    assert_eq!(
+        export_with_options(handle, "svg", &dir.join("x.svg"), None, Some("missing")).unwrap_err().code,
+        "sheet/not-found"
+    );
+    assert_eq!(
+        export_with_options(handle, "net", &dir.join("net.txt"), None, Some("sheet-1")).unwrap_err().code,
+        "session/argument-invalid"
+    );
+
+    close(handle).expect("close");
+}
+
+#[test]
+fn pdf_layout_centres_the_drawing_inside_the_printable_area() {
+    // A wide drawing is limited by the printable width and keeps the left and
+    // right margins, but its height is centred above the title block.
+    let wide = pdf_layout(30.48, 15.24);
+    assert!((wide.offset_x - PDF_MARGIN).abs() < 1e-9);
+    let wide_center = wide.offset_y + 15.24 * wide.scale / 2.0;
+    assert!((wide_center - (PDF_CONTENT_BOTTOM + PDF_CONTENT_TOP) / 2.0).abs() < 1e-6, "vertical centre {wide_center}");
+    assert!(wide.offset_y + 15.24 * wide.scale <= PDF_CONTENT_TOP + 1e-9);
+
+    // A tall drawing is limited by the printable height and is centred
+    // horizontally instead of hugging the left margin.
+    let tall = pdf_layout(10.0, 200.0);
+    let tall_center = tall.offset_x + 10.0 * tall.scale / 2.0;
+    assert!((tall_center - PDF_PAGE_WIDTH / 2.0).abs() < 1e-6, "horizontal centre {tall_center}");
+    assert!(tall.offset_x >= PDF_MARGIN - 1e-9);
+    assert!(tall.offset_x + 10.0 * tall.scale <= PDF_PAGE_WIDTH - PDF_MARGIN + 1e-9);
+    assert!(tall.offset_y >= PDF_CONTENT_BOTTOM - 1e-9);
+    assert!(tall.offset_y + 200.0 * tall.scale <= PDF_CONTENT_TOP + 1e-9);
 }
 
 #[test]
@@ -2139,14 +2251,32 @@ fn svg_export_annotates_nets_labels_and_draws_a_title_block() {
     let handle = created["handle"].as_u64().expect("handle");
     add_component(
         handle,
-        AddComponentRequest { sheet: None, reference: "R1".into(), value: "10k".into(), x: 40.0, y: 40.0, rotation: 0.0, pins: vec!["1".into(), "2".into()] },
+        AddComponentRequest {
+            sheet: None,
+            reference: "R1".into(),
+            value: "10k".into(),
+            x: 40.0,
+            y: 40.0,
+            rotation: 0.0,
+            pins: vec!["1".into(), "2".into()],
+        },
     )
     .expect("add component");
-    add_wire(handle, AddWireRequest { sheet: None, net: Some("VCC".into()), from: [10.0, 40.0], to: [27.30, 40.0] }).expect("add wire");
-    add_wire(handle, AddWireRequest { sheet: None, net: Some("VCC".into()), from: [10.0, 40.0], to: [10.0, 20.0] }).expect("add wire");
+    add_wire(handle, AddWireRequest { sheet: None, net: Some("VCC".into()), from: [10.0, 40.0], to: [27.30, 40.0] })
+        .expect("add wire");
+    add_wire(handle, AddWireRequest { sheet: None, net: Some("VCC".into()), from: [10.0, 40.0], to: [10.0, 20.0] })
+        .expect("add wire");
     add_label(
         handle,
-        AddLabelRequest { sheet: None, text: "N_IN".into(), x: 55.0, y: 40.0, scope: Some(LabelScope::Global), rotation: None, justify: None },
+        AddLabelRequest {
+            sheet: None,
+            text: "N_IN".into(),
+            x: 55.0,
+            y: 40.0,
+            scope: Some(LabelScope::Global),
+            rotation: None,
+            justify: None,
+        },
     )
     .expect("add label");
     add_no_connect(handle, AddNoConnectRequest { sheet: None, x: 52.70, y: 42.54, node: None }).expect("add no-connect");
@@ -6132,11 +6262,12 @@ fn pdf_replaces_the_resistor_box_with_the_zigzag_and_keeps_stub_endpoints() {
 
     export(handle, "pdf", &path).expect("export pdf");
     let text = fs::read_to_string(&path).expect("read pdf");
-    // The zigzag body between the unchanged stub roots, mapped at the same
-    // scale as before because the component extents did not move.
-    assert!(text.contains("292.67 228.50 m 324.75 292.67 l"), "{text}");
-    // The pin stub and its connection points are unchanged.
-    assert!(text.contains("0.5 w 100.17 228.50 m 36.00 228.50 l S"), "{text}");
+    // The zigzag body between the unchanged stub roots, shifted up so the
+    // drawing is centred in the printable area instead of sitting on the
+    // bottom margin.
+    assert!(text.contains("292.67 317.50 m 324.75 381.67 l"), "{text}");
+    // The pin stub and its connection points keep their horizontal mapping.
+    assert!(text.contains("0.5 w 100.17 317.50 m 36.00 317.50 l S"), "{text}");
     // The generic box path is gone.
     assert!(!text.contains("100.17 421.00 m"), "{text}");
     assert!(text.contains("(10k) Tj") && text.contains("(R1) Tj"), "{text}");
@@ -6146,14 +6277,9 @@ fn pdf_replaces_the_resistor_box_with_the_zigzag_and_keeps_stub_endpoints() {
 #[test]
 fn empty_design_exports_every_supported_format_without_panic() {
     let dir = TempDir::new("empty-export");
-    let created = create(CreateRequest {
-        title: Some("Empty".to_string()),
-        rev: None,
-        company: None,
-        date: None,
-        template: None,
-    })
-    .expect("an empty design is created");
+    let created =
+        create(CreateRequest { title: Some("Empty".to_string()), rev: None, company: None, date: None, template: None })
+            .expect("an empty design is created");
     let handle = created["handle"].as_u64().expect("the handle is a number");
     for format in SUPPORTED_EXPORTS {
         let target = dir.join(&format!("empty.{format}"));

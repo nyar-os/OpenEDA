@@ -4895,7 +4895,7 @@ pub fn close(handle: u64) -> Result<(), ServiceError> {
 
 /// Projects one open design to an exchange target.
 pub fn export(handle: u64, format: &str, path: &Path) -> Result<Value, ServiceError> {
-    export_with_variant(handle, format, path, None)
+    export_with_options(handle, format, path, None, None)
 }
 
 /// Projects one open design to an exchange target, optionally through a BOM
@@ -4906,6 +4906,24 @@ pub fn export(handle: u64, format: &str, path: &Path) -> Result<Value, ServiceEr
 /// and its value overrides replace the component value. Any other format rejects
 /// the variant instead of silently ignoring it.
 pub fn export_with_variant(handle: u64, format: &str, path: &Path, variant: Option<&str>) -> Result<Value, ServiceError> {
+    export_with_options(handle, format, path, variant, None)
+}
+
+/// Projects one open design to an exchange target, optionally through a BOM
+/// variant and optionally limited to one drawing sheet.
+///
+/// A sheet selection applies to the drawing projections `svg` and `pdf`: a
+/// selected export paints only that sheet, while the default paints every
+/// sheet. PDF gives every sheet its own page; SVG has one view, so selecting a
+/// sheet is the way to isolate overlapping multi-sheet drawings. Formats that
+/// do not paint a drawing reject the sheet instead of silently ignoring it.
+pub fn export_with_options(
+    handle: u64,
+    format: &str,
+    path: &Path,
+    variant: Option<&str>,
+    sheet: Option<&str>,
+) -> Result<Value, ServiceError> {
     if !SUPPORTED_EXPORTS.contains(&format) {
         return Err(not_implemented(&format!("export `{format}`")));
     }
@@ -4915,7 +4933,17 @@ pub fn export_with_variant(handle: u64, format: &str, path: &Path, variant: Opti
             format!("a BOM variant applies to `bom`, `bom_json` and `bom_html`, not `{format}`"),
         ));
     }
+    if sheet.is_some() && format != "svg" && format != "pdf" {
+        return Err(ServiceError::new(
+            "session/argument-invalid",
+            format!("a sheet selection applies to `svg` and `pdf`, not `{format}`"),
+        ));
+    }
     let design = with_session(handle, |session| Ok(session.design.clone()))?;
+    let sheets: Vec<&Sheet> = match sheet {
+        Some(needle) => vec![&design.sheets[sheet_index(&design, Some(needle))?]],
+        None => design.sheets.iter().collect(),
+    };
     let selected = match variant {
         Some(name) => Some(
             design
@@ -5010,10 +5038,10 @@ pub fn export_with_variant(handle: u64, format: &str, path: &Path, variant: Opti
         "svg" => {
             let artifact = json!({
                 "kind": "svg",
-                "components": design.sheets.iter().map(|sheet| sheet.components.len()).sum::<usize>(),
-                "wires": design.sheets.iter().map(|sheet| sheet.wires.len()).sum::<usize>(),
+                "components": sheets.iter().map(|sheet| sheet.components.len()).sum::<usize>(),
+                "wires": sheets.iter().map(|sheet| sheet.wires.len()).sum::<usize>(),
             });
-            (render_svg(&design), artifact)
+            (render_svg_for(&design, &sheets), artifact)
         }
         "bom" => {
             let rows = bom_rows(&design, selected);
@@ -5055,7 +5083,7 @@ pub fn export_with_variant(handle: u64, format: &str, path: &Path, variant: Opti
             (render_bom_html(&design, &rows, selected), artifact)
         }
         "pdf" => {
-            let (contents, dropped) = render_pdf(&design);
+            let (contents, dropped) = render_pdf_for(&design, &sheets);
             if dropped > 0 {
                 losses.push(json!({
                     "code": PDF_TEXT_ENCODING,
@@ -5064,10 +5092,10 @@ pub fn export_with_variant(handle: u64, format: &str, path: &Path, variant: Opti
             }
             let artifact = json!({
                 "kind": "pdf",
-                "pages": 1,
+                "pages": sheets.len().max(1),
                 "mediaBox": "a4-landscape",
-                "components": design.sheets.iter().map(|sheet| sheet.components.len()).sum::<usize>(),
-                "wires": design.sheets.iter().map(|sheet| sheet.wires.len()).sum::<usize>(),
+                "components": sheets.iter().map(|sheet| sheet.components.len()).sum::<usize>(),
+                "wires": sheets.iter().map(|sheet| sheet.wires.len()).sum::<usize>(),
             });
             (contents, artifact)
         }
@@ -8223,22 +8251,20 @@ fn push_svg_symbol(svg: &mut String, primitive: &SymbolPrimitive) {
     svg.push_str(&format!("      <{tag} points=\"{rendered}\" fill=\"{fill}\" stroke=\"#1f6feb\" stroke-width=\"0.5\"/>\n"));
 }
 
-fn render_svg(design: &Design) -> String {
-    let sheets: Vec<&Sheet> = design.sheets.iter().collect();
-    svg_projection(design, &sheets).document
+/// Projects exactly the listed sheets onto one SVG document.
+///
+/// The export writer passes every sheet unless the caller selects one, so the
+/// default drawing keeps every sheet and a selected export paints only that
+/// sheet.
+fn render_svg_for(design: &Design, sheets: &[&Sheet]) -> String {
+    svg_projection(design, sheets).document
 }
 
-/// Height of the title-block strip reserved below the schematic content, in
-/// design units. The strip carries the sheet name, design title, revision and
-/// counts instead of a bare border.
-const TITLE_BLOCK_HEIGHT: f64 = 14.0;
-
-/// Projects the given sheets onto one SVG document.
+/// Axis-aligned bounds of everything the SVG and PDF projections paint.
 ///
-/// The export writer passes every sheet; the preview passes exactly one, so the
-/// viewport and the painted geometry always describe the same sheet set. The
-/// design supplies the title-block text; only the listed sheets are painted.
-fn svg_projection(design: &Design, sheets: &[&Sheet]) -> SvgProjection {
+/// Returns `(min_x, min_y, max_x, max_y)` in design units. An empty sheet set
+/// keeps the placeholder extent so a renderer still has a finite viewport.
+fn drawing_bounds<'a>(sheets: impl IntoIterator<Item = &'a Sheet>) -> (f64, f64, f64, f64) {
     let mut min_x = f64::INFINITY;
     let mut min_y = f64::INFINITY;
     let mut max_x = f64::NEG_INFINITY;
@@ -8293,12 +8319,22 @@ fn svg_projection(design: &Design, sheets: &[&Sheet]) -> SvgProjection {
             max_y = max_y.max(flag.y + 1.0);
         }
     }
-    if !any {
-        min_x = 0.0;
-        min_y = 0.0;
-        max_x = 100.0;
-        max_y = 60.0;
-    }
+    if any { (min_x, min_y, max_x, max_y) } else { (0.0, 0.0, 100.0, 60.0) }
+}
+
+/// Height of the title-block strip reserved below the schematic content, in
+/// design units. The strip carries the sheet name, design title, revision and
+/// counts instead of a bare border.
+const TITLE_BLOCK_HEIGHT: f64 = 14.0;
+
+/// Projects the given sheets onto one SVG document.
+///
+/// The export writer passes every sheet unless a sheet is selected; the preview
+/// passes exactly one, so the viewport and the painted geometry always describe
+/// the same sheet set. The design supplies the title-block text; only the
+/// listed sheets are painted.
+fn svg_projection(design: &Design, sheets: &[&Sheet]) -> SvgProjection {
+    let (min_x, min_y, max_x, max_y) = drawing_bounds(sheets.iter().copied());
     let padding = 10.0;
     let view_x = min_x - padding;
     let view_y = min_y - padding;
@@ -8559,7 +8595,10 @@ fn push_svg_title_block(
     svg.push_str("  <g data-title-block=\"true\">\n");
     svg.push_str(&format!(
         "    <line x1=\"{:.2}\" y1=\"{:.2}\" x2=\"{:.2}\" y2=\"{:.2}\" stroke=\"#1f2933\" stroke-width=\"0.4\"/>\n",
-        view_x, strip_y, view_x + view_width, strip_y
+        view_x,
+        strip_y,
+        view_x + view_width,
+        strip_y
     ));
     let columns = [0.42, 0.24, 0.14, 0.20];
     let mut cursor = view_x;
@@ -8567,7 +8606,10 @@ fn push_svg_title_block(
         cursor += view_width * fraction;
         svg.push_str(&format!(
             "    <line x1=\"{:.2}\" y1=\"{:.2}\" x2=\"{:.2}\" y2=\"{:.2}\" stroke=\"#1f2933\" stroke-width=\"0.4\"/>\n",
-            cursor, strip_y, cursor, view_y + view_height
+            cursor,
+            strip_y,
+            cursor,
+            view_y + view_height
         ));
     }
     let cell_x = |index: usize| view_x + view_width * columns[..index].iter().sum::<f64>() + 1.5;
@@ -9203,97 +9245,94 @@ const PDF_MARGIN: f64 = 36.0;
 /// same sheet identity, revision and counts.
 const PDF_TITLE_BLOCK_PT: f64 = 40.0;
 
-/// Writes a one-page, A4 landscape vector PDF of every sheet.
+/// Lowest point a drawing may reach above the title-block strip, in points.
+const PDF_CONTENT_BOTTOM: f64 = PDF_MARGIN + PDF_TITLE_BLOCK_PT;
+
+/// Highest point a drawing may reach below the page header, in points.
+const PDF_CONTENT_TOP: f64 = PDF_PAGE_HEIGHT - PDF_MARGIN;
+
+/// Scale and origin that place one drawing inside the printable area.
+#[derive(Debug, Clone, Copy)]
+struct PdfLayout {
+    scale: f64,
+    offset_x: f64,
+    offset_y: f64,
+}
+
+/// Fits `span_x` by `span_y` design units into the printable area and centres
+/// the result between the margins and the title-block strip.
+fn pdf_layout(span_x: f64, span_y: f64) -> PdfLayout {
+    let usable_width = PDF_PAGE_WIDTH - 2.0 * PDF_MARGIN;
+    let usable_height = PDF_CONTENT_TOP - PDF_CONTENT_BOTTOM;
+    let scale = (usable_width / span_x).min(usable_height / span_y).max(0.001);
+    PdfLayout {
+        scale,
+        offset_x: PDF_MARGIN + (usable_width - span_x * scale) / 2.0,
+        offset_y: PDF_CONTENT_BOTTOM + (usable_height - span_y * scale) / 2.0,
+    }
+}
+
+/// Writes an A4 landscape vector PDF with one page per listed sheet.
 ///
-/// The writer emits the catalog, page tree, font and content stream with a
+/// The writer emits the catalog, page tree, font and content streams with a
 /// cross-reference table, so the file opens in a viewer instead of only
-/// starting with a PDF header.
-fn render_pdf(design: &Design) -> (String, usize) {
-    let mut min_x = f64::INFINITY;
-    let mut min_y = f64::INFINITY;
-    let mut max_x = f64::NEG_INFINITY;
-    let mut max_y = f64::NEG_INFINITY;
-    let mut any = false;
-    for sheet in &design.sheets {
-        for component in &sheet.components {
-            any = true;
-            let (min, max) = component_extents(component);
-            min_x = min_x.min(min[0]);
-            max_x = max_x.max(max[0]);
-            min_y = min_y.min(min[1]);
-            max_y = max_y.max(max[1]);
-        }
-        for wire in &sheet.wires {
-            any = true;
-            for point in [wire.from, wire.to] {
-                min_x = min_x.min(point[0]);
-                max_x = max_x.max(point[0]);
-                min_y = min_y.min(point[1]);
-                max_y = max_y.max(point[1]);
-            }
-        }
-        for junction in &sheet.junctions {
-            any = true;
-            min_x = min_x.min(junction.x);
-            max_x = max_x.max(junction.x);
-            min_y = min_y.min(junction.y);
-            max_y = max_y.max(junction.y);
-        }
-        for text in &sheet.texts {
-            any = true;
-            let width = text.text.chars().count() as f64 * 3.2 * 0.6;
-            min_x = min_x.min(text.x);
-            max_x = max_x.max(text.x + width);
-            min_y = min_y.min(text.y - 3.2);
-            max_y = max_y.max(text.y);
-        }
-        for label in &sheet.labels {
-            any = true;
-            let width = label.text.chars().count() as f64 * 2.8 * 0.6 + 2.0;
-            min_x = min_x.min(label.x);
-            max_x = max_x.max(label.x + width);
-            min_y = min_y.min(label.y - 4.0);
-            max_y = max_y.max(label.y + 1.0);
-        }
-        for flag in &sheet.no_connects {
-            any = true;
-            min_x = min_x.min(flag.x - 1.0);
-            max_x = max_x.max(flag.x + 1.0);
-            min_y = min_y.min(flag.y - 1.0);
-            max_y = max_y.max(flag.y + 1.0);
+/// starting with a PDF header. Every page carries its own sheet and keeps the
+/// drawing centred between the margins and the title-block strip.
+fn render_pdf_for(design: &Design, sheets: &[&Sheet]) -> (String, usize) {
+    let mut dropped = 0usize;
+    let total = sheets.len().max(1);
+    let mut pages = Vec::with_capacity(total);
+    if sheets.is_empty() {
+        pages.push(pdf_page(design, None, 0, 1, &mut dropped));
+    }
+    else {
+        for (index, sheet) in sheets.iter().enumerate() {
+            pages.push(pdf_page(design, Some(*sheet), index, total, &mut dropped));
         }
     }
-    if !any {
-        min_x = 0.0;
-        min_y = 0.0;
-        max_x = 100.0;
-        max_y = 60.0;
-    }
+    (assemble_pdf(&pages), dropped)
+}
+
+/// Builds one page content stream for one sheet.
+fn pdf_page(design: &Design, sheet: Option<&Sheet>, index: usize, total: usize, dropped: &mut usize) -> String {
+    let (min_x, min_y, max_x, max_y) = match sheet {
+        Some(sheet) => drawing_bounds(std::iter::once(sheet)),
+        None => (0.0, 0.0, 100.0, 60.0),
+    };
     let span_x = (max_x - min_x).max(1.0);
     let span_y = (max_y - min_y).max(1.0);
-    let scale =
-        ((PDF_PAGE_WIDTH - 2.0 * PDF_MARGIN) / span_x).min((PDF_PAGE_HEIGHT - 2.0 * PDF_MARGIN - PDF_TITLE_BLOCK_PT) / span_y).max(0.001);
-    let map_x = |x: f64| PDF_MARGIN + (x - min_x) * scale;
-    let map_y = |y: f64| PDF_MARGIN + (max_y - y) * scale;
+    let layout = pdf_layout(span_x, span_y);
+    let scale = layout.scale;
+    let map_x = |x: f64| layout.offset_x + (x - min_x) * scale;
+    let map_y = |y: f64| layout.offset_y + (max_y - y) * scale;
     let label_size = (7.0f64).max((3.2 * scale).min(9.0));
 
-    let mut dropped = 0usize;
     let mut pdf_literal = |text: &str| {
         let (literal, count) = pdf_text(text);
-        dropped += count;
+        *dropped += count;
         literal
     };
     let mut content = String::new();
     content.push_str(&format!("0.4 w 0 0 {PDF_PAGE_WIDTH:.2} {PDF_PAGE_HEIGHT:.2} re S\n"));
-    let sheets_label =
-        design.sheets.iter().map(|sheet| format!("{}: {}", sheet.id, sheet.name)).collect::<Vec<_>>().join(" | ");
+    let header = match sheet {
+        Some(sheet) => format!(
+            "OpenEDA {} revision {} | sheet {}: {} ({}/{})",
+            design.id,
+            design.revision,
+            sheet.id,
+            sheet.name,
+            index + 1,
+            total
+        ),
+        None => format!("OpenEDA {} revision {}", design.id, design.revision),
+    };
     content.push_str(&format!(
         "BT /F1 9 Tf {:.2} {:.2} Td {} Tj ET\n",
         PDF_MARGIN,
         PDF_PAGE_HEIGHT - 16.0,
-        pdf_literal(&format!("OpenEDA {} revision {} | {}", design.id, design.revision, sheets_label))
+        pdf_literal(&header)
     ));
-    for sheet in &design.sheets {
+    for sheet in sheet.iter() {
         for wire in &sheet.wires {
             content.push_str(&format!(
                 "0.6 w {:.2} {:.2} m {:.2} {:.2} l S\n",
@@ -9479,18 +9518,27 @@ fn render_pdf(design: &Design) -> (String, usize) {
             }
         }
     }
-    push_pdf_title_block(&mut content, design, &mut dropped);
+    push_pdf_title_block(&mut content, design, sheet, index, total, dropped);
+    content
+}
 
-    let objects = [
-        "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
-        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
-        format!(
+/// Wraps the page content streams into a complete PDF document.
+fn assemble_pdf(pages: &[String]) -> String {
+    let page_count = pages.len();
+    let font_object = 3 + page_count * 2;
+    let mut objects = vec!["<< /Type /Catalog /Pages 2 0 R >>".to_string()];
+    let kids = (0..page_count).map(|index| format!("{} 0 R", 3 + index * 2)).collect::<Vec<_>>().join(" ");
+    objects.push(format!("<< /Type /Pages /Kids [{kids}] /Count {page_count} >>"));
+    for (index, content) in pages.iter().enumerate() {
+        let page_object = 3 + index * 2;
+        objects.push(format!(
             "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {PDF_PAGE_WIDTH:.0} {PDF_PAGE_HEIGHT:.0}] \
-             /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>"
-        ),
-        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_string(),
-        format!("<< /Length {} >>\nstream\n{}endstream", content.len(), content),
-    ];
+             /Resources << /Font << /F1 {font_object} 0 R >> >> /Contents {} 0 R >>",
+            page_object + 1
+        ));
+        objects.push(format!("<< /Length {} >>\nstream\n{}endstream", content.len(), content));
+    }
+    objects.push("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_string());
 
     let mut pdf = String::from("%PDF-1.4\n");
     let mut offsets = Vec::with_capacity(objects.len());
@@ -9505,23 +9553,31 @@ fn render_pdf(design: &Design) -> (String, usize) {
         pdf.push_str(&format!("{offset:010} 00000 n \n"));
     }
     pdf.push_str(&format!("trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n", objects.len() + 1));
-    (pdf, dropped)
+    pdf
 }
 
 /// Appends the PDF title-block strip along the bottom of the page.
 ///
 /// The strip mirrors the SVG title block: design title, sheet identity,
 /// revision and content counts, all taken from the document so the page stays
-/// byte-deterministic.
-fn push_pdf_title_block(content: &mut String, design: &Design, dropped: &mut usize) {
-    let strip_top = PDF_MARGIN + PDF_TITLE_BLOCK_PT;
+/// byte-deterministic. It only names the sheet painted on this page, so a
+/// multi-page export never advertises another page's content.
+fn push_pdf_title_block(
+    content: &mut String,
+    design: &Design,
+    sheet: Option<&Sheet>,
+    page_index: usize,
+    page_total: usize,
+    dropped: &mut usize,
+) {
+    let strip_top = PDF_CONTENT_BOTTOM;
     let left = PDF_MARGIN;
     let right = PDF_PAGE_WIDTH - PDF_MARGIN;
     let width = right - left;
-    let components: usize = design.sheets.iter().map(|sheet| sheet.components.len()).sum();
-    let wires: usize = design.sheets.iter().map(|sheet| sheet.wires.len()).sum();
+    let components = sheet.map_or(0, |sheet| sheet.components.len());
+    let wires = sheet.map_or(0, |sheet| sheet.wires.len());
     let title = design.title.as_deref().filter(|title| !title.trim().is_empty()).unwrap_or(&design.id);
-    let sheet_names = design.sheets.iter().map(|sheet| sheet.name.as_str()).collect::<Vec<_>>().join(", ");
+    let sheet_name = sheet.map_or("-", |sheet| sheet.name.as_str());
     let rev = if design.rev.trim().is_empty() { "-" } else { design.rev.as_str() };
     content.push_str(&format!("0.4 w 0 0 0 RG {left:.2} {strip_top:.2} m {right:.2} {strip_top:.2} l S\n"));
     let columns = [0.42, 0.24, 0.14, 0.20];
@@ -9547,8 +9603,8 @@ fn push_pdf_title_block(content: &mut String, design: &Design, dropped: &mut usi
         }
         line(cell_x(0), strip_top - 24.0, 7.0, "0.4", &parts.join(" | "));
     }
-    line(cell_x(1), strip_top - 12.0, 7.5, "0", &sheet_names);
-    line(cell_x(1), strip_top - 24.0, 6.5, "0.4", &format!("{} sheet(s)", design.sheets.len()));
+    line(cell_x(1), strip_top - 12.0, 7.5, "0", sheet_name);
+    line(cell_x(1), strip_top - 24.0, 6.5, "0.4", &format!("page {} of {}", page_index + 1, page_total));
     line(cell_x(2), strip_top - 12.0, 8.0, "0", &format!("REV {rev}"));
     line(cell_x(2), strip_top - 24.0, 6.5, "0.4", &format!("units: {}", design.units));
     line(cell_x(3), strip_top - 12.0, 6.5, "0.4", &format!("{components} parts / {wires} wires"));
