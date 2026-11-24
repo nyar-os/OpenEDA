@@ -83,6 +83,7 @@ fn capability_matrix_reports_only_the_implemented_entries() {
     assert_eq!(matrix["edits"]["pinSwap"], "supported");
     assert_eq!(matrix["edits"]["annotate"], "supported");
     assert_eq!(matrix["edits"]["netRename"], "supported");
+    assert_eq!(matrix["edits"]["wireSplit"], "supported");
     assert_eq!(matrix["queries"]["component"], "supported");
     assert_eq!(matrix["queries"]["net"], "supported");
     assert_eq!(matrix["queries"]["trace"], "supported");
@@ -1383,47 +1384,6 @@ fn wires_can_be_listed_and_updated_in_place() {
     )
     .expect_err("non-finite point");
     assert_eq!(infinite.code, "session/argument-invalid");
-    close(handle).expect("close");
-}
-
-#[test]
-fn wires_split_at_a_point_on_the_segment() {
-    let created = create(CreateRequest::default()).expect("create");
-    let handle = created["handle"].as_u64().expect("handle");
-    add_wire(handle, AddWireRequest { sheet: None, net: Some("VCC".to_string()), from: [0.0, 0.0], to: [10.0, 0.0] })
-        .expect("add wire");
-
-    let split =
-        split_wire(handle, SplitWireRequest { sheet: None, id: "wire-1".to_string(), x: 4.0, y: 0.0 }).expect("split wire");
-    assert_eq!(split["first"]["id"], "wire-1");
-    assert_eq!(split["first"]["to"], json!([4.0, 0.0]));
-    assert_eq!(split["second"]["id"], "wire-2");
-    assert_eq!(split["second"]["from"], json!([4.0, 0.0]));
-    assert_eq!(split["second"]["to"], json!([10.0, 0.0]));
-    assert_eq!(split["second"]["net"], "VCC");
-    assert_eq!(split["revision"], 3);
-
-    let listed = list_wires(handle, None).expect("list wires");
-    assert_eq!(listed["wires"].as_array().expect("wires").len(), 2);
-    assert_eq!(listed["wires"][1]["id"], "wire-2");
-
-    let endpoint =
-        split_wire(handle, SplitWireRequest { sheet: None, id: "wire-2".to_string(), x: 10.0, y: 0.0 }).expect_err("endpoint");
-    assert_eq!(endpoint.code, "session/argument-invalid");
-    let off_segment = split_wire(handle, SplitWireRequest { sheet: None, id: "wire-2".to_string(), x: 6.0, y: 1.0 })
-        .expect_err("off segment");
-    assert_eq!(off_segment.code, "session/argument-invalid");
-    let infinite = split_wire(handle, SplitWireRequest { sheet: None, id: "wire-2".to_string(), x: f64::INFINITY, y: 0.0 })
-        .expect_err("non-finite point");
-    assert_eq!(infinite.code, "session/argument-invalid");
-    let missing = split_wire(handle, SplitWireRequest { sheet: None, id: "wire-9".to_string(), x: 6.0, y: 0.0 })
-        .expect_err("unknown wire");
-    assert_eq!(missing.code, "object/not-found");
-
-    let second_split = split_wire(handle, SplitWireRequest { sheet: None, id: "wire-2".to_string(), x: 7.0, y: 0.0 })
-        .expect("split the second segment");
-    assert_eq!(second_split["second"]["id"], "wire-3");
-    assert_eq!(list_wires(handle, None).expect("list")["wires"].as_array().expect("wires").len(), 3);
     close(handle).expect("close");
 }
 

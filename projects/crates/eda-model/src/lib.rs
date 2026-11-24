@@ -1425,7 +1425,8 @@ pub struct Waiver {
 /// `edits.pins` is `supported` because [`add_pin`], [`remove_pin`] and
 /// [`rename_pin`] exist and are covered by tests. Reference annotation is an
 /// editing surface as well: `edits.annotate` is `supported` because [`annotate`]
-/// exists and is covered by tests.
+/// exists and is covered by tests. Wire splitting reports `edits.wireSplit` as
+/// `supported` because [`split_wire`] exists and is covered by tests.
 ///
 /// Read-only queries live under `queries`, next to `checks`: `queries.trace`
 /// reports the pin-to-pin path query of [`trace_pins`] and `queries.net` reports
@@ -1474,6 +1475,7 @@ pub fn capabilities() -> Value {
         "pinSwap": level("edit.pin-swap".to_string()),
         "annotate": level("edit.annotate".to_string()),
         "netRename": level("edit.net-rename".to_string()),
+        "wireSplit": level("edit.wire-split".to_string()),
     });
 
     let mut queries = Map::new();
@@ -1525,6 +1527,7 @@ fn capability_matrix() -> CapabilityMatrix {
     matrix.insert(Capability::new("edit.pin-swap", "edit", Support::Supported));
     matrix.insert(Capability::new("edit.annotate", "edit", Support::Supported));
     matrix.insert(Capability::new("edit.net-rename", "edit", Support::Supported));
+    matrix.insert(Capability::new("edit.wire-split", "edit", Support::Supported));
     matrix.insert(Capability::new("query.component", "query", Support::Supported));
     matrix.insert(Capability::new("query.net", "query", Support::Supported));
     matrix.insert(Capability::new("query.trace", "query", Support::Supported));
@@ -4123,8 +4126,11 @@ pub fn update_wire(handle: u64, request: UpdateWireRequest) -> Result<Value, Ser
 /// The original segment keeps its identity and now ends at the split point; a
 /// new segment starts there and keeps the old endpoint and net assignment. The
 /// point must lie on the segment and strictly between its endpoints, so a split
-/// always yields two non-zero-length segments. The payload reports both
-/// segments as `first` (the original id) and `second` (the new id).
+/// always yields two non-zero-length segments. An unknown wire id is
+/// `wire/not-found`; a point off the segment, on an endpoint or on a
+/// zero-length wire is `wire/split-point-not-interior`, and a non-finite
+/// coordinate is `session/argument-invalid`. The payload reports both segments
+/// as `first` (the original id) and `second` (the new id).
 pub fn split_wire(handle: u64, request: SplitWireRequest) -> Result<Value, ServiceError> {
     if !request.x.is_finite() || !request.y.is_finite() {
         return Err(ServiceError::new("session/argument-invalid", "wire coordinates must be finite numbers"));
@@ -4132,11 +4138,10 @@ pub fn split_wire(handle: u64, request: SplitWireRequest) -> Result<Value, Servi
     mutate(handle, |design| {
         let index = sheet_index(design, request.sheet.as_deref())?;
         let sheet = &mut design.sheets[index];
-        let position = sheet
-            .wires
-            .iter()
-            .position(|wire| wire.id == request.id)
-            .ok_or_else(|| not_found(format!("no wire `{}` is drawn on this sheet", request.id)))?;
+        let position =
+            sheet.wires.iter().position(|wire| wire.id == request.id).ok_or_else(|| {
+                ServiceError::new("wire/not-found", format!("no wire `{}` is drawn on this sheet", request.id))
+            })?;
         let original = sheet.wires[position].clone();
         let [x0, y0] = original.from;
         let [x1, y1] = original.to;
@@ -4144,7 +4149,10 @@ pub fn split_wire(handle: u64, request: SplitWireRequest) -> Result<Value, Servi
         let delta_y = y1 - y0;
         let length_squared = delta_x * delta_x + delta_y * delta_y;
         if length_squared == 0.0 {
-            return Err(ServiceError::new("session/argument-invalid", "a zero-length wire cannot be split"));
+            return Err(ServiceError::new(
+                "wire/split-point-not-interior",
+                "a zero-length wire has no interior point to split at",
+            ));
         }
         let length = length_squared.sqrt();
         let along = ((request.x - x0) * delta_x + (request.y - y0) * delta_y) / length_squared;
@@ -4152,7 +4160,7 @@ pub fn split_wire(handle: u64, request: SplitWireRequest) -> Result<Value, Servi
         let tolerance = 1.0e-9 * length.max(1.0);
         if perpendicular > tolerance || along <= 1.0e-9 || along >= 1.0 - 1.0e-9 {
             return Err(ServiceError::new(
-                "session/argument-invalid",
+                "wire/split-point-not-interior",
                 "the split point must lie on the segment and strictly between its endpoints",
             ));
         }
@@ -9592,6 +9600,10 @@ fn write_atomic(path: &Path, contents: &str, overwrite: bool) -> Result<usize, S
 #[cfg(test)]
 #[path = "../tests/unit/lib.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "../tests/unit/wire_split.rs"]
+mod wire_split_tests;
 
 #[cfg(test)]
 #[path = "../tests/unit/trace.rs"]
