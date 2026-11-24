@@ -372,6 +372,52 @@ test('history, sheets and deep edits stay referentially sound', { skip: withoutA
     }
 });
 
+test('wire split keeps the net and refuses non-interior points', { skip: withoutAddon }, async () => {
+    const eda = new OpenEDA();
+    try {
+        const design = await eda.create();
+        await design.addWire({ net: 'VCC', from: [0, 0], to: [10, 0] });
+        await design.addWire({ net: 'GND', from: [0, 5], to: [10, 5] });
+        const before = design.summary.revision;
+
+        const split = await design.splitWire({ id: 'wire-1', x: 4, y: 0 });
+        assert.equal(split.first.id, 'wire-1');
+        assert.deepEqual(split.first.from, [0, 0]);
+        assert.deepEqual(split.first.to, [4, 0]);
+        assert.equal(split.first.net, 'VCC');
+        assert.equal(split.second.id, 'wire-3');
+        assert.deepEqual(split.second.from, [4, 0]);
+        assert.deepEqual(split.second.to, [10, 0]);
+        assert.equal(split.second.net, 'VCC');
+        assert.equal(design.summary.revision, before + 1);
+
+        const wires = await design.listWires();
+        assert.deepEqual(
+            wires.map((wire) => wire.id),
+            ['wire-1', 'wire-2', 'wire-3'],
+            'the first segment keeps its place and the new one is appended',
+        );
+
+        for (const [x, y] of [[0, 0], [10, 0], [4, 1], [12, 0]] as const) {
+            await assert.rejects(
+                design.splitWire({ id: 'wire-1', x, y }),
+                (error: unknown) => error instanceof OpenEDAError && error.code === 'wire/split-point-not-interior',
+            );
+        }
+        await assert.rejects(
+            design.splitWire({ id: 'wire-9', x: 5, y: 0 }),
+            (error: unknown) => error instanceof OpenEDAError && error.code === 'wire/not-found',
+        );
+        assert.equal(design.summary.revision, before + 1, 'a refused split never bumps the revision');
+
+        await design.undo();
+        assert.equal((await design.listWires()).length, 2, 'one undo restores the unsplit segment');
+        await design.close();
+    } finally {
+        await eda.dispose();
+    }
+});
+
 test('sidecar history persists undo and redo across sessions', { skip: withoutAddon }, async () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'open-eda-sidecar-'));
     const document = path.join(directory, 'sidecar.oeda');
@@ -1073,6 +1119,56 @@ test('junction and no-connect commands edit a document in place', { skip: withou
         result = run('no-connect', 'list', target);
         assert.equal(result.status, 0, result.stderr);
         assert.match(result.stdout, /count=0/);
+    } finally {
+        if (copiedLocales) {
+            fs.rmSync(generatedLocales, { recursive: true, force: true });
+        }
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
+});
+
+test('wire split command edits a document and reports refusals', { skip: withoutAddon }, () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'open-eda-cli-wire-split-'));
+    const target = path.join(directory, 'wire-split.oeda');
+    const testDirectory = path.dirname(fileURLToPath(import.meta.url));
+    const cli = fileURLToPath(new URL('../src/cli.js', import.meta.url));
+    const generatedLocales = path.resolve(testDirectory, '../locales');
+    const sourceLocales = path.resolve(testDirectory, '../../locales');
+    const copiedLocales = !fs.existsSync(generatedLocales);
+    if (copiedLocales) {
+        fs.cpSync(sourceLocales, generatedLocales, { recursive: true });
+    }
+    const run = (...args: string[]) => spawnSync(process.execPath, [cli, ...args], { encoding: 'utf8' });
+    try {
+        assert.equal(run('create', '--out', target).status, 0);
+        let result = run('component', 'add', target, '--ref', 'R1', '--value', '10k', '--x', '0', '--y', '0', '--pins', '1,2');
+        assert.equal(result.status, 0, result.stderr);
+        result = run('net', 'connect', target, '--net', 'VCC', '--nodes', 'R1.1');
+        assert.equal(result.status, 0, result.stderr);
+        result = run('wire', 'add', target, '--net', 'VCC', '--from', '0,0', '--to', '10,0');
+        assert.equal(result.status, 0, result.stderr);
+
+        result = run('wire', 'split', target, '--id', 'wire-1', '--x', '4', '--y', '0');
+        assert.equal(result.status, 0, result.stderr);
+        assert.match(result.stdout, /split wire-1 into wire-1 and wire-2/);
+
+        result = run('wire', 'list', target);
+        assert.equal(result.status, 0, result.stderr);
+        assert.match(result.stdout, /count=2/);
+        assert.match(result.stdout, /wire-1 VCC \(0, 0\) -> \(4, 0\)/);
+        assert.match(result.stdout, /wire-2 VCC \(4, 0\) -> \(10, 0\)/);
+
+        result = run('wire', 'split', target, '--id', 'wire-1', '--x', '0', '--y', '0');
+        assert.equal(result.status, 1);
+        assert.match(result.stdout + result.stderr, /split point must lie on the segment/);
+
+        result = run('wire', 'split', target, '--id', 'wire-9', '--x', '5', '--y', '0');
+        assert.equal(result.status, 1);
+        assert.match(result.stdout + result.stderr, /no wire `wire-9`/);
+
+        result = run('wire', 'split', target, '--id', 'wire-1');
+        assert.equal(result.status, 1, result.stdout + result.stderr);
+        assert.match(result.stdout + result.stderr, /open-eda\.cli\.arguments-invalid/);
     } finally {
         if (copiedLocales) {
             fs.rmSync(generatedLocales, { recursive: true, force: true });

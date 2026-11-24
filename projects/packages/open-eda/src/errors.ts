@@ -24,6 +24,8 @@ export const errorCodes = [
     'no-connect/pin-missing',
     'no-connect/not-found',
     'net/not-found',
+    'wire/not-found',
+    'wire/split-point-not-interior',
     'trace/component-missing',
     'trace/pin-missing',
     'sheet/not-found',
