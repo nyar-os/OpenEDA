@@ -454,12 +454,34 @@ fn render_net_label(out: &mut String, design: &Design, sheet: &Sheet, index: usi
     ));
 }
 
-/// Uses the placement of the component behind the first node, or the origin.
+/// Anchors the synthesized label on the net's own wires: the wire end closest to
+/// the component behind the first node, so the label sits on a pin connection
+/// point. Falls back to that component's anchor, then the origin.
 fn net_position(sheet: &Sheet, net: &Net) -> (f64, f64) {
-    for node in &net.nodes {
-        if let Some(component) = sheet.components.iter().find(|component| component.reference == node.reference) {
-            return (component.x, component.y);
+    let anchor = net
+        .nodes
+        .first()
+        .and_then(|node| sheet.components.iter().find(|component| component.reference == node.reference))
+        .map(|component| (component.x, component.y));
+    let mut best: Option<((f64, f64), f64)> = None;
+    for wire in sheet.wires.iter().filter(|wire| wire.net.as_deref() == Some(net.name.as_str())) {
+        for end in [wire.from, wire.to] {
+            let point = (end[0], end[1]);
+            let distance = anchor.map_or(0.0, |(x, y)| (point.0 - x).hypot(point.1 - y));
+            let better = match best {
+                None => true,
+                Some((_, score)) => distance < score,
+            };
+            if better {
+                best = Some((point, distance));
+            }
         }
+    }
+    if let Some((point, _)) = best {
+        return point;
+    }
+    if let Some(point) = anchor {
+        return point;
     }
     (0.0, 0.0)
 }
