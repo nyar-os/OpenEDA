@@ -3,7 +3,8 @@
 use std::path::Path;
 
 use open_eda_model::{
-    AddComponentRequest, AddTextRequest, AddWireRequest, CreateRequest, add_component, add_text, add_wire, create, export,
+    AddComponentRequest, AddJunctionRequest, AddLabelRequest, AddNoConnectRequest, AddTextRequest, AddWireRequest, CreateRequest,
+    LabelScope, add_component, add_junction, add_label, add_no_connect, add_text, add_wire, create, export,
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -30,6 +31,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ("R2", "330", 95.0, 55.0, vec!["1".to_string(), "2".to_string()]),
         ("C1", "100n", 20.0, 38.73, vec!["1".to_string(), "2".to_string()]),
         ("D1", "LED", 130.0, 55.0, vec!["A".to_string(), "K".to_string()]),
+        ("J1", "CONN", 145.0, 25.0, vec!["1".to_string(), "2".to_string()]),
     ];
     for (reference, value, x, y, pins) in parts {
         add_component(
@@ -64,6 +66,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         add_wire(handle, AddWireRequest { sheet: None, net: net.map(str::to_string), from, to })?;
     }
     add_text(handle, AddTextRequest { sheet: None, text: "Demo schematic".into(), x: 4.76, y: 72.0 })?;
+
+    // Connection dots where the GND risers meet the bottom rail.
+    for x in [44.76, 145.24] {
+        add_junction(handle, AddJunctionRequest { sheet: None, x, y: 64.0 })?;
+    }
+    // Net labels: a global power label, a local signal label and a hierarchy port.
+    add_label(handle, AddLabelRequest { sheet: None, text: "VCC".into(), x: 60.0, y: 13.5, scope: Some(LabelScope::Global), rotation: None, justify: None })?;
+    add_label(handle, AddLabelRequest { sheet: None, text: "IO1".into(), x: 78.5, y: 33.0, scope: Some(LabelScope::Local), rotation: None, justify: None })?;
+    add_label(handle, AddLabelRequest { sheet: None, text: "LED".into(), x: 112.5, y: 50.0, scope: Some(LabelScope::Hierarchical), rotation: None, justify: None })?;
+    // J1 pin 2 is deliberately left open.
+    add_no_connect(
+        handle,
+        AddNoConnectRequest { sheet: None, x: 160.24, y: 25.0, node: Some(open_eda_model::Node { reference: "J1".into(), pin: "2".into() }) },
+    )?;
 
     for format in ["svg", "pdf"] {
         let target = out.join(format!("demo-schematic.{format}"));
