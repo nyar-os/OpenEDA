@@ -5223,7 +5223,7 @@ pub fn render(handle: u64, format: &str, sheet: Option<&str>) -> Result<Value, S
             .ok_or_else(|| ServiceError::new("sheet/not-found", format!("sheet `{needle}` is not part of this design")))?,
     };
     let target = &design.sheets[index];
-    let projection = svg_projection(&[target]);
+    let projection = svg_projection(&design, &[target]);
     Ok(json!({
         "revision": design.revision,
         "format": "svg",
@@ -8206,14 +8206,20 @@ fn push_svg_symbol(svg: &mut String, primitive: &SymbolPrimitive) {
 
 fn render_svg(design: &Design) -> String {
     let sheets: Vec<&Sheet> = design.sheets.iter().collect();
-    svg_projection(&sheets).document
+    svg_projection(design, &sheets).document
 }
+
+/// Height of the title-block strip reserved below the schematic content, in
+/// design units. The strip carries the sheet name, design title, revision and
+/// counts instead of a bare border.
+const TITLE_BLOCK_HEIGHT: f64 = 14.0;
 
 /// Projects the given sheets onto one SVG document.
 ///
 /// The export writer passes every sheet; the preview passes exactly one, so the
-/// viewport and the painted geometry always describe the same sheet set.
-fn svg_projection(sheets: &[&Sheet]) -> SvgProjection {
+/// viewport and the painted geometry always describe the same sheet set. The
+/// design supplies the title-block text; only the listed sheets are painted.
+fn svg_projection(design: &Design, sheets: &[&Sheet]) -> SvgProjection {
     let mut min_x = f64::INFINITY;
     let mut min_y = f64::INFINITY;
     let mut max_x = f64::NEG_INFINITY;
@@ -8252,6 +8258,21 @@ fn svg_projection(sheets: &[&Sheet]) -> SvgProjection {
             min_y = min_y.min(text.y - 3.2);
             max_y = max_y.max(text.y);
         }
+        for label in &sheet.labels {
+            any = true;
+            let width = label.text.chars().count() as f64 * 2.8 * 0.6 + 2.0;
+            min_x = min_x.min(label.x);
+            max_x = max_x.max(label.x + width);
+            min_y = min_y.min(label.y - 4.0);
+            max_y = max_y.max(label.y + 1.0);
+        }
+        for flag in &sheet.no_connects {
+            any = true;
+            min_x = min_x.min(flag.x - 1.0);
+            max_x = max_x.max(flag.x + 1.0);
+            min_y = min_y.min(flag.y - 1.0);
+            max_y = max_y.max(flag.y + 1.0);
+        }
     }
     if !any {
         min_x = 0.0;
@@ -8263,7 +8284,7 @@ fn svg_projection(sheets: &[&Sheet]) -> SvgProjection {
     let view_x = min_x - padding;
     let view_y = min_y - padding;
     let view_width = (max_x - min_x + 2.0 * padding).max(1.0);
-    let view_height = (max_y - min_y + 2.0 * padding).max(1.0);
+    let view_height = (max_y - min_y + 2.0 * padding).max(1.0) + TITLE_BLOCK_HEIGHT;
     // The SVG viewBox counts millimetres. A standalone file opens at eight
     // pixels per millimetre so pin labels and references stay legible instead
     // of rendering as a postage stamp.
@@ -8293,6 +8314,85 @@ fn svg_projection(sheets: &[&Sheet]) -> SvgProjection {
                 "    <circle cx=\"{:.2}\" cy=\"{:.2}\" r=\"1.4\" fill=\"#1f2933\" data-junction=\"true\"/>\n",
                 junction.x, junction.y
             ));
+        }
+        for flag in &sheet.no_connects {
+            svg.push_str(&format!(
+                "    <path d=\"M {:.2} {:.2} L {:.2} {:.2} M {:.2} {:.2} L {:.2} {:.2}\" stroke=\"#b91c1c\" stroke-width=\"0.35\" fill=\"none\" data-no-connect=\"true\"/>\n",
+                flag.x - 0.7,
+                flag.y - 0.7,
+                flag.x + 0.7,
+                flag.y + 0.7,
+                flag.x - 0.7,
+                flag.y + 0.7,
+                flag.x + 0.7,
+                flag.y - 0.7
+            ));
+        }
+        for (net, (from, to)) in net_name_anchors(sheet) {
+            let mid_x = (from[0] + to[0]) / 2.0;
+            let mid_y = (from[1] + to[1]) / 2.0 - 1.0;
+            svg.push_str(&format!(
+                "    <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"2.2\" text-anchor=\"middle\" fill=\"#64748b\" data-net=\"{}\">{}</text>\n",
+                mid_x,
+                mid_y,
+                escape_xml(&net),
+                escape_xml(&net)
+            ));
+        }
+        for label in &sheet.labels {
+            let width = label.text.chars().count() as f64 * 2.8 * 0.6;
+            match label.scope {
+                LabelScope::Local => {
+                    svg.push_str(&format!(
+                        "    <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"2.8\" text-anchor=\"start\" fill=\"#0f766e\">{}</text>\n",
+                        label.x,
+                        label.y,
+                        escape_xml(&label.text)
+                    ));
+                    svg.push_str(&format!(
+                        "    <line x1=\"{:.2}\" y1=\"{:.2}\" x2=\"{:.2}\" y2=\"{:.2}\" stroke=\"#0f766e\" stroke-width=\"0.3\"/>\n",
+                        label.x,
+                        label.y + 0.6,
+                        label.x + width,
+                        label.y + 0.6
+                    ));
+                }
+                LabelScope::Global => {
+                    svg.push_str(&format!(
+                        "    <rect x=\"{:.2}\" y=\"{:.2}\" width=\"{:.2}\" height=\"4.2\" rx=\"0.8\" fill=\"#ffffff\" stroke=\"#b91c1c\" stroke-width=\"0.35\"/>\n",
+                        label.x - 0.6,
+                        label.y - 3.4,
+                        width + 1.2
+                    ));
+                    svg.push_str(&format!(
+                        "    <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"2.8\" text-anchor=\"start\" fill=\"#b91c1c\">{}</text>\n",
+                        label.x,
+                        label.y,
+                        escape_xml(&label.text)
+                    ));
+                }
+                LabelScope::Hierarchical => {
+                    svg.push_str(&format!(
+                        "    <polygon points=\"{:.2},{:.2} {:.2},{:.2} {:.2},{:.2} {:.2},{:.2} {:.2},{:.2}\" fill=\"#ffffff\" stroke=\"#15803d\" stroke-width=\"0.35\"/>\n",
+                        label.x,
+                        label.y + 0.8,
+                        label.x + 1.6,
+                        label.y - 1.3,
+                        label.x,
+                        label.y - 3.4,
+                        label.x + width + 1.2,
+                        label.y - 3.4,
+                        label.x + width + 1.2,
+                        label.y + 0.8
+                    ));
+                    svg.push_str(&format!(
+                        "    <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"2.8\" text-anchor=\"start\" fill=\"#15803d\">{}</text>\n",
+                        label.x + 1.8,
+                        label.y,
+                        escape_xml(&label.text)
+                    ));
+                }
+            }
         }
         for text in &sheet.texts {
             svg.push_str(&format!(
@@ -8358,8 +8458,135 @@ fn svg_projection(sheets: &[&Sheet]) -> SvgProjection {
         }
         svg.push_str("  </g>\n");
     }
+    push_svg_title_block(&mut svg, design, sheets, view_x, view_y, view_width, view_height);
     svg.push_str("</svg>\n");
     SvgProjection { document: svg, width, height }
+}
+
+/// Picks one anchor wire per net: the longest segment carrying that net name.
+///
+/// The net name is painted once at the midpoint of that segment so the sheet
+/// reads like an annotated schematic without repeating the label on every
+/// wire. Nets without a name (free wires) are skipped. Deterministic: equal
+/// lengths keep the first wire in document order.
+fn net_name_anchors(sheet: &Sheet) -> Vec<(String, ([f64; 2], [f64; 2]))> {
+    let mut best: BTreeMap<&str, (String, f64, ([f64; 2], [f64; 2]))> = BTreeMap::new();
+    for wire in &sheet.wires {
+        let Some(net) = &wire.net
+        else {
+            continue;
+        };
+        let length = (wire.to[0] - wire.from[0]).powi(2) + (wire.to[1] - wire.from[1]).powi(2);
+        match best.get(net.as_str()) {
+            Some((_, longest, _)) if *longest >= length => {}
+            _ => {
+                best.insert(net.as_str(), (net.clone(), length, (wire.from, wire.to)));
+            }
+        }
+    }
+    best.into_values().map(|(net, _, segment)| (net, segment)).collect()
+}
+
+/// Paints the title-block strip along the bottom of the sheet frame.
+///
+/// The strip is split into four cells: design title (with company below),
+/// sheet identity, revision block and content counts. Every value comes from
+/// the document itself, so the projection stays byte-deterministic.
+fn push_svg_title_block(
+    svg: &mut String,
+    design: &Design,
+    sheets: &[&Sheet],
+    view_x: f64,
+    view_y: f64,
+    view_width: f64,
+    view_height: f64,
+) {
+    let strip_y = view_y + view_height - TITLE_BLOCK_HEIGHT;
+    let components: usize = sheets.iter().map(|sheet| sheet.components.len()).sum();
+    let wires: usize = sheets.iter().map(|sheet| sheet.wires.len()).sum();
+    let title = design.title.as_deref().filter(|title| !title.trim().is_empty()).unwrap_or(&design.id);
+    let sheet_names = sheets.iter().map(|sheet| sheet.name.as_str()).collect::<Vec<_>>().join(", ");
+    let rev = if design.rev.trim().is_empty() { "-" } else { design.rev.as_str() };
+    svg.push_str("  <g data-title-block=\"true\">\n");
+    svg.push_str(&format!(
+        "    <line x1=\"{:.2}\" y1=\"{:.2}\" x2=\"{:.2}\" y2=\"{:.2}\" stroke=\"#1f2933\" stroke-width=\"0.4\"/>\n",
+        view_x, strip_y, view_x + view_width, strip_y
+    ));
+    let columns = [0.42, 0.24, 0.14, 0.20];
+    let mut cursor = view_x;
+    for fraction in &columns[1..] {
+        cursor += view_width * fraction;
+        svg.push_str(&format!(
+            "    <line x1=\"{:.2}\" y1=\"{:.2}\" x2=\"{:.2}\" y2=\"{:.2}\" stroke=\"#1f2933\" stroke-width=\"0.4\"/>\n",
+            cursor, strip_y, cursor, view_y + view_height
+        ));
+    }
+    let cell_x = |index: usize| view_x + view_width * columns[..index].iter().sum::<f64>() + 1.5;
+    svg.push_str(&format!(
+        "    <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"3.2\" text-anchor=\"start\" fill=\"#1f2933\">{}</text>\n",
+        cell_x(0),
+        strip_y + 5.0,
+        escape_xml(title)
+    ));
+    let subtitle = if design.company.trim().is_empty() && design.date.trim().is_empty() {
+        None
+    }
+    else {
+        let mut parts = Vec::new();
+        if !design.company.trim().is_empty() {
+            parts.push(design.company.as_str());
+        }
+        if !design.date.trim().is_empty() {
+            parts.push(design.date.as_str());
+        }
+        Some(parts.join(" | "))
+    };
+    if let Some(subtitle) = subtitle {
+        svg.push_str(&format!(
+            "    <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"2.2\" text-anchor=\"start\" fill=\"#64748b\">{}</text>\n",
+            cell_x(0),
+            strip_y + 9.5,
+            escape_xml(&subtitle)
+        ));
+    }
+    svg.push_str(&format!(
+        "    <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"2.4\" text-anchor=\"start\" fill=\"#1f2933\">{}</text>\n",
+        cell_x(1),
+        strip_y + 5.0,
+        escape_xml(&sheet_names)
+    ));
+    svg.push_str(&format!(
+        "    <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"2.2\" text-anchor=\"start\" fill=\"#64748b\">{}</text>\n",
+        cell_x(1),
+        strip_y + 9.5,
+        escape_xml(&format!("{} sheet(s)", sheets.len()))
+    ));
+    svg.push_str(&format!(
+        "    <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"2.6\" text-anchor=\"start\" fill=\"#1f2933\">REV {}</text>\n",
+        cell_x(2),
+        strip_y + 5.0,
+        escape_xml(rev)
+    ));
+    svg.push_str(&format!(
+        "    <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"2.2\" text-anchor=\"start\" fill=\"#64748b\">{}</text>\n",
+        cell_x(2),
+        strip_y + 9.5,
+        escape_xml(&format!("units: {}", design.units))
+    ));
+    svg.push_str(&format!(
+        "    <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"2.2\" text-anchor=\"start\" fill=\"#64748b\">{} parts / {} wires</text>\n",
+        cell_x(3),
+        strip_y + 5.0,
+        components,
+        wires
+    ));
+    svg.push_str(&format!(
+        "    <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"2.2\" text-anchor=\"start\" fill=\"#64748b\">OpenEDA rev {}</text>\n",
+        cell_x(3),
+        strip_y + 9.5,
+        design.revision
+    ));
+    svg.push_str("  </g>\n");
 }
 
 fn escape_xml(text: &str) -> String {
@@ -8922,6 +9149,11 @@ const PDF_PAGE_WIDTH: f64 = 842.0;
 const PDF_PAGE_HEIGHT: f64 = 595.0;
 const PDF_MARGIN: f64 = 36.0;
 
+/// Height of the title-block strip reserved at the bottom of a PDF page, in
+/// points. The strip mirrors the SVG title block so both exports carry the
+/// same sheet identity, revision and counts.
+const PDF_TITLE_BLOCK_PT: f64 = 40.0;
+
 /// Writes a one-page, A4 landscape vector PDF of every sheet.
 ///
 /// The writer emits the catalog, page tree, font and content stream with a
@@ -8951,6 +9183,36 @@ fn render_pdf(design: &Design) -> String {
                 max_y = max_y.max(point[1]);
             }
         }
+        for junction in &sheet.junctions {
+            any = true;
+            min_x = min_x.min(junction.x);
+            max_x = max_x.max(junction.x);
+            min_y = min_y.min(junction.y);
+            max_y = max_y.max(junction.y);
+        }
+        for text in &sheet.texts {
+            any = true;
+            let width = text.text.chars().count() as f64 * 3.2 * 0.6;
+            min_x = min_x.min(text.x);
+            max_x = max_x.max(text.x + width);
+            min_y = min_y.min(text.y - 3.2);
+            max_y = max_y.max(text.y);
+        }
+        for label in &sheet.labels {
+            any = true;
+            let width = label.text.chars().count() as f64 * 2.8 * 0.6 + 2.0;
+            min_x = min_x.min(label.x);
+            max_x = max_x.max(label.x + width);
+            min_y = min_y.min(label.y - 4.0);
+            max_y = max_y.max(label.y + 1.0);
+        }
+        for flag in &sheet.no_connects {
+            any = true;
+            min_x = min_x.min(flag.x - 1.0);
+            max_x = max_x.max(flag.x + 1.0);
+            min_y = min_y.min(flag.y - 1.0);
+            max_y = max_y.max(flag.y + 1.0);
+        }
     }
     if !any {
         min_x = 0.0;
@@ -8960,7 +9222,8 @@ fn render_pdf(design: &Design) -> String {
     }
     let span_x = (max_x - min_x).max(1.0);
     let span_y = (max_y - min_y).max(1.0);
-    let scale = ((PDF_PAGE_WIDTH - 2.0 * PDF_MARGIN) / span_x).min((PDF_PAGE_HEIGHT - 2.0 * PDF_MARGIN) / span_y).max(0.001);
+    let scale =
+        ((PDF_PAGE_WIDTH - 2.0 * PDF_MARGIN) / span_x).min((PDF_PAGE_HEIGHT - 2.0 * PDF_MARGIN - PDF_TITLE_BLOCK_PT) / span_y).max(0.001);
     let map_x = |x: f64| PDF_MARGIN + (x - min_x) * scale;
     let map_y = |y: f64| PDF_MARGIN + (max_y - y) * scale;
     let label_size = (7.0f64).max((3.2 * scale).min(9.0));
@@ -8983,6 +9246,97 @@ fn render_pdf(design: &Design) -> String {
                 map_y(wire.from[1]),
                 map_x(wire.to[0]),
                 map_y(wire.to[1])
+            ));
+        }
+        for junction in &sheet.junctions {
+            let side = (1.4 * scale).max(1.2);
+            content.push_str(&format!(
+                "0 0 0 rg {x:.2} {y:.2} {side:.2} {side:.2} re f\n",
+                x = map_x(junction.x) - side / 2.0,
+                y = map_y(junction.y) - side / 2.0,
+            ));
+        }
+        for flag in &sheet.no_connects {
+            let half = (0.7 * scale).max(2.0);
+            content.push_str(&format!(
+                "0.7 0.11 0.11 RG 0.5 w {:.2} {:.2} m {:.2} {:.2} l S {:.2} {:.2} m {:.2} {:.2} l S\n",
+                map_x(flag.x) - half,
+                map_y(flag.y) - half,
+                map_x(flag.x) + half,
+                map_y(flag.y) + half,
+                map_x(flag.x) - half,
+                map_y(flag.y) + half,
+                map_x(flag.x) + half,
+                map_y(flag.y) - half,
+            ));
+        }
+        for (net, (from, to)) in net_name_anchors(sheet) {
+            let size = (2.2 * scale).clamp(5.0, 7.0);
+            content.push_str(&format!(
+                "0.39 0.45 0.55 rg BT /F1 {size:.2} Tf {x:.2} {y:.2} Td {} Tj ET\n",
+                pdf_text(&net),
+                x = map_x((from[0] + to[0]) / 2.0) - pdf_text_width(&net, size) / 2.0,
+                y = map_y((from[1] + to[1]) / 2.0) + 1.0 * scale,
+            ));
+        }
+        for label in &sheet.labels {
+            let size = (2.8 * scale).clamp(5.0, 8.0);
+            let text_x = map_x(label.x);
+            let text_y = map_y(label.y);
+            let text_w = pdf_text_width(&label.text, size);
+            match label.scope {
+                LabelScope::Local => {
+                    content.push_str(&format!(
+                        "0.06 0.46 0.43 rg BT /F1 {size:.2} Tf {text_x:.2} {text_y:.2} Td {} Tj ET\n",
+                        pdf_text(&label.text)
+                    ));
+                    content.push_str(&format!(
+                        "0.06 0.46 0.43 RG 0.3 w {text_x:.2} {:.2} m {:.2} {:.2} l S\n",
+                        text_y - 0.6 * scale,
+                        text_x + text_w,
+                        text_y - 0.6 * scale,
+                    ));
+                }
+                LabelScope::Global => {
+                    content.push_str(&format!(
+                        "0.72 0.11 0.11 RG 0.35 w {:.2} {:.2} {text_w:.2} {:.2} re S\n",
+                        text_x - 0.6 * scale,
+                        text_y - 0.8 * scale,
+                        4.2 * scale,
+                    ));
+                    content.push_str(&format!(
+                        "0.72 0.11 0.11 rg BT /F1 {size:.2} Tf {text_x:.2} {text_y:.2} Td {} Tj ET\n",
+                        pdf_text(&label.text)
+                    ));
+                }
+                LabelScope::Hierarchical => {
+                    content.push_str(&format!(
+                        "0.08 0.5 0.24 RG 0.35 w {text_x:.2} {:.2} m {:.2} {:.2} l {:.2} {:.2} l {:.2} {:.2} l {:.2} {:.2} l h S\n",
+                        text_y - 0.8 * scale,
+                        text_x + 1.6 * scale,
+                        text_y + 1.3 * scale,
+                        text_x,
+                        text_y + 3.4 * scale,
+                        text_x + text_w + 1.2 * scale,
+                        text_y + 3.4 * scale,
+                        text_x + text_w + 1.2 * scale,
+                        text_y - 0.8 * scale,
+                    ));
+                    content.push_str(&format!(
+                        "0.08 0.5 0.24 rg BT /F1 {size:.2} Tf {:.2} {text_y:.2} Td {} Tj ET\n",
+                        text_x + 1.8 * scale,
+                        pdf_text(&label.text)
+                    ));
+                }
+            }
+        }
+        for text in &sheet.texts {
+            let size = (3.2 * scale).clamp(5.0, 9.0);
+            content.push_str(&format!(
+                "0 0 0 rg BT /F1 {size:.2} Tf {:.2} {:.2} Td {} Tj ET\n",
+                map_x(text.x),
+                map_y(text.y),
+                pdf_text(&text.text)
             ));
         }
         for component in &sheet.components {
@@ -9069,6 +9423,7 @@ fn render_pdf(design: &Design) -> String {
             }
         }
     }
+    push_pdf_title_block(&mut content, design);
 
     let objects = [
         "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
@@ -9095,6 +9450,51 @@ fn render_pdf(design: &Design) -> String {
     }
     pdf.push_str(&format!("trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n", objects.len() + 1));
     pdf
+}
+
+/// Appends the PDF title-block strip along the bottom of the page.
+///
+/// The strip mirrors the SVG title block: design title, sheet identity,
+/// revision and content counts, all taken from the document so the page stays
+/// byte-deterministic.
+fn push_pdf_title_block(content: &mut String, design: &Design) {
+    let strip_top = PDF_MARGIN + PDF_TITLE_BLOCK_PT;
+    let left = PDF_MARGIN;
+    let right = PDF_PAGE_WIDTH - PDF_MARGIN;
+    let width = right - left;
+    let components: usize = design.sheets.iter().map(|sheet| sheet.components.len()).sum();
+    let wires: usize = design.sheets.iter().map(|sheet| sheet.wires.len()).sum();
+    let title = design.title.as_deref().filter(|title| !title.trim().is_empty()).unwrap_or(&design.id);
+    let sheet_names = design.sheets.iter().map(|sheet| sheet.name.as_str()).collect::<Vec<_>>().join(", ");
+    let rev = if design.rev.trim().is_empty() { "-" } else { design.rev.as_str() };
+    content.push_str(&format!("0.4 w 0 0 0 RG {left:.2} {strip_top:.2} m {right:.2} {strip_top:.2} l S\n"));
+    let columns = [0.42, 0.24, 0.14, 0.20];
+    let mut cursor = left;
+    for fraction in &columns[1..] {
+        cursor += width * fraction;
+        content.push_str(&format!("{:.2} {PDF_MARGIN:.2} m {:.2} {strip_top:.2} l S\n", cursor, cursor));
+    }
+    let cell_x = |index: usize| left + width * columns[..index].iter().sum::<f64>() + 3.0;
+    let mut line = |x: f64, y: f64, size: f64, gray: &str, text: &str| {
+        content.push_str(&format!("{gray} {gray} {gray} rg BT /F1 {size:.2} Tf {x:.2} {y:.2} Td {} Tj ET\n", pdf_text(text)));
+    };
+    line(cell_x(0), strip_top - 12.0, 9.0, "0", title);
+    if !design.company.trim().is_empty() || !design.date.trim().is_empty() {
+        let mut parts = Vec::new();
+        if !design.company.trim().is_empty() {
+            parts.push(design.company.as_str());
+        }
+        if !design.date.trim().is_empty() {
+            parts.push(design.date.as_str());
+        }
+        line(cell_x(0), strip_top - 24.0, 7.0, "0.4", &parts.join(" | "));
+    }
+    line(cell_x(1), strip_top - 12.0, 7.5, "0", &sheet_names);
+    line(cell_x(1), strip_top - 24.0, 6.5, "0.4", &format!("{} sheet(s)", design.sheets.len()));
+    line(cell_x(2), strip_top - 12.0, 8.0, "0", &format!("REV {rev}"));
+    line(cell_x(2), strip_top - 24.0, 6.5, "0.4", &format!("units: {}", design.units));
+    line(cell_x(3), strip_top - 12.0, 6.5, "0.4", &format!("{components} parts / {wires} wires"));
+    line(cell_x(3), strip_top - 24.0, 6.5, "0.4", &format!("OpenEDA rev {}", design.revision));
 }
 
 /// Approximate width of a PDF text run in points.

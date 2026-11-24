@@ -2129,6 +2129,50 @@ fn junction_and_text_edits_render_in_the_svg_projection() {
 }
 
 #[test]
+fn svg_export_annotates_nets_labels_and_draws_a_title_block() {
+    let dir = TempDir::new("svg-annotation");
+    let path = dir.join("annotated.svg");
+    let created = create(CreateRequest {
+        title: Some("Sensor board".into()),
+        rev: Some("B".into()),
+        company: Some("OpenLab".into()),
+        date: None,
+        template: Some("blank".into()),
+    })
+    .expect("create");
+    let handle = created["handle"].as_u64().expect("handle");
+    add_component(
+        handle,
+        AddComponentRequest { sheet: None, reference: "R1".into(), value: "10k".into(), x: 40.0, y: 40.0, rotation: 0.0, pins: vec!["1".into(), "2".into()] },
+    )
+    .expect("add component");
+    add_wire(handle, AddWireRequest { sheet: None, net: Some("VCC".into()), from: [10.0, 40.0], to: [27.30, 40.0] }).expect("add wire");
+    add_wire(handle, AddWireRequest { sheet: None, net: Some("VCC".into()), from: [10.0, 40.0], to: [10.0, 20.0] }).expect("add wire");
+    add_label(
+        handle,
+        AddLabelRequest { sheet: None, text: "N_IN".into(), x: 55.0, y: 40.0, scope: Some(LabelScope::Global), rotation: None, justify: None },
+    )
+    .expect("add label");
+    add_no_connect(handle, AddNoConnectRequest { sheet: None, x: 52.70, y: 42.54, node: None }).expect("add no-connect");
+
+    export(handle, "svg", &path).expect("export svg");
+    let svg = fs::read_to_string(&path).expect("read svg");
+    // The net name is painted once, on the longest VCC segment (the vertical one).
+    assert_eq!(svg.matches("data-net=\"VCC\"").count(), 1, "{svg}");
+    assert!(svg.contains(">VCC</text>"), "{svg}");
+    // Global labels get their boxed treatment; no-connect flags get the red cross.
+    assert!(svg.contains(">N_IN</text>"), "{svg}");
+    assert!(svg.contains("data-no-connect=\"true\""), "{svg}");
+    // The title block carries the design identity without inventing values.
+    assert!(svg.contains("data-title-block=\"true\""), "{svg}");
+    assert!(svg.contains(">Sensor board</text>"), "{svg}");
+    assert!(svg.contains("REV B</text>"), "{svg}");
+    assert!(svg.contains("OpenLab"), "{svg}");
+    assert!(svg.contains("1 parts / 2 wires"), "{svg}");
+    close(handle).expect("close");
+}
+
+#[test]
 fn validation_rejects_non_finite_junction_and_text_coordinates() {
     let mut design = Design {
         id: "design-1".to_string(),
