@@ -415,10 +415,12 @@ export function inspect(handle: number, options?: InspectOptions): InspectReport
 }
 
 /** Projects one open design to an exchange target. */
-export function exportDesign(handle: number, format: ExportTarget, target: string, variant?: string): ExportReport {
+export function exportDesign(handle: number, format: ExportTarget, target: string, variant?: string, sheet?: string): ExportReport {
     const native = binding('export');
     return decode<ExportReport>(() =>
-        variant === undefined ? native.design_export(handle, format, target) : native.design_export(handle, format, target, variant),
+        variant === undefined && sheet === undefined
+            ? native.design_export(handle, format, target)
+            : native.design_export(handle, format, target, variant, sheet),
     );
 }
 

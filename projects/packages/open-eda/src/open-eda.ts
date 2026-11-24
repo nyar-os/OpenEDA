@@ -477,7 +477,7 @@ function attach(opened: service.DesignHandle, options: AttachOptions): Design {
             return report;
         },
         async export(exportOptions: ExportOptions): Promise<ExportReport> {
-            return service.exportDesign(handle, exportOptions.format, exportOptions.target, exportOptions.variant);
+            return service.exportDesign(handle, exportOptions.format, exportOptions.target, exportOptions.variant, exportOptions.sheet);
         },
         async setProperties(properties: DesignPropertiesInput): Promise<DesignPropertiesResult> {
             assertPropertiesInput(properties);

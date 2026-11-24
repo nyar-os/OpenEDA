@@ -3066,6 +3066,7 @@ cli
     .option('--format <format>', 'cli.opt.format')
     .option('--out <file>', 'cli.opt.out')
     .option('--variant <name>', 'cli.opt.variant')
+    .option('--sheet <id>', 'cli.opt.sheet')
     .actionCtx(async (options, _args, ctx) => {
         const file = input(options);
         if (file === undefined) {
@@ -3085,7 +3086,7 @@ cli
             return 2;
         }
         const report = await withDesign(file, (design) =>
-            design.export({ format, target: out, variant: text(options, 'variant') }),
+            design.export({ format, target: out, variant: text(options, 'variant'), sheet: text(options, 'sheet') }),
         );
         ctx.emitResult(report, `exported ${format} to ${out} revision=${report.revision}`);
         return 0;

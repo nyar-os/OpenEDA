@@ -1451,6 +1451,13 @@ export interface ExportOptions {
     readonly overwrite?: boolean;
     /** BOM variant to apply; only `bom`, `bom_json` and `bom_html` accept one. */
     readonly variant?: string;
+    /**
+     * Drawing sheet id or name; only `svg` and `pdf` accept one.
+     *
+     * `pdf` writes one page per sheet by default; selecting a sheet writes one
+     * page. `svg` has a single view, so select a sheet to isolate it.
+     */
+    readonly sheet?: string;
 }
 
 /** One construct an export could not represent verbatim. */

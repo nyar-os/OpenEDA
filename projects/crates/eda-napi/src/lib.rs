@@ -160,7 +160,9 @@ fn design_export(ctx: CallContext) -> Result<JsValue> {
     let format = text(&ctx, 1)?;
     let path = text(&ctx, 2)?;
     let variant = optional_text(&ctx, 3)?;
-    let report = open_eda_model::export_with_variant(handle, &format, Path::new(&path), variant.as_deref()).map_err(fail)?;
+    let sheet = optional_text(&ctx, 4)?;
+    let report = open_eda_model::export_with_options(handle, &format, Path::new(&path), variant.as_deref(), sheet.as_deref())
+        .map_err(fail)?;
     respond(&ctx, &report)
 }
 
@@ -1143,7 +1145,8 @@ impl IpcHandler for DesignIpcHandler {
                         }
                         else {
                             let variant = value.get("variant").and_then(Value::as_str);
-                            match open_eda_model::export_with_variant(handle, &format, Path::new(&target), variant) {
+                            let sheet = value.get("sheet").and_then(Value::as_str);
+                            match open_eda_model::export_with_options(handle, &format, Path::new(&target), variant, sheet) {
                                 Ok(payload) => reply(id, "exportResult", json!({ "report": payload })),
                                 Err(error) => failed(id, &error),
                             }
