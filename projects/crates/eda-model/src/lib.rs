@@ -9770,6 +9770,7 @@ fn net_name_anchors(sheet: &Sheet) -> Vec<NetAnchor> {
 /// The strip is split into four cells: design title (with company below),
 /// sheet identity, revision block and content counts. Every value comes from
 /// the document itself, so the projection stays byte-deterministic.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn push_svg_title_block(
     svg: &mut String,
     design: &Design,
