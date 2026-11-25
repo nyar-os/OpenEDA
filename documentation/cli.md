@@ -219,7 +219,7 @@ Export formats: `net`, `net_csv`, `net_hier`, `net_class`, `net_length`, `spice`
 `json`, `kicad_sch`, `kicad_sym`, `kicad_net`, and the standalone drawings
 `block_diagram`, `sheet_overview`, `pinout_chart`, `symbol_library`,
 `net_topology`, `power_distribution`, `bom_drawing`, `bom_drawing_pdf`,
-`net_xref` and `net_xref_pdf`.
+`net_xref`, `net_xref_pdf`, `hierarchy` and `erc`.
 `net_class` groups pin rows by
 declared net class and adds the pin electrical role. `net_length` writes
 `Sheet,Net,Length,Wires,Unrouted` rows for the declared nets: `Length` sums the
@@ -240,13 +240,16 @@ text onto a fixed 1024×768 canvas with a built-in bitmap font.
 
 The standalone drawings paint one SVG document each (plus `bom_drawing_pdf` and
 `net_xref_pdf`, which write a paginated PDF): `block_diagram` chains components
-through their nets left-to-right, `sheet_overview` grids every sheet into one
-framed overview, `pinout_chart` tables each component's pins against their nets,
-`symbol_library` deduplicates the placed symbols, `net_topology` draws the
-component/net incidence graph, `power_distribution` maps power and ground rails
-to their member components, `bom_drawing` renders the grouped bill of materials
-as a ruled table, and `net_xref` lists every net with its members and the sheets
-that name it. They reject `--sheet` and carry the shared title block.
+through their nets on an aspect-aware grid, `sheet_overview` grids every sheet
+into one framed overview, `pinout_chart` tables each component's pins against
+their nets, `symbol_library` deduplicates the placed symbols into a complete
+grid, `net_topology` draws a two-column component field with one trunk per net,
+`power_distribution` maps power and ground rails to their member components,
+`bom_drawing` renders the grouped bill of materials as a full-width ruled table,
+`net_xref` lists every net with its members and the sheets that name it,
+`hierarchy` draws the sheet tree, and `erc` renders the rule-check results as a
+findings table. They share one A4 landscape page, a fixed title block and an
+eight-percent margin, and reject `--sheet`.
 
 ## Worked example
 
@@ -274,4 +277,6 @@ open-eda export blinker.oeda --format bom_drawing --out blinker-bom.svg
 open-eda export blinker.oeda --format bom_drawing_pdf --out blinker-bom.pdf
 open-eda export blinker.oeda --format net_xref --out blinker-xref.svg
 open-eda export blinker.oeda --format net_xref_pdf --out blinker-xref.pdf
+open-eda export blinker.oeda --format hierarchy --out blinker-hierarchy.svg
+open-eda export blinker.oeda --format erc --out blinker-erc.svg
 ```

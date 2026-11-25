@@ -454,41 +454,62 @@ Standalone SVG documents projected from the design rather than from one sheet's
 geometry. Each rejects `--sheet`, carries the shared title block and is
 byte-deterministic for one revision.
 
-- `block_diagram` lays components out as layered boxes left-to-right and chains
-  every multi-member net through its members as one routed polyline per
-  segment. Same-column segments run below the boxes, nodes that share a centre
-  line take a single straight segment, and a net name that would collide with
-  an already-painted name is pushed down until it has its own spot.
+Every standalone drawing starts from one shared A4 landscape page: a white
+background, an outer border, an eight-percent margin and a fixed four-cell title
+block. The content is measured, fitted uniformly into the drawable area and
+centred, so a small design fills the page and nothing leaves it. Title-block text
+shrinks and then truncates to its fixed cell, and every other label is measured
+before it is painted.
+
+- `block_diagram` lays components on an aspect-aware grid and chains every
+  multi-member net through its members. Edges leave a box on its edge and turn
+  only in the gutters between columns and rows, so they never cross a component
+  body. A net name sits beside its longest segment and is moved to the first
+  free of eight candidate positions, never covering a box or another label.
 - `sheet_overview` fits every sheet into one grid cell with its own separator
-  frame and sheet-name header, under a single shared title block.
+  frame and sheet-name header, under a single shared title block; the grid fills
+  the drawable area.
 - `pinout_chart` prints one pin-to-net table block per component, listing each
   pin with the nets it joins.
-- `symbol_library` places every distinct symbol (reference prefix plus pin
-  list) once on a grid, represented by its first designator in natural order.
-- `net_topology` paints the component/net incidence graph: component boxes in a
-  left column, one net node per net in a right column, and one elbow edge from
-  each member component to its net node, so single-member nets stay visible.
+- `symbol_library` places every distinct symbol (reference prefix plus pin list)
+  once, represented by its first designator in natural order. The grid prefers a
+  complete factorization of the symbol count and scales each symbol to the
+  readable size its cell allows.
+- `net_topology` paints a two-column component field with one vertical trunk per
+  net in the central channel. Each net owns a named box above its own trunk and
+  every member taps it with a horizontal stub from its box edge, so single-member
+  nets stay visible and the vertical runs never collapse into a comb.
 - `power_distribution` classifies nets into power rails (`VCC`, `VDD`, compact
   voltages such as `3V3`/`5V`, or nets carrying `PowerIn`/`PowerOut` pins) and
   ground rails (`GND`, `VSS`, `VEE`, `0V`) and paints each as a full-width bar:
-  power rails above the component field, ground rails below, with a straight
-  drop line from every member component to its rail. A design without any rail
-  net paints its components plus an explanatory note.
+  power rails above the component field, ground rails below. A member leaves its
+  right edge into a gutter riser that ends on its power rail, or its left edge
+  into a riser that ends on its ground rail; no riser dangles and none crosses a
+  box. A design without any rail net paints its components plus a note.
 - `bom_drawing` renders the grouped bill of materials — one row per value and
-  footprint, designators compressed into ranges — as a ruled five-column table
-  (`#`, `COMMENT`, `FOOTPRINT`, `DESIGNATORS`, `QTY`) with the shared title
-  block. Cell text is clipped to its column.
+  footprint, designators compressed into ranges — as a ruled table. Column widths
+  are measured from the content and stretched to the page; a column whose every
+  value is blank (an unset footprint, for example) is not drawn; rows grow so the
+  table fills most of the page.
 - `bom_drawing_pdf` writes the same table as a paginated A4 landscape PDF with
   ruled header, row separators and a footer title line, using the base-14
   Helvetica encoding and the same `pdf/text-encoding` loss reporting as `pdf`.
 - `net_xref` lists every declared net as one table row: the `REFERENCE.PIN`
   members under that net name in natural order and the one-based sheet numbers
-  that name it. A long member list wraps inside its column and the row grows in
-  height instead of overlapping its neighbour.
+  that name it. The net and sheet columns are measured, the member column takes
+  the remaining width and wraps, and the row grows in height instead of
+  overlapping its neighbour.
 - `net_xref_pdf` writes the same cross-reference as a paginated A4 landscape
   PDF; rows are grouped by accumulated line height, so a wrapped member list
   cannot overflow the printable area, and text uses the base-14 Helvetica
   encoding with the same `pdf/text-encoding` loss reporting as `pdf`.
+- `hierarchy` draws the sheet hierarchy as a tree: the design at the root and its
+  hierarchical sheet symbols (or, when none are declared, its flat sheets) below,
+  each showing its file or id and its port or part count. Connectors run in the
+  free margin and stops on node edges, so no connector crosses a node.
+- `erc` renders the existing rule-check results as a findings table (severity,
+  object, position, description). A column whose every value is blank is
+  dropped; a clean design prints `No findings` instead of an empty table.
 
 Every file is written through a temporary file and a rename.
 
