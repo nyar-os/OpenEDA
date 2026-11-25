@@ -13,7 +13,7 @@
 
 use crate::{
     Component, Design, PinType, Sheet, bom_rows, drawing_bounds, escape_xml, natural_compare, push_svg_component_marked,
-    push_svg_sheet_contents,
+    push_svg_sheet_thumbnail,
 };
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
@@ -912,7 +912,7 @@ pub(crate) fn render_sheet_overview(design: &Design) -> SheetOverview {
             "    <g data-sheet=\"{}\" transform=\"translate({shift_x:.2} {shift_y:.2}) scale({scale:.4})\">\n",
             escape_xml(&sheet.id)
         ));
-        push_svg_sheet_contents(&mut content, sheet);
+        push_svg_sheet_thumbnail(&mut content, sheet);
         content.push_str("    </g>\n");
     }
     content.push_str("  </g>\n");
@@ -1211,7 +1211,7 @@ pub(crate) fn render_symbol_library(design: &Design) -> SymbolLibrary {
             "      <g transform=\"translate({centre_x:.2} {centre_y:.2}) scale({scale:.4}) translate({:.2} {:.2})\">\n",
             -centre_x, -centre_y
         ));
-        push_svg_component_marked(&mut content, &placed, Some(&no_dots));
+        push_svg_component_marked(&mut content, &placed, Some(&no_dots), None);
         content.push_str("      </g>\n");
         content.push_str(&format!(
             "      <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"{FONT_FAMILY}\" font-size=\"2.8\" text-anchor=\"middle\" fill=\"#64748b\">{}</text>\n",

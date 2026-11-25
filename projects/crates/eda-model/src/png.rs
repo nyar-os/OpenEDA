@@ -17,7 +17,7 @@
 
 use crate::{
     COMPONENT_HALF_WIDTH, Design, Sheet, SymbolPrimitive, component_half_height, component_pins, drawing_bounds,
-    net_name_anchors, net_name_point, rotate_about, symbol_artwork,
+    net_name_positions, rotate_about, symbol_artwork,
 };
 
 /// Width of the fixed raster canvas, in pixels.
@@ -376,8 +376,8 @@ fn paint_sheet(canvas: &mut Canvas, view: &View, sheet: &Sheet) {
         canvas.line(view, [flag.x - 0.7, flag.y - 0.7], [flag.x + 0.7, flag.y + 0.7], 0.35, NO_CONNECT);
         canvas.line(view, [flag.x - 0.7, flag.y + 0.7], [flag.x + 0.7, flag.y - 0.7], 0.35, NO_CONNECT);
     }
-    for (net, (from, to)) in net_name_anchors(sheet) {
-        let (x, y) = view.project(net_name_point(sheet, from, to, &net));
+    for (net, point) in net_name_positions(sheet) {
+        let (x, y) = view.project(point);
         canvas.text_centred(x, y - 8, &net, NET_NAME);
     }
     for label in &sheet.labels {

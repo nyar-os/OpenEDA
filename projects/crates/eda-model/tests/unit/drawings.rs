@@ -1,5 +1,5 @@
 use crate::{
-    Component, Design, DesignRules, Net, Node, Sheet,
+    Component, Design, DesignRules, Junction, LabelScope, Net, NetLabel, NoConnect, Node, Sheet, TextLabel, Wire,
     drawings::{
         render_block_diagram, render_bom_drawing, render_erc, render_hierarchy, render_net_topology, render_net_xref,
         render_pinout_chart, render_power_distribution, render_sheet_overview, render_symbol_library,
@@ -976,4 +976,387 @@ fn net_xref_pdf_paginates_and_stays_deterministic() {
     let (_, dropped, pages, _) = crate::render_net_xref_pdf(&many);
     assert_eq!(dropped, 0);
     assert!(pages > 1);
+}
+
+/// One affine SVG transform: `x' = a*x + c*y + e`, `y' = b*x + d*y + f`.
+#[derive(Clone, Copy)]
+struct Affine {
+    a: f64,
+    b: f64,
+    c: f64,
+    d: f64,
+    e: f64,
+    f: f64,
+}
+
+impl Affine {
+    const IDENTITY: Affine = Affine { a: 1.0, b: 0.0, c: 0.0, d: 1.0, e: 0.0, f: 0.0 };
+
+    /// Composes two transforms so `next` applies first, then `self`.
+    fn then(self, next: Affine) -> Affine {
+        Affine {
+            a: self.a * next.a + self.c * next.b,
+            b: self.b * next.a + self.d * next.b,
+            c: self.a * next.c + self.c * next.d,
+            d: self.b * next.c + self.d * next.d,
+            e: self.a * next.e + self.c * next.f + self.e,
+            f: self.b * next.e + self.d * next.f + self.f,
+        }
+    }
+
+    fn point(self, point: [f64; 2]) -> [f64; 2] {
+        [self.a * point[0] + self.c * point[1] + self.e, self.b * point[0] + self.d * point[1] + self.f]
+    }
+}
+
+/// Parses one SVG `transform` attribute, including nested function lists.
+fn parse_transform(text: &str) -> Affine {
+    let mut result = Affine::IDENTITY;
+    let mut rest = text;
+    while let Some(open) = rest.find('(') {
+        let name = rest[..open].trim();
+        let name = name.rsplit(|character: char| !character.is_ascii_alphabetic()).next().unwrap_or("");
+        let Some(close) = rest[open..].find(')')
+        else {
+            break;
+        };
+        let body = &rest[open + 1..open + close];
+        let numbers: Vec<f64> = body
+            .split(|character: char| character == ',' || character.is_whitespace())
+            .filter(|token| !token.is_empty())
+            .map(|token| token.parse().expect("transform number"))
+            .collect();
+        let step = match name {
+            "translate" => Affine { e: numbers[0], f: numbers.get(1).copied().unwrap_or(0.0), ..Affine::IDENTITY },
+            "scale" => {
+                let x = numbers[0];
+                let y = numbers.get(1).copied().unwrap_or(x);
+                Affine { a: x, d: y, ..Affine::IDENTITY }
+            }
+            "rotate" if !numbers.is_empty() => {
+                let radians = numbers[0].to_radians();
+                let (sin, cos) = radians.sin_cos();
+                if numbers.len() >= 3 {
+                    let (cx, cy) = (numbers[1], numbers[2]);
+                    Affine { a: cos, b: sin, c: -sin, d: cos, e: cx - cos * cx + sin * cy, f: cy - sin * cx - cos * cy }
+                }
+                else {
+                    Affine { a: cos, b: sin, c: -sin, d: cos, ..Affine::IDENTITY }
+                }
+            }
+            _ => Affine::IDENTITY,
+        };
+        result = result.then(step);
+        rest = &rest[open + close + 1..];
+    }
+    result
+}
+
+/// Reads one string attribute from an SVG tag.
+fn tag_text<'a>(tag: &'a str, key: &str) -> Option<&'a str> {
+    let at = tag.find(key)? + key.len();
+    let rest = &tag[at..];
+    Some(&rest[..rest.find('"')?])
+}
+
+/// One text element with its painted bounding box on the page.
+#[derive(Debug)]
+struct PlacedText {
+    text: String,
+    bounds: [f64; 4],
+}
+
+/// Walks an SVG document, composes every enclosing `translate`, `scale` and
+/// `rotate` transform and returns the page-space box of every `<text>` element.
+fn placed_texts(svg: &str) -> Vec<PlacedText> {
+    let mut stack = vec![Affine::IDENTITY];
+    let mut placed = Vec::new();
+    let mut rest = svg;
+    while let Some(offset) = rest.find('<') {
+        rest = &rest[offset..];
+        if rest.starts_with("</g") {
+            if stack.len() > 1 {
+                stack.pop();
+            }
+            rest = &rest[rest.find('>').expect("group end") + 1..];
+            continue;
+        }
+        let Some(tag_end) = rest.find('>')
+        else {
+            break;
+        };
+        let tag = &rest[..tag_end];
+        if tag.starts_with("<g ") || tag == "<g" {
+            let local = tag_text(tag, " transform=\"").map(parse_transform).unwrap_or(Affine::IDENTITY);
+            let parent = *stack.last().expect("transform stack");
+            stack.push(parent.then(local));
+            rest = &rest[tag_end + 1..];
+        }
+        else if tag.starts_with("<text ") {
+            let content = &rest[tag_end + 1..];
+            let content_end = content.find('<').expect("text end");
+            let text = &content[..content_end];
+            let x: f64 = tag_text(tag, " x=\"").expect("text x").parse().expect("text x number");
+            let y: f64 = tag_text(tag, " y=\"").expect("text y").parse().expect("text y number");
+            let size: f64 = tag_text(tag, "font-size=\"").expect("text size").parse().expect("text size number");
+            let anchor = tag_text(tag, "text-anchor=\"").unwrap_or("start");
+            let width = text.chars().count() as f64 * size * 0.6;
+            let left = match anchor {
+                "middle" => x - width / 2.0,
+                "end" => x - width,
+                _ => x,
+            };
+            let local = tag_text(tag, " transform=\"").map(parse_transform).unwrap_or(Affine::IDENTITY);
+            let total = stack.last().expect("transform stack").then(local);
+            let corners = [
+                total.point([left, y - size * 0.75]),
+                total.point([left + width, y - size * 0.75]),
+                total.point([left + width, y + size * 0.25]),
+                total.point([left, y + size * 0.25]),
+            ];
+            let min_x = corners.iter().map(|point| point[0]).fold(f64::INFINITY, f64::min);
+            let max_x = corners.iter().map(|point| point[0]).fold(f64::NEG_INFINITY, f64::max);
+            let min_y = corners.iter().map(|point| point[1]).fold(f64::INFINITY, f64::min);
+            let max_y = corners.iter().map(|point| point[1]).fold(f64::NEG_INFINITY, f64::max);
+            placed.push(PlacedText { text: text.to_string(), bounds: [min_x, min_y, max_x, max_y] });
+            rest = &content[content_end..];
+        }
+        else {
+            rest = &rest[tag_end + 1..];
+        }
+    }
+    placed
+}
+
+/// Asserts that every painted text stays inside the given page frame.
+fn assert_texts_inside(texts: &[PlacedText], frame: [f64; 4], what: &str) {
+    for placed in texts {
+        let bounds = placed.bounds;
+        assert!(
+            bounds[0] >= frame[0] - 0.05
+                && bounds[1] >= frame[1] - 0.05
+                && bounds[2] <= frame[2] + 0.05
+                && bounds[3] <= frame[3] + 0.05,
+            "{what}: `{}` leaves the page frame {frame:?} at {bounds:?}",
+            placed.text
+        );
+    }
+}
+
+/// Asserts that no two painted texts share any area.
+fn assert_texts_apart(texts: &[PlacedText], what: &str) {
+    for (index, left) in texts.iter().enumerate() {
+        for right in &texts[index + 1..] {
+            assert!(
+                disjoint(&left.bounds, &right.bounds),
+                "{what}: `{}` {:?} overlaps `{}` {:?}",
+                left.text,
+                left.bounds,
+                right.text,
+                right.bounds
+            );
+        }
+    }
+}
+
+/// Pins that sit above a wire so the net name has to move clear of them.
+fn pin(reference: &str, pin: &str) -> Node {
+    Node { reference: reference.to_string(), pin: pin.to_string() }
+}
+
+/// Wires, labels and rotated parts modelled on a real schematic, including two
+/// passives stacked close enough that their default reference/value lines would
+/// collide.
+fn crowded_design() -> Design {
+    let sheet_one = Sheet {
+        id: "sheet-1".to_string(),
+        name: "Power".to_string(),
+        components: vec![
+            component("U1", "MCU", 60.0, 40.0, &["VCC", "GND", "PA0", "PA1", "PB0", "PB1"]),
+            component("R1", "10k", 95.0, 18.0, &["1", "2"]),
+            component("R6", "2k2", 95.0, 26.0, &["1", "2"]),
+            component("R2", "330", 95.0, 62.0, &["1", "2"]),
+            component("C1", "100n", 25.0, 40.0, &["1", "2"]),
+            component("C2", "10u+", 25.0, 72.0, &["1", "2"]),
+            component("D1", "LED", 130.0, 18.0, &["A", "K"]),
+            component("L1", "4u7", 130.0, 62.0, &["1", "2"]),
+        ],
+        nets: vec![Net { id: "net-1".to_string(), name: "PB0".to_string(), nodes: vec![pin("U1", "PB0")] }],
+        wires: vec![
+            Wire { id: "w1".to_string(), net: Some("VCC".to_string()), from: [10.0, 10.0], to: [150.0, 10.0] },
+            Wire { id: "w2".to_string(), net: Some("VCC".to_string()), from: [44.76, 37.46], to: [44.76, 10.0] },
+            Wire { id: "w3".to_string(), net: Some("VCC".to_string()), from: [79.76, 18.0], to: [79.76, 10.0] },
+            Wire { id: "w4".to_string(), net: Some("GND".to_string()), from: [10.0, 92.0], to: [150.0, 92.0] },
+            Wire { id: "w5".to_string(), net: Some("GND".to_string()), from: [44.76, 40.0], to: [44.76, 92.0] },
+            Wire { id: "w6".to_string(), net: Some("PA0".to_string()), from: [75.24, 37.46], to: [95.0, 37.46] },
+            Wire { id: "w7".to_string(), net: Some("PA0".to_string()), from: [95.0, 37.46], to: [95.0, 46.76] },
+            Wire { id: "w8".to_string(), net: Some("PA1".to_string()), from: [75.24, 40.0], to: [114.76, 40.0] },
+            Wire { id: "w9".to_string(), net: Some("PA1".to_string()), from: [114.76, 40.0], to: [114.76, 62.0] },
+            Wire { id: "w10".to_string(), net: Some("PA1".to_string()), from: [114.76, 62.0], to: [122.24, 62.0] },
+            Wire { id: "w11".to_string(), net: Some("PB0".to_string()), from: [75.24, 42.54], to: [85.0, 42.54] },
+            Wire { id: "w12".to_string(), net: Some("LED".to_string()), from: [137.76, 18.0], to: [150.0, 18.0] },
+        ],
+        junctions: vec![Junction { x: 44.76, y: 10.0 }, Junction { x: 10.0, y: 25.0 }],
+        no_connects: vec![NoConnect { x: 75.24, y: 42.54, node: None }],
+        texts: vec![TextLabel { text: "POWER SECTION 24V".to_string(), x: 12.0, y: 100.0 }],
+        labels: vec![
+            NetLabel {
+                id: "l1".to_string(),
+                text: "VCC".to_string(),
+                x: 70.0,
+                y: 7.0,
+                scope: LabelScope::Global,
+                rotation: 0.0,
+                justify: "left".to_string(),
+            },
+            NetLabel {
+                id: "l2".to_string(),
+                text: "PA0".to_string(),
+                x: 96.0,
+                y: 37.46,
+                scope: LabelScope::Local,
+                rotation: 0.0,
+                justify: "left".to_string(),
+            },
+            NetLabel {
+                id: "l3".to_string(),
+                text: "DATA0".to_string(),
+                x: 116.0,
+                y: 38.0,
+                scope: LabelScope::Hierarchical,
+                rotation: 0.0,
+                justify: "left".to_string(),
+            },
+        ],
+    };
+    let sheet_two = Sheet {
+        id: "sheet-2".to_string(),
+        name: "Signal".to_string(),
+        components: vec![
+            component("U2", "ADC", 70.0, 45.0, &["VCC", "GND", "IN0", "IN1", "IN2", "IN3", "SCL", "SDA"]),
+            component("R3", "4k7", 30.0, 20.0, &["1", "2"]),
+            component("R4", "1k", 30.0, 65.0, &["1", "2"]),
+            component("R5", "100k", 145.0, 70.0, &["1", "2"]),
+            component("C3", "22p", 110.0, 22.0, &["1", "2"]),
+            component("C4", "1u", 110.0, 78.0, &["1", "2"]),
+            component("Q1", "NPN", 145.0, 25.0, &["B", "C", "E"]),
+            component("J2", "CONN", 150.0, 50.0, &["1", "2"]),
+        ],
+        nets: vec![Net { id: "net-2".to_string(), name: "IN2".to_string(), nodes: vec![pin("U2", "IN2")] }],
+        wires: vec![
+            Wire { id: "s1".to_string(), net: Some("VCC".to_string()), from: [15.0, 12.0], to: [160.0, 12.0] },
+            Wire { id: "s2".to_string(), net: Some("VCC".to_string()), from: [54.76, 41.27], to: [54.76, 12.0] },
+            Wire { id: "s3".to_string(), net: Some("GND".to_string()), from: [15.0, 95.0], to: [160.0, 95.0] },
+            Wire { id: "s4".to_string(), net: Some("GND".to_string()), from: [54.76, 43.73], to: [54.76, 95.0] },
+            Wire { id: "s5".to_string(), net: Some("IN0".to_string()), from: [85.24, 41.27], to: [102.0, 41.27] },
+            Wire { id: "s6".to_string(), net: Some("IN0".to_string()), from: [102.0, 41.27], to: [102.0, 22.0] },
+            Wire { id: "s7".to_string(), net: Some("IN1".to_string()), from: [85.24, 43.73], to: [95.0, 43.73] },
+            Wire { id: "s8".to_string(), net: Some("IN2".to_string()), from: [45.24, 65.0], to: [54.76, 65.0] },
+            Wire { id: "s9".to_string(), net: Some("IN2".to_string()), from: [54.76, 65.0], to: [54.76, 46.19] },
+            Wire { id: "s10".to_string(), net: Some("SCL".to_string()), from: [129.76, 25.0], to: [132.46, 25.0] },
+            Wire { id: "s11".to_string(), net: Some("SCL".to_string()), from: [157.46, 25.0], to: [160.0, 25.0] },
+        ],
+        junctions: vec![Junction { x: 54.76, y: 12.0 }, Junction { x: 102.0, y: 41.27 }],
+        no_connects: vec![NoConnect { x: 85.24, y: 46.19, node: None }],
+        texts: vec![TextLabel { text: "SIGNAL PATH".to_string(), x: 15.0, y: 102.0 }],
+        labels: vec![
+            NetLabel {
+                id: "s-l1".to_string(),
+                text: "VCC".to_string(),
+                x: 40.0,
+                y: 9.0,
+                scope: LabelScope::Global,
+                rotation: 0.0,
+                justify: "left".to_string(),
+            },
+            NetLabel {
+                id: "s-l2".to_string(),
+                text: "IN0".to_string(),
+                x: 96.0,
+                y: 41.27,
+                scope: LabelScope::Local,
+                rotation: 0.0,
+                justify: "left".to_string(),
+            },
+            NetLabel {
+                id: "s-l3".to_string(),
+                text: "DATA1".to_string(),
+                x: 118.0,
+                y: 60.0,
+                scope: LabelScope::Hierarchical,
+                rotation: 0.0,
+                justify: "left".to_string(),
+            },
+        ],
+    };
+    Design {
+        id: "crowded".to_string(),
+        title: Some("Crowded".to_string()),
+        rev: "C".to_string(),
+        company: "OpenLab".to_string(),
+        date: "2026-11-25".to_string(),
+        revision: 1,
+        units: "mm".to_string(),
+        sheets: vec![sheet_one, sheet_two],
+        buses: Vec::new(),
+        variants: Vec::new(),
+        hierarchy: Vec::new(),
+        rules: DesignRules::default(),
+        next_component: 17,
+        next_net: 3,
+        next_wire: 13,
+    }
+}
+
+/// Every text of the base schematic, including rotated pin names, stays inside
+/// the viewport and clear of every other text.
+#[test]
+fn schematic_svg_keeps_net_pin_and_component_labels_apart() {
+    let design = crowded_design();
+    let sheets: Vec<&Sheet> = design.sheets.iter().collect();
+    let svg = crate::render_svg_for(&design, &sheets);
+    let frame = view_box(&svg);
+    let frame = [frame[0], frame[1], frame[0] + frame[2], frame[1] + frame[3]];
+    let texts = placed_texts(&svg);
+
+    assert!(texts.len() > 40, "the schematic paints every label: {}", texts.len());
+    assert_eq!(texts.iter().filter(|run| run.text == "PB0").count(), 2, "the net name and the pin name are both painted");
+    assert!(texts.iter().any(|run| run.text == "4u7"), "a rotated inductor keeps its value");
+    assert!(texts.iter().any(|run| run.text == "2k2"), "the crowded passive keeps its value");
+
+    assert_texts_inside(&texts, frame, "schematic svg");
+    assert_texts_apart(&texts, "schematic svg");
+    assert_eq!(svg, crate::render_svg_for(&design, &sheets), "the label layout is deterministic");
+}
+
+/// One sheet and several sheets share the same layout rules.
+#[test]
+fn single_page_schematic_svg_keeps_every_text_apart() {
+    let design = crowded_design();
+    let sheets = [&design.sheets[0]];
+    let svg = crate::render_svg_for(&design, &sheets);
+    let frame = view_box(&svg);
+    let frame = [frame[0], frame[1], frame[0] + frame[2], frame[1] + frame[3]];
+    let texts = placed_texts(&svg);
+    assert_texts_inside(&texts, frame, "one-page schematic");
+    assert_texts_apart(&texts, "one-page schematic");
+}
+
+/// The thumbnail inherits the same planned component labels and drops the
+/// fixed-position sheet texts that would collide at cell scale.
+#[test]
+fn sheet_overview_scales_labels_without_overlap_or_page_overflow() {
+    let design = crowded_design();
+    let svg = render_sheet_overview(&design).svg;
+    let page = view_box(&svg);
+    let frame = [page[0], page[1], page[0] + page[2], page[1] + page[3]];
+    let texts = placed_texts(&svg);
+
+    assert!(!texts.iter().any(|run| run.text == "POWER SECTION 24V"), "a fixed block title is omitted in the thumbnail");
+    assert!(!texts.iter().any(|run| run.text == "SIGNAL PATH"), "the second block title is omitted too");
+    assert!(texts.iter().any(|run| run.text == "U1") && texts.iter().any(|run| run.text == "U2"));
+    assert!(texts.len() > 40, "the thumbnail still paints the component and net labels");
+    assert_texts_inside(&texts, frame, "sheet overview");
+    assert_texts_apart(&texts, "sheet overview");
+    assert_eq!(svg, render_sheet_overview(&design).svg, "the thumbnail layout is deterministic");
 }

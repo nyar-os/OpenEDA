@@ -8795,17 +8795,16 @@ fn component_labels(component: &Component) -> (ComponentLabel, ComponentLabel) {
     (reference, value)
 }
 
-/// Axis-aligned boxes of the reference, value and pin-name texts of one
-/// component, in model coordinates.
+/// Axis-aligned boxes of the pin-name texts of one component, in model
+/// coordinates, after rotation.
 ///
-/// The boxes mirror exactly where [`push_svg_component`] paints the texts, so
-/// collision avoidance can reason about the printed labels instead of the
-/// component outline alone. Each box is `[min_x, min_y, max_x, max_y]`.
-fn component_text_boxes(component: &Component) -> Vec<[f64; 4]> {
+/// The boxes mirror exactly where [`push_svg_component_marked`] paints the pin
+/// names, so the sheet text layout can keep other labels off them. Each box is
+/// `[min_x, min_y, max_x, max_y]`.
+fn component_pin_boxes(component: &Component) -> Vec<[f64; 4]> {
     let (artwork, keeps_box) = symbol_artwork(component);
     let inside_box = keeps_box || artwork.is_empty();
-    let (reference, value) = component_labels(component);
-    let mut boxes = vec![reference.bounds(&component.reference), value.bounds(&component.value)];
+    let mut boxes = Vec::new();
     for pin in component_pins(component) {
         let anchor = rotate_about(
             component,
@@ -8819,6 +8818,265 @@ fn component_text_boxes(component: &Component) -> Vec<[f64; 4]> {
         boxes.push([left, anchor[1] - PIN_NAME_SIZE * 0.75, left + width, anchor[1] + PIN_NAME_SIZE * 0.25]);
     }
     boxes
+}
+
+/// One component's planned reference and value labels.
+#[derive(Clone, Copy)]
+struct PlannedLabels {
+    reference: ComponentLabel,
+    value: ComponentLabel,
+}
+
+/// Planned text positions of one sheet.
+///
+/// Component labels keep the document order of the components; the net names
+/// are already filtered to the ones the painter draws.
+struct SheetTextLayout {
+    components: Vec<PlannedLabels>,
+    nets: Vec<(String, [f64; 2])>,
+}
+
+/// True when the two boxes touch or overlap, after inflating them by `gap`.
+fn boxes_collide(left: [f64; 4], right: [f64; 4], gap: f64) -> bool {
+    left[0] < right[2] + gap && right[0] < left[2] + gap && left[1] < right[3] + gap && right[1] < left[3] + gap
+}
+
+/// Every fixed text box a planned label must avoid: symbol bodies, pin names,
+/// free sheet texts and explicit net labels.
+fn sheet_obstacles(sheet: &Sheet) -> Vec<[f64; 4]> {
+    let mut obstacles = Vec::new();
+    for component in &sheet.components {
+        let (min, max) = component_visual_extents(component);
+        obstacles.push([min[0], min[1], max[0], max[1]]);
+        obstacles.extend(component_pin_boxes(component));
+    }
+    for text in &sheet.texts {
+        let width = text.text.chars().count() as f64 * 3.2 * 0.6;
+        obstacles.push([text.x - 0.5, text.y - 3.6, text.x + width + 0.5, text.y + 1.0]);
+    }
+    for label in &sheet.labels {
+        let width = label.text.chars().count() as f64 * 2.8 * 0.6;
+        obstacles.push([label.x - 0.6, label.y - 3.4, label.x + width + 1.2, label.y + 0.8]);
+    }
+    obstacles
+}
+
+/// Candidate label pairs around one symbol, in preference order.
+///
+/// The list starts with the reference above and the value below the body, then
+/// swaps them, then moves both to one side of the body, then mixes one side with
+/// one body edge and finally stacks both labels on the same edge. Growing
+/// offsets let a crowded sheet push a pair further out instead of printing it
+/// over its neighbours.
+fn component_label_candidates(component: &Component) -> Vec<PlannedLabels> {
+    let (min, max) = component_visual_extents(component);
+    let center_x = (min[0] + max[0]) / 2.0;
+    let center_y = (min[1] + max[1]) / 2.0;
+    let reference_size = 3.2;
+    let value_size = 2.6;
+    let label = |x: f64, y: f64, anchor: &'static str, size: f64| ComponentLabel { x, y, anchor, size };
+    let mut candidates = Vec::new();
+    for extra in [0.0, 3.0, 6.0, 9.0, 12.0, 18.0, 24.0, 32.0, 42.0, 54.0, 68.0] {
+        candidates.push(PlannedLabels {
+            reference: label(center_x, min[1] - 1.96 - extra, "middle", reference_size),
+            value: label(center_x, max[1] + 1.96 + extra, "middle", value_size),
+        });
+        candidates.push(PlannedLabels {
+            reference: label(center_x, max[1] + 1.96 + extra, "middle", reference_size),
+            value: label(center_x, min[1] - 1.96 - extra, "middle", value_size),
+        });
+    }
+    for extra in [0.0, 3.0, 6.0, 9.0] {
+        candidates.push(PlannedLabels {
+            reference: label(max[0] + 1.2 + extra, center_y - 0.6, "start", reference_size),
+            value: label(max[0] + 1.2 + extra, center_y + 3.0, "start", value_size),
+        });
+        candidates.push(PlannedLabels {
+            reference: label(min[0] - 1.2 - extra, center_y - 0.6, "end", reference_size),
+            value: label(min[0] - 1.2 - extra, center_y + 3.0, "end", value_size),
+        });
+    }
+    for extra in [0.0, 3.0, 6.0, 9.0] {
+        candidates.push(PlannedLabels {
+            reference: label(center_x, min[1] - 1.96 - extra, "middle", reference_size),
+            value: label(max[0] + 1.2 + extra, center_y + 3.0, "start", value_size),
+        });
+        candidates.push(PlannedLabels {
+            reference: label(center_x, min[1] - 1.96 - extra, "middle", reference_size),
+            value: label(min[0] - 1.2 - extra, center_y + 3.0, "end", value_size),
+        });
+        candidates.push(PlannedLabels {
+            reference: label(max[0] + 1.2 + extra, center_y - 0.6, "start", reference_size),
+            value: label(center_x, max[1] + 1.96 + extra, "middle", value_size),
+        });
+        candidates.push(PlannedLabels {
+            reference: label(min[0] - 1.2 - extra, center_y - 0.6, "end", reference_size),
+            value: label(center_x, max[1] + 1.96 + extra, "middle", value_size),
+        });
+    }
+    for extra in [0.0, 3.0, 6.0, 9.0] {
+        candidates.push(PlannedLabels {
+            reference: label(center_x, min[1] - 1.96 - extra - reference_size - 1.2, "middle", reference_size),
+            value: label(center_x, min[1] - 1.96 - extra, "middle", value_size),
+        });
+        candidates.push(PlannedLabels {
+            reference: label(center_x, max[1] + 1.96 + extra, "middle", reference_size),
+            value: label(center_x, max[1] + 1.96 + extra + reference_size + 1.2, "middle", value_size),
+        });
+    }
+    candidates
+}
+
+/// Chooses reference and value positions for every component, in document
+/// order, rejecting any candidate that touches a body, a pin name, a sheet text,
+/// an explicit label or a label already placed.
+fn plan_component_labels(sheet: &Sheet, obstacles: &[[f64; 4]]) -> Vec<PlannedLabels> {
+    let mut placed: Vec<[f64; 4]> = Vec::new();
+    let mut planned = Vec::with_capacity(sheet.components.len());
+    for component in &sheet.components {
+        let candidates = component_label_candidates(component);
+        let mut chosen = None;
+        for candidate in &candidates {
+            let reference = candidate.reference.bounds(&component.reference);
+            let value = candidate.value.bounds(&component.value);
+            if boxes_collide(reference, value, 0.1) {
+                continue;
+            }
+            let blocked = obstacles
+                .iter()
+                .chain(placed.iter())
+                .any(|other| boxes_collide(reference, *other, 0.0) || boxes_collide(value, *other, 0.0));
+            if blocked {
+                continue;
+            }
+            chosen = Some(*candidate);
+            break;
+        }
+        let chosen = chosen.unwrap_or(candidates[0]);
+        placed.push(chosen.reference.bounds(&component.reference));
+        placed.push(chosen.value.bounds(&component.value));
+        planned.push(chosen);
+    }
+    planned
+}
+
+/// The painted box of one net-name annotation, including its white backing.
+fn net_name_box(point: [f64; 2], half: f64) -> [f64; 4] {
+    [point[0] - half - 0.4, point[1] - 2.2, point[0] + half + 0.4, point[1] + 0.4]
+}
+
+/// Candidate baselines for one net name, in preference order.
+///
+/// A horizontal wire is labelled along its normal, so the name starts one line
+/// above the midpoint and is lifted a line at a time until it clears the pin
+/// names and component labels around it. A vertical wire has no free space
+/// above it, so the name moves beside the wire instead. Both orientations then
+/// try sliding along the wire before falling back to the other side.
+fn net_name_candidates(from: [f64; 2], to: [f64; 2], half: f64) -> Vec<[f64; 2]> {
+    let mid_x = (from[0] + to[0]) / 2.0;
+    let mid_y = (from[1] + to[1]) / 2.0;
+    let vertical = (to[0] - from[0]).abs() < (to[1] - from[1]).abs();
+    let length = ((to[0] - from[0]).powi(2) + (to[1] - from[1]).powi(2)).sqrt();
+    let mut points = Vec::new();
+    if vertical {
+        for side in [1.0, -1.0] {
+            for step in 0..4 {
+                points.push([mid_x + side * (half + 0.8 + step as f64 * 2.4), mid_y - 1.0]);
+            }
+        }
+        let quarter = length / 4.0;
+        if quarter > 1.0 {
+            for side in [1.0, -1.0] {
+                for offset in [quarter, 2.0 * quarter] {
+                    points.push([mid_x + side * (half + 0.8), mid_y + side * offset]);
+                }
+            }
+        }
+    }
+    else {
+        let lifts = [1.0, 2.8, 4.6, 6.4, 8.2, 10.0, 12.0, 14.0, 16.0, 18.0];
+        // The wire normal points up, so lifting the centred name is the first
+        // move and the only one needed on most sheets.
+        for lift in lifts {
+            points.push([mid_x, mid_y - lift]);
+        }
+        let mut shifts = Vec::new();
+        if length > half * 2.0 + 2.0 {
+            shifts.extend([length / 4.0, -length / 4.0, length / 2.0, -length / 2.0]);
+        }
+        for shift in &shifts {
+            for lift in &lifts[..6] {
+                points.push([mid_x + shift, mid_y - lift]);
+            }
+        }
+        for drop in [2.8, 5.0, 7.0, 9.0, 11.0] {
+            for shift in std::iter::once(0.0).chain(shifts.iter().copied()) {
+                points.push([mid_x + shift, mid_y + drop]);
+            }
+        }
+    }
+    points
+}
+
+/// Deterministic fallback for a net name that found no free candidate: scan a
+/// wide grid above the sheet obstacles until a free box appears.
+fn free_net_name_spot(from: [f64; 2], to: [f64; 2], half: f64, obstacles: &[[f64; 4]], placed: &[[f64; 4]]) -> [f64; 2] {
+    let mid_x = (from[0] + to[0]) / 2.0;
+    let top = obstacles.iter().map(|bounds| bounds[1]).fold(f64::INFINITY, f64::min);
+    let step = half * 2.0 + 2.0;
+    for row in 0..64 {
+        let y = top - 3.2 - row as f64 * 3.0;
+        for column in 0..=20 {
+            let x = mid_x + (column as f64 - 10.0) * step;
+            let candidate = net_name_box([x, y], half);
+            if !obstacles.iter().chain(placed.iter()).any(|other| boxes_collide(candidate, *other, 0.0)) {
+                return [x, y];
+            }
+        }
+    }
+    [mid_x, top - 3.2]
+}
+
+/// Plans every net-name annotation, skipping nets already named by an explicit
+/// label, and keeps each box off the fixed obstacles and the names before it.
+fn plan_net_names(sheet: &Sheet, obstacles: &[[f64; 4]]) -> Vec<(String, [f64; 2])> {
+    let labelled: BTreeSet<String> = sheet.labels.iter().map(|label| label.text.to_lowercase()).collect();
+    let mut placed: Vec<[f64; 4]> = Vec::new();
+    let mut nets = Vec::new();
+    for (net, (from, to)) in net_name_anchors(sheet) {
+        if labelled.contains(&net.to_lowercase()) {
+            continue;
+        }
+        let half = net.chars().count() as f64 * 2.2 * 0.3;
+        let point = net_name_candidates(from, to, half)
+            .into_iter()
+            .find(|point| {
+                let box_min = net_name_box(*point, half);
+                !obstacles.iter().chain(placed.iter()).any(|other| boxes_collide(box_min, *other, 0.0))
+            })
+            .unwrap_or_else(|| free_net_name_spot(from, to, half, obstacles, &placed));
+        placed.push(net_name_box(point, half));
+        nets.push((net, point));
+    }
+    nets
+}
+
+/// The single layout shared by painting, the drawing bounds and the PDF/PNG
+/// projections, so every surface places the same labels in the same spots.
+fn sheet_text_layout(sheet: &Sheet) -> SheetTextLayout {
+    let mut obstacles = sheet_obstacles(sheet);
+    let components = plan_component_labels(sheet, &obstacles);
+    for (component, labels) in sheet.components.iter().zip(&components) {
+        obstacles.push(labels.reference.bounds(&component.reference));
+        obstacles.push(labels.value.bounds(&component.value));
+    }
+    let nets = plan_net_names(sheet, &obstacles);
+    SheetTextLayout { components, nets }
+}
+
+/// Final net-name annotations of one sheet, ready to paint.
+pub(crate) fn net_name_positions(sheet: &Sheet) -> Vec<(String, [f64; 2])> {
+    sheet_text_layout(sheet).nets
 }
 
 /// Schematic body class derived from the reference prefix.
@@ -9000,14 +9258,18 @@ pub(crate) fn drawing_bounds<'a>(sheets: impl IntoIterator<Item = &'a Sheet>) ->
     let mut max_y = f64::NEG_INFINITY;
     let mut any = false;
     for sheet in sheets {
-        for component in &sheet.components {
+        let layout = sheet_text_layout(sheet);
+        for (component, labels) in sheet.components.iter().zip(&layout.components) {
             any = true;
             let (min, max) = component_extents(component);
             min_x = min_x.min(min[0]);
             max_x = max_x.max(max[0]);
             min_y = min_y.min(min[1]);
             max_y = max_y.max(max[1]);
-            for text in component_text_boxes(component) {
+            let mut text_boxes = component_pin_boxes(component);
+            text_boxes.push(labels.reference.bounds(&component.reference));
+            text_boxes.push(labels.value.bounds(&component.value));
+            for text in text_boxes {
                 min_x = min_x.min(text[0]);
                 max_x = max_x.max(text[2]);
                 min_y = min_y.min(text[1]);
@@ -9053,14 +9315,13 @@ pub(crate) fn drawing_bounds<'a>(sheets: impl IntoIterator<Item = &'a Sheet>) ->
             min_y = min_y.min(flag.y - 1.0);
             max_y = max_y.max(flag.y + 1.0);
         }
-        for (net, (from, to)) in net_name_anchors(sheet) {
+        for (net, [name_x, name_y]) in &layout.nets {
             any = true;
-            let [name_x, name_y] = net_name_point(sheet, from, to, &net);
             let half = net.chars().count() as f64 * 2.2 * 0.3;
-            min_x = min_x.min(name_x - half);
-            max_x = max_x.max(name_x + half);
+            min_x = min_x.min(name_x - half - 0.4);
+            max_x = max_x.max(name_x + half + 0.4);
             min_y = min_y.min(name_y - 2.2);
-            max_y = max_y.max(name_y);
+            max_y = max_y.max(name_y + 0.4);
         }
     }
     if any { (min_x, min_y, max_x, max_y) } else { (0.0, 0.0, 100.0, 60.0) }
@@ -9070,6 +9331,11 @@ pub(crate) fn drawing_bounds<'a>(sheets: impl IntoIterator<Item = &'a Sheet>) ->
 /// design units. The strip carries the sheet name, design title, revision and
 /// counts instead of a bare border.
 pub(crate) const TITLE_BLOCK_HEIGHT: f64 = 14.0;
+
+/// Narrowest sheet frame, in design units. A small design keeps this width so
+/// the fixed title-block cells still hold their labels instead of clipping and
+/// spilling into the neighbouring cell.
+const MIN_VIEW_WIDTH: f64 = 150.0;
 
 /// Projects the given sheets onto one SVG document.
 ///
@@ -9088,9 +9354,9 @@ fn svg_projection(design: &Design, sheets: &[&Sheet]) -> SvgProjection {
     // wide and narrow designs alike.
     let content_width = (max_x - min_x).max(1.0);
     let padding = content_width * 0.08 / 0.84;
-    let view_x = min_x - padding;
+    let view_width = (content_width + 2.0 * padding).max(MIN_VIEW_WIDTH);
+    let view_x = (min_x + max_x) / 2.0 - view_width / 2.0;
     let view_y = min_y - padding;
-    let view_width = content_width + 2.0 * padding;
     let view_height = (max_y - min_y).max(1.0) + 2.0 * padding + TITLE_BLOCK_HEIGHT;
     // The SVG viewBox counts millimetres. A standalone file opens at eight
     // pixels per millimetre so pin labels and references stay legible instead
@@ -9131,8 +9397,8 @@ fn svg_paged_projection(design: &Design, sheets: &[&Sheet]) -> SvgProjection {
     let gap = 10.0;
     let content_width = bounds.iter().map(|bound| bound.2 - bound.0).fold(1.0, f64::max);
     let padding = content_width * 0.08 / 0.84;
-    let view_x = -padding;
-    let view_width = content_width + 2.0 * padding;
+    let view_width = (content_width + 2.0 * padding).max(MIN_VIEW_WIDTH);
+    let view_x = -(view_width - content_width) / 2.0;
     // One full padding above the first band and one below the last, so every
     // sheet keeps the same eight-percent margin from the page border.
     let mut view_height = 2.0 * padding + TITLE_BLOCK_HEIGHT;
@@ -9185,9 +9451,22 @@ fn svg_paged_projection(design: &Design, sheets: &[&Sheet]) -> SvgProjection {
 /// Paints one sheet's wires, junctions, no-connect flags, net annotations,
 /// labels, texts and components into an SVG document at design coordinates.
 ///
-/// Shared by the sheet projection and the multi-sheet overview drawing so both
-/// paint byte-identical primitives; the caller owns the surrounding group.
+/// The sheet projection uses this full painter and the overview thumbnail uses
+/// the same body through [`push_svg_sheet_thumbnail`], so both paint identical
+/// primitives; the caller owns the surrounding group.
 pub(crate) fn push_svg_sheet_contents(svg: &mut String, sheet: &Sheet) {
+    push_svg_sheet_body(svg, sheet, true);
+}
+
+/// Paints the same geometry and planned labels as [`push_svg_sheet_contents`]
+/// but omits free sheet texts and explicit net labels, whose fixed positions
+/// cannot be kept apart at thumbnail scale.
+pub(crate) fn push_svg_sheet_thumbnail(svg: &mut String, sheet: &Sheet) {
+    push_svg_sheet_body(svg, sheet, false);
+}
+
+fn push_svg_sheet_body(svg: &mut String, sheet: &Sheet, detailed: bool) {
+    let layout = sheet_text_layout(sheet);
     let pin_key = |point: [f64; 2]| -> (i64, i64) { ((point[0] * 100.0).round() as i64, (point[1] * 100.0).round() as i64) };
     let mut connected: BTreeSet<(i64, i64)> = BTreeSet::new();
     for wire in &sheet.wires {
@@ -9219,12 +9498,7 @@ pub(crate) fn push_svg_sheet_contents(svg: &mut String, sheet: &Sheet) {
                 flag.y - 0.7
             ));
     }
-    let labelled: BTreeSet<String> = sheet.labels.iter().map(|label| label.text.to_lowercase()).collect();
-    for (net, (from, to)) in net_name_anchors(sheet) {
-        if labelled.contains(&net.to_lowercase()) {
-            continue;
-        }
-        let [mid_x, mid_y] = net_name_point(sheet, from, to, &net);
+    for (net, [mid_x, mid_y]) in &layout.nets {
         let half = net.chars().count() as f64 * 2.2 * 0.3;
         svg.push_str(&format!(
             "    <rect x=\"{:.2}\" y=\"{:.2}\" width=\"{:.2}\" height=\"2.8\" fill=\"#ffffff\" data-net-name-box=\"true\"/>\n",
@@ -9236,55 +9510,56 @@ pub(crate) fn push_svg_sheet_contents(svg: &mut String, sheet: &Sheet) {
                 "    <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"2.2\" text-anchor=\"middle\" fill=\"#64748b\" data-net=\"{}\">{}</text>\n",
                 mid_x,
                 mid_y,
-                escape_xml(&net),
-                escape_xml(&net)
+                escape_xml(net),
+                escape_xml(net)
             ));
     }
-    let mut painted_labels: BTreeSet<(String, String)> = BTreeSet::new();
-    for label in &sheet.labels {
-        let key = (format!("{:?}", label.scope), label.text.clone());
-        if !painted_labels.insert(key) {
-            continue;
-        }
-        let width = label.text.chars().count() as f64 * 2.8 * 0.6;
-        match label.scope {
-            LabelScope::Local => {
-                svg.push_str(&format!(
-                    "    <rect x=\"{:.2}\" y=\"{:.2}\" width=\"{:.2}\" height=\"4.2\" fill=\"#ffffff\"/>\n",
-                    label.x - 0.4,
-                    label.y - 3.4,
-                    width + 0.8
-                ));
-                svg.push_str(&format!(
+    if detailed {
+        let mut painted_labels: BTreeSet<(String, String)> = BTreeSet::new();
+        for label in &sheet.labels {
+            let key = (format!("{:?}", label.scope), label.text.clone());
+            if !painted_labels.insert(key) {
+                continue;
+            }
+            let width = label.text.chars().count() as f64 * 2.8 * 0.6;
+            match label.scope {
+                LabelScope::Local => {
+                    svg.push_str(&format!(
+                        "    <rect x=\"{:.2}\" y=\"{:.2}\" width=\"{:.2}\" height=\"4.2\" fill=\"#ffffff\"/>\n",
+                        label.x - 0.4,
+                        label.y - 3.4,
+                        width + 0.8
+                    ));
+                    svg.push_str(&format!(
                         "    <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"2.8\" text-anchor=\"start\" fill=\"#0f766e\">{}</text>\n",
                         label.x,
                         label.y,
                         escape_xml(&label.text)
                     ));
-                svg.push_str(&format!(
+                    svg.push_str(&format!(
                     "    <line x1=\"{:.2}\" y1=\"{:.2}\" x2=\"{:.2}\" y2=\"{:.2}\" stroke=\"#0f766e\" stroke-width=\"0.3\"/>\n",
                     label.x,
                     label.y + 0.6,
                     label.x + width,
                     label.y + 0.6
                 ));
-            }
-            LabelScope::Global => {
-                svg.push_str(&format!(
+                }
+                LabelScope::Global => {
+                    svg.push_str(&format!(
                         "    <rect x=\"{:.2}\" y=\"{:.2}\" width=\"{:.2}\" height=\"4.2\" rx=\"0.8\" fill=\"#ffffff\" stroke=\"#b91c1c\" stroke-width=\"0.35\"/>\n",
                         label.x - 0.6,
                         label.y - 3.4,
                         width + 1.2
                     ));
-                svg.push_str(&format!(
+                    svg.push_str(&format!(
                         "    <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"2.8\" text-anchor=\"start\" fill=\"#b91c1c\">{}</text>\n",
                         label.x,
                         label.y,
                         escape_xml(&label.text)
                     ));
-            }
-            LabelScope::Hierarchical => {
-                svg.push_str(&format!(
+                }
+                LabelScope::Hierarchical => {
+                    svg.push_str(&format!(
                         "    <polygon points=\"{:.2},{:.2} {:.2},{:.2} {:.2},{:.2} {:.2},{:.2} {:.2},{:.2}\" fill=\"#ffffff\" stroke=\"#15803d\" stroke-width=\"0.35\"/>\n",
                         label.x,
                         label.y + 0.8,
@@ -9297,41 +9572,55 @@ pub(crate) fn push_svg_sheet_contents(svg: &mut String, sheet: &Sheet) {
                         label.x + width + 1.2,
                         label.y + 0.8
                     ));
-                svg.push_str(&format!(
+                    svg.push_str(&format!(
                         "    <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"2.8\" text-anchor=\"start\" fill=\"#15803d\">{}</text>\n",
                         label.x + 1.8,
                         label.y,
                         escape_xml(&label.text)
                     ));
+                }
             }
         }
-    }
-    for text in &sheet.texts {
-        let width = text.text.chars().count() as f64 * 3.2 * 0.6;
-        svg.push_str(&format!(
-            "    <rect x=\"{:.2}\" y=\"{:.2}\" width=\"{:.2}\" height=\"4.6\" fill=\"#ffffff\" data-text-box=\"true\"/>\n",
-            text.x - 0.5,
-            text.y - 3.6,
-            width + 1.0
-        ));
-        svg.push_str(&format!(
+        for text in &sheet.texts {
+            let width = text.text.chars().count() as f64 * 3.2 * 0.6;
+            svg.push_str(&format!(
+                "    <rect x=\"{:.2}\" y=\"{:.2}\" width=\"{:.2}\" height=\"4.6\" fill=\"#ffffff\" data-text-box=\"true\"/>\n",
+                text.x - 0.5,
+                text.y - 3.6,
+                width + 1.0
+            ));
+            svg.push_str(&format!(
             "    <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"3.2\" text-anchor=\"start\">{}</text>\n",
             text.x,
             text.y,
             escape_xml(&text.text)
         ));
+        }
     }
-    for component in &sheet.components {
-        push_svg_component_marked(svg, component, Some(&connected));
+    for (component, labels) in sheet.components.iter().zip(&layout.components) {
+        push_svg_component_marked(svg, component, Some(&connected), Some(*labels));
     }
 }
 
 /// Paints one component symbol and suppresses pin dots that coincide with a
 /// wire endpoint in `connected` (rounded to 0.01 unit). `None` marks every pin.
-pub(crate) fn push_svg_component_marked(svg: &mut String, component: &Component, connected: Option<&BTreeSet<(i64, i64)>>) {
+///
+/// `labels` carries the sheet layout's planned reference and value positions;
+/// without it the component places its own labels, which is what the symbol
+/// library does for its isolated cells.
+pub(crate) fn push_svg_component_marked(
+    svg: &mut String,
+    component: &Component,
+    connected: Option<&BTreeSet<(i64, i64)>>,
+    labels: Option<PlannedLabels>,
+) {
     let (artwork, keeps_box) = symbol_artwork(component);
     let inside_box = keeps_box || artwork.is_empty();
-    let (reference, value) = component_labels(component);
+    let labels = labels.unwrap_or_else(|| {
+        let (reference, value) = component_labels(component);
+        PlannedLabels { reference, value }
+    });
+    let (reference, value) = (labels.reference, labels.value);
     svg.push_str(&format!(
         "    <g transform=\"rotate({:.2} {:.2} {:.2})\" data-ref=\"{}\">\n",
         component.rotation,
@@ -9426,45 +9715,6 @@ fn net_name_anchors(sheet: &Sheet) -> Vec<NetAnchor> {
     best.into_values().map(|(net, _, segment)| (net, segment)).collect()
 }
 
-/// Baseline point of a net-name annotation in model coordinates.
-///
-/// The default spot is one unit above the wire midpoint; when that box would
-/// collide with a label of any scope or with the reference, value or pin-name
-/// text of a placed component, the annotation is lifted one text line per
-/// collision (at most three lines) so the grey net name never sits on top of
-/// a green local label, a boxed global label or a printed pin name. A vertical
-/// anchor wire would otherwise run straight through a centred name, so the
-/// annotation is shifted sideways past the wire end instead, clearing the
-/// stroke by a label gap.
-fn net_name_point(sheet: &Sheet, from: [f64; 2], to: [f64; 2], net: &str) -> [f64; 2] {
-    let half = net.chars().count() as f64 * 2.2 * 0.3;
-    let vertical = (to[0] - from[0]).abs() < (to[1] - from[1]).abs();
-    let name_x = if vertical { (from[0] + to[0]) / 2.0 + half + 0.8 } else { (from[0] + to[0]) / 2.0 };
-    let mut baseline = (from[1] + to[1]) / 2.0 - 1.0;
-    let collides = |baseline: f64| {
-        let label_hit = sheet.labels.iter().any(|label| {
-            let width = label.text.chars().count() as f64 * 2.8 * 0.6;
-            label.x < name_x + half + 0.4
-                && label.x + width > name_x - half - 0.4
-                && label.y - 2.8 < baseline
-                && baseline - 2.2 < label.y + 0.6
-        });
-        let text_hit = sheet.components.iter().flat_map(component_text_boxes).any(|box_min| {
-            box_min[0] < name_x + half + 0.4
-                && box_min[2] > name_x - half - 0.4
-                && box_min[1] < baseline + 0.4
-                && baseline - 2.2 < box_min[3]
-        });
-        label_hit || text_hit
-    };
-    let mut lifts = 0;
-    while collides(baseline) && lifts < 3 {
-        baseline -= 3.0;
-        lifts += 1;
-    }
-    [name_x, baseline]
-}
-
 /// Paints the title-block strip along the bottom of the sheet frame.
 ///
 /// The strip is split into four cells: design title (with company below),
@@ -9508,11 +9758,12 @@ pub(crate) fn push_svg_title_block(
         ));
     }
     let cell_x = |index: usize| view_x + view_width * columns[..index].iter().sum::<f64>() + 1.5;
+    let cell_width = |index: usize| (view_width * columns[index] - 3.0).max(4.0);
     svg.push_str(&format!(
         "    <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"3.2\" text-anchor=\"start\" fill=\"#1f2933\">{}</text>\n",
         cell_x(0),
         strip_y + 5.0,
-        escape_xml(title)
+        escape_xml(&drawings::fit_text(title, cell_width(0), 3.2))
     ));
     let subtitle = if design.company.trim().is_empty() && design.date.trim().is_empty() {
         None
@@ -9532,46 +9783,47 @@ pub(crate) fn push_svg_title_block(
             "    <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"2.2\" text-anchor=\"start\" fill=\"#64748b\">{}</text>\n",
             cell_x(0),
             strip_y + 9.5,
-            escape_xml(&subtitle)
+            escape_xml(&drawings::fit_text(&subtitle, cell_width(0), 2.2))
         ));
     }
     svg.push_str(&format!(
         "    <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"2.4\" text-anchor=\"start\" fill=\"#1f2933\">{}</text>\n",
         cell_x(1),
         strip_y + 5.0,
-        escape_xml(&sheet_names)
+        escape_xml(&drawings::fit_text(&sheet_names, cell_width(1), 2.4))
     ));
+    let identity = format!("{sheet_count} | {drawing_number}");
     svg.push_str(&format!(
-        "    <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"2.2\" text-anchor=\"start\" fill=\"#64748b\">{} | {}</text>\n",
+        "    <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"2.2\" text-anchor=\"start\" fill=\"#64748b\">{}</text>\n",
         cell_x(1),
         strip_y + 9.5,
-        escape_xml(&sheet_count),
-        escape_xml(&drawings::fit_text(&drawing_number, view_width * columns[1] - 3.0, 2.2))
+        escape_xml(&drawings::fit_text(&identity, cell_width(1), 2.2))
     ));
     svg.push_str(&format!(
-        "    <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"2.6\" text-anchor=\"start\" fill=\"#1f2933\">REV {}</text>\n",
+        "    <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"2.6\" text-anchor=\"start\" fill=\"#1f2933\">{}</text>\n",
         cell_x(2),
         strip_y + 5.0,
-        escape_xml(rev)
+        escape_xml(&drawings::fit_text(&format!("REV {rev}"), cell_width(2), 2.6))
     ));
+    let scale = format!("1:1 | {}", design.units);
     svg.push_str(&format!(
-        "    <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"2.2\" text-anchor=\"start\" fill=\"#64748b\">SCALE 1:1 | UNIT {}</text>\n",
+        "    <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"2.2\" text-anchor=\"start\" fill=\"#64748b\">{}</text>\n",
         cell_x(2),
         strip_y + 9.5,
-        escape_xml(&design.units)
+        escape_xml(&drawings::fit_text(&scale, cell_width(2), 2.2))
     ));
+    let counts = format!("{components} parts / {wires} wires");
     svg.push_str(&format!(
-        "    <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"2.2\" text-anchor=\"start\" fill=\"#64748b\">{} parts / {} wires</text>\n",
+        "    <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"2.2\" text-anchor=\"start\" fill=\"#64748b\">{}</text>\n",
         cell_x(3),
         strip_y + 5.0,
-        components,
-        wires
+        escape_xml(&drawings::fit_text(&counts, cell_width(3), 2.2))
     ));
     svg.push_str(&format!(
-        "    <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"2.2\" text-anchor=\"start\" fill=\"#64748b\">OpenEDA rev {}</text>\n",
+        "    <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"2.2\" text-anchor=\"start\" fill=\"#64748b\">{}</text>\n",
         cell_x(3),
         strip_y + 9.5,
-        design.revision
+        escape_xml(&drawings::fit_text(&format!("OpenEDA rev {}", design.revision), cell_width(3), 2.2))
     ));
     svg.push_str("  </g>\n");
 }
@@ -10510,14 +10762,13 @@ fn pdf_page(design: &Design, sheet: Option<&Sheet>, index: usize, total: usize, 
                 map_y(flag.y) - half,
             ));
         }
-        for (net, (from, to)) in net_name_anchors(sheet) {
+        for (net, [name_x, name_y]) in &sheet_text_layout(sheet).nets {
             let size = (2.2 * scale).clamp(5.0, 7.0);
-            let [name_x, name_y] = net_name_point(sheet, from, to, &net);
             content.push_str(&format!(
                 "0.39 0.45 0.55 rg BT /F1 {size:.2} Tf {x:.2} {y:.2} Td {} Tj ET\n",
-                pdf_literal(&net),
-                x = map_x(name_x) - pdf_text_width(&net, size) / 2.0,
-                y = map_y(name_y),
+                pdf_literal(net),
+                x = map_x(*name_x) - pdf_text_width(net, size) / 2.0,
+                y = map_y(*name_y),
             ));
         }
         for label in &sheet.labels {
