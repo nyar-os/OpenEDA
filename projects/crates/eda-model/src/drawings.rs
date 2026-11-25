@@ -1230,10 +1230,14 @@ pub(crate) fn render_symbol_library(design: &Design) -> SymbolLibrary {
             "      <rect x=\"{cell_x:.2}\" y=\"{cell_y:.2}\" width=\"{cell_width:.2}\" height=\"{cell_height:.2}\" fill=\"#ffffff\" stroke=\"#cbd5e1\" stroke-width=\"0.35\"/>\n"
         ));
         let header = format!("{} {}", component.reference, component.value);
-        for (line, text) in wrap_text(&header, text_width, 3.2).iter().enumerate() {
+        let header_lines = wrap_text(&header, text_width, 3.2);
+        let pin_lines = wrap_text(&format!("PINS: {}", component.pins.join(", ")), text_width, 2.6);
+        let text_height = header_lines.len() as f64 * 3.8 + 2.0 + pin_lines.len() as f64 * 3.2;
+        let text_top = cell_y + (cell_height - text_height).max(0.0) / 2.0 + 3.2;
+        for (line, text) in header_lines.iter().enumerate() {
             content.push_str(&format!(
                 "      <text x=\"{text_x:.2}\" y=\"{:.2}\" font-family=\"{FONT_FAMILY}\" font-size=\"3.2\" fill=\"#1f2933\">{}</text>\n",
-                cell_y + 5.0 + line as f64 * 3.8,
+                text_top + line as f64 * 3.8,
                 escape_xml(text)
             ));
         }
@@ -1252,12 +1256,12 @@ pub(crate) fn render_symbol_library(design: &Design) -> SymbolLibrary {
             "      <g transform=\"translate({centre_x:.2} {centre_y:.2}) scale({scale:.4}) translate({:.2} {:.2})\">\n",
             -centre_x, -centre_y
         ));
-        push_svg_component_marked(&mut content, &placed, Some(&no_dots), None);
+        push_svg_component_marked(&mut content, &placed, Some(&no_dots), None, false);
         content.push_str("      </g>\n");
-        for (line, text) in wrap_text(&format!("PINS: {}", component.pins.join(", ")), text_width, 2.6).iter().enumerate() {
+        for (line, text) in pin_lines.iter().enumerate() {
             content.push_str(&format!(
                 "      <text x=\"{text_x:.2}\" y=\"{:.2}\" font-family=\"{FONT_FAMILY}\" font-size=\"2.6\" fill=\"#64748b\">{}</text>\n",
-                cell_y + 15.0 + line as f64 * 3.2,
+                text_top + header_lines.len() as f64 * 3.8 + 2.0 + line as f64 * 3.2,
                 escape_xml(text)
             ));
         }

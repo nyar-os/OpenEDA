@@ -9619,7 +9619,7 @@ fn push_svg_sheet_body(svg: &mut String, sheet: &Sheet, detailed: bool) {
         }
     }
     for (component, labels) in sheet.components.iter().zip(&layout.components) {
-        push_svg_component_marked(svg, component, Some(&connected), Some(*labels));
+        push_svg_component_marked(svg, component, Some(&connected), Some(*labels), true);
     }
 }
 
@@ -9627,13 +9627,14 @@ fn push_svg_sheet_body(svg: &mut String, sheet: &Sheet, detailed: bool) {
 /// wire endpoint in `connected` (rounded to 0.01 unit). `None` marks every pin.
 ///
 /// `labels` carries the sheet layout's planned reference and value positions;
-/// without it the component places its own labels, which is what the symbol
-/// library does for its isolated cells.
+/// without it the component places its own labels. `paint_labels` is false when
+/// the caller already renders a name header, as the symbol-library cards do.
 pub(crate) fn push_svg_component_marked(
     svg: &mut String,
     component: &Component,
     connected: Option<&BTreeSet<(i64, i64)>>,
     labels: Option<PlannedLabels>,
+    paint_labels: bool,
 ) {
     let (artwork, keeps_box) = symbol_artwork(component);
     let inside_box = keeps_box || artwork.is_empty();
@@ -9688,6 +9689,9 @@ pub(crate) fn push_svg_component_marked(
                 ));
     }
     svg.push_str("    </g>\n");
+    if !paint_labels {
+        return;
+    }
     for (label, text) in [(reference, component.reference.as_str()), (value, component.value.as_str())] {
         let box_min = label.bounds(text);
         svg.push_str(&format!(
