@@ -1007,6 +1007,11 @@ impl Affine {
     fn point(self, point: [f64; 2]) -> [f64; 2] {
         [self.a * point[0] + self.c * point[1] + self.e, self.b * point[0] + self.d * point[1] + self.f]
     }
+
+    /// Uniform length scale of the composed transform.
+    fn scale(self) -> f64 {
+        (self.a * self.a + self.b * self.b).sqrt()
+    }
 }
 
 /// Parses one SVG `transform` attribute, including nested function lists.
@@ -1064,6 +1069,8 @@ fn tag_text<'a>(tag: &'a str, key: &str) -> Option<&'a str> {
 struct PlacedText {
     text: String,
     bounds: [f64; 4],
+    /// Effective glyph height in page units after all enclosing scales.
+    size: f64,
 }
 
 /// Walks an SVG document, composes every enclosing `translate`, `scale` and
@@ -1118,7 +1125,11 @@ fn placed_texts(svg: &str) -> Vec<PlacedText> {
             let max_x = corners.iter().map(|point| point[0]).fold(f64::NEG_INFINITY, f64::max);
             let min_y = corners.iter().map(|point| point[1]).fold(f64::INFINITY, f64::min);
             let max_y = corners.iter().map(|point| point[1]).fold(f64::NEG_INFINITY, f64::max);
-            placed.push(PlacedText { text: text.to_string(), bounds: [min_x, min_y, max_x, max_y] });
+            placed.push(PlacedText {
+                text: text.to_string(),
+                bounds: [min_x, min_y, max_x, max_y],
+                size: size * total.scale(),
+            });
             rest = &content[content_end..];
         }
         else {
@@ -1363,7 +1374,9 @@ fn sheet_overview_scales_labels_without_overlap_or_page_overflow() {
 
 /// Every SVG drawing plus the base schematic export, labelled for assertions.
 fn all_svg_exports(design: &Design) -> Vec<(&'static str, String)> {
-    let sheets: Vec<&Sheet> = design.sheets.iter().collect();
+    // The schematic is exercised as a one-sheet page here; the multi-sheet
+    // pagination has its own dedicated assertions.
+    let sheets: Vec<&Sheet> = design.sheets.iter().take(1).collect();
     vec![
         ("block diagram", render_block_diagram(design).svg),
         ("sheet overview", render_sheet_overview(design).svg),
@@ -1607,24 +1620,131 @@ fn symbol_library_keeps_every_pin_name_without_truncation() {
 }
 
 #[test]
-fn schematic_svg_is_one_fixed_a4_page_and_fills_it() {
+fn schematic_svg_paginates_one_full_a4_page_per_sheet() {
     let design = crowded_design();
     let sheets: Vec<&Sheet> = design.sheets.iter().collect();
+    let sheet_count = sheets.len();
     let svg = crate::render_svg_for(&design, &sheets);
-    assert_eq!(view_box(&svg), [0.0, 0.0, 297.0, 210.0]);
-    assert_eq!(occurrences(&svg, r#"data-drawing=""#), 1);
-    assert_eq!(occurrences(&svg, r#"data-title-block="true""#), 1);
-    assert_eq!(rects_with(&svg, r#"data-page-frame="true""#).len(), 1, "the schematic has an inner frame");
     assert!(!svg.contains("..."), "the schematic never truncates text");
+    assert_eq!(occurrences(&svg, r#"data-page=""#), sheet_count, "one SVG page per sheet");
+    assert_eq!(occurrences(&svg, r#"data-drawing=""#), sheet_count, "each page has its own fitted content");
+    assert_eq!(occurrences(&svg, r#"data-title-block="true""#), sheet_count, "each page has its own title block");
+    let page_frames = rects_with(&svg, r#"data-page-frame="true""#);
+    assert_eq!(page_frames.len(), sheet_count, "each page has its own inner frame");
 
-    let page = page(&svg);
-    let used_height = page.content_size.1 * page.scale;
-    assert!(
-        used_height >= drawable().1 * 0.9,
-        "the stacked sheets fill only {:.0}% of the page height",
-        used_height / drawable().1 * 100.0
-    );
-    let frame = rects_with(&svg, r#"data-page-frame="true""#)[0];
-    let texts: Vec<PlacedText> = placed_texts(&svg).into_iter().filter(|run| run.bounds[3] <= frame[3] + 1.0).collect();
-    assert_texts_apart(&texts, "schematic content");
+    let [view_x, view_y, view_width, view_height] = view_box(&svg);
+    assert_eq!([view_x, view_y, view_width], [0.0, 0.0, 297.0]);
+    let gap = (view_height - 210.0 * sheet_count as f64) / (sheet_count.saturating_sub(1)) as f64;
+    assert!((6.0..=10.0).contains(&gap), "page gap is {gap:.2} mm");
+    assert!(view_height >= 210.0 * sheet_count as f64, "pages do not overlap");
+
+    let frames: Vec<[f64; 4]> = {
+        let mut frames = page_frames;
+        frames.sort_by(|left, right| left[1].total_cmp(&right[1]));
+        frames
+    };
+    let contents = tags_with(&svg, r#"data-drawing=""#);
+    assert_eq!(contents.len(), sheet_count);
+    let mut scales = Vec::new();
+    for (index, (frame, tag)) in frames.iter().zip(&contents).enumerate() {
+        let page_top = index as f64 * (210.0 + gap);
+        assert!((frame[0] - 23.76).abs() < 0.1, "page {index} frame x");
+        assert!((frame[1] - (page_top + 16.80)).abs() < 0.1, "page {index} frame y: {frame:?}");
+        assert!((frame[2] - 273.24).abs() < 0.1, "page {index} frame right");
+        assert!((frame[3] - (page_top + 171.20)).abs() < 0.1, "page {index} frame bottom");
+
+        let sizes: Vec<f64> = tag_text(tag, "data-content=\"")
+            .expect("content size")
+            .split_whitespace()
+            .map(|number| number.parse().expect("content number"))
+            .collect();
+        let scale: f64 = tag_text(tag, "data-scale=\"").expect("content scale").parse().expect("scale number");
+        let transform = parse_transform(tag_text(tag, " transform=\"").expect("content transform"));
+        scales.push(scale);
+        let used_width = sizes[0] * scale;
+        let used_height = sizes[1] * scale;
+        assert!(
+            used_width >= (frame[2] - frame[0]) * 0.9 || used_height >= (frame[3] - frame[1]) * 0.9,
+            "page {index} content only fills {used_width:.1}x{used_height:.1} of a {:.1}x{:.1} frame",
+            frame[2] - frame[0],
+            frame[3] - frame[1]
+        );
+        assert!(
+            transform.e >= frame[0] - 1.0
+                && transform.f >= frame[1] - 1.0
+                && transform.e + used_width <= frame[2] + 1.0
+                && transform.f + used_height <= frame[3] + 1.0,
+            "page {index} content leaves its inner frame: {frame:?}"
+        );
+    }
+
+    let all_texts = placed_texts(&svg);
+    for (index, frame) in frames.iter().enumerate() {
+        let page_top = index as f64 * (210.0 + gap);
+        let texts: Vec<&PlacedText> =
+            all_texts.iter().filter(|run| run.bounds[1] >= page_top - 1.0 && run.bounds[3] <= page_top + 188.0 + 1.0).collect();
+        assert!(!texts.is_empty(), "page {index} paints text");
+        for run in &texts {
+            let bounds = run.bounds;
+            assert!(
+                bounds[0] >= frame[0] - 1.0
+                    && bounds[1] >= frame[1] - 1.0
+                    && bounds[2] <= frame[2] + 1.0
+                    && bounds[3] <= frame[3] + 1.0,
+                "page {index} paints `{}` outside its frame {frame:?} at {bounds:?}",
+                run.text
+            );
+        }
+    }
+    let min_text = all_texts.iter().map(|run| run.size).fold(f64::INFINITY, f64::min);
+    assert!(min_text >= 2.0, "smallest glyph is only {min_text:.2} mm tall (scales {scales:?})");
+    assert_texts_apart(&all_texts, "schematic pages");
+}
+
+/// Every `/F1 <size> Tf` font size in a PDF content stream, in points.
+fn pdf_font_sizes(pdf: &str) -> Vec<f64> {
+    let mut sizes = Vec::new();
+    let mut rest = pdf;
+    while let Some(at) = rest.find("/F1 ") {
+        let after = &rest[at + 4..];
+        let Some(end) = after.find(" Tf")
+        else {
+            break;
+        };
+        if let Ok(size) = after[..end].trim().parse::<f64>() {
+            sizes.push(size);
+        }
+        rest = &after[end..];
+    }
+    sizes
+}
+
+#[test]
+fn schematic_pdf_uses_one_a4_page_per_sheet_with_at_least_two_millimetre_text() {
+    let design = crowded_design();
+    let sheets: Vec<&Sheet> = design.sheets.iter().collect();
+    let (pdf, _) = crate::render_pdf_for(&design, &sheets);
+    assert_eq!(occurrences(&pdf, "/Type /Page /Parent"), sheets.len(), "one PDF page per sheet");
+    assert_eq!(occurrences(&pdf, "/MediaBox [0 0 842 595]"), sheets.len(), "every PDF page is A4 landscape");
+    let sizes = pdf_font_sizes(&pdf);
+    assert!(!sizes.is_empty(), "the PDF paints text");
+    let smallest = sizes.iter().copied().fold(f64::INFINITY, f64::min);
+    let millimetres = smallest * 25.4 / 72.0;
+    assert!(millimetres >= 2.0, "smallest PDF glyph is {millimetres:.2} mm ({smallest:.2} pt)");
+    assert!(!pdf.contains("..."), "the schematic PDF never truncates text");
+}
+
+#[test]
+fn pdf_exports_never_elide_net_xref_or_bom_content() {
+    let design = sample_design();
+    let (xref, _, pages, nets) = crate::render_net_xref_pdf(&design);
+    assert!(pages >= 1 && nets > 0);
+    assert!(!xref.contains("..."), "net xref PDF still contains an ellipsis");
+    for row in crate::drawings::net_xref_rows(&design) {
+        for node in row.nodes {
+            assert!(xref.contains(&node), "net xref PDF dropped node `{node}`");
+        }
+    }
+    let (bom, _, _) = crate::render_bom_pdf(&design);
+    assert!(!bom.contains("..."), "BOM PDF still contains an ellipsis");
 }

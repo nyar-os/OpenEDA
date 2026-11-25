@@ -9379,7 +9379,38 @@ const SHEET_BAND_HEADER: f64 = 6.0;
 /// uniformly into the frame and centred. Several sheets are stacked into
 /// labelled bands inside that one frame instead of sharing design coordinates.
 fn svg_projection(design: &Design, sheets: &[&Sheet]) -> SvgProjection {
-    let (content, content_width, content_height) = schematic_content(sheets);
+    let total = sheets.len().max(1);
+    // A multi-sheet export grows downwards. Each page keeps its full A4 frame,
+    // so a sheet is never squeezed to make room for its neighbours.
+    let page_gap = if total > 1 { 8.0 } else { 0.0 };
+    let document_height = A4_HEIGHT * total as f64 + page_gap * (total.saturating_sub(1)) as f64;
+    let width = (A4_WIDTH * 8.0).round();
+    let height = (document_height * 8.0).round();
+
+    let mut svg = String::new();
+    svg.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
+    svg.push_str(&format!(
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 {A4_WIDTH:.2} {document_height:.2}\" width=\"{width:.0}\" height=\"{height:.0}\" data-pages=\"{total}\">\n"
+    ));
+    if sheets.is_empty() {
+        push_svg_page(&mut svg, design, None, 0, 1, 0.0);
+    }
+    else {
+        for (index, sheet) in sheets.iter().enumerate() {
+            let page_top = index as f64 * (A4_HEIGHT + page_gap);
+            push_svg_page(&mut svg, design, Some(sheet), index, total, page_top);
+        }
+    }
+    svg.push_str("</svg>\n");
+    SvgProjection { document: svg, width, height }
+}
+
+/// Paints one complete A4 landscape page. `page_top` is the page's y offset in
+/// a stacked multi-sheet document; all geometry inside the page stays at its
+/// normal single-sheet scale.
+fn push_svg_page(svg: &mut String, design: &Design, sheet: Option<&Sheet>, index: usize, total: usize, page_top: f64) {
+    let page_sheets: Vec<&Sheet> = sheet.into_iter().collect();
+    let (content, content_width, content_height) = schematic_content(&page_sheets);
     let margin_x = A4_WIDTH * PAGE_MARGIN_FRACTION;
     let margin_y = A4_HEIGHT * PAGE_MARGIN_FRACTION;
     let frame_width = A4_WIDTH - 2.0 * margin_x;
@@ -9392,29 +9423,23 @@ fn svg_projection(design: &Design, sheets: &[&Sheet]) -> SvgProjection {
     let used_width = natural_width * scale;
     let used_height = natural_height * scale;
     let offset_x = margin_x + (frame_width - used_width) / 2.0;
-    let offset_y = margin_y + (frame_height - used_height) / 2.0;
-    let width = (A4_WIDTH * 8.0).round();
-    let height = (A4_HEIGHT * 8.0).round();
+    let offset_y = page_top + margin_y + (frame_height - used_height) / 2.0;
 
-    let mut svg = String::new();
-    svg.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
+    svg.push_str(&format!("  <g data-page=\"{index}\" data-page-count=\"{total}\">\n"));
     svg.push_str(&format!(
-        "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 {A4_WIDTH:.2} {A4_HEIGHT:.2}\" width=\"{width:.0}\" height=\"{height:.0}\">\n"
+        "    <rect x=\"0.00\" y=\"{page_top:.2}\" width=\"{A4_WIDTH:.2}\" height=\"{A4_HEIGHT:.2}\" fill=\"#ffffff\" stroke=\"#1f2933\" stroke-width=\"0.4\"/>\n"
     ));
     svg.push_str(&format!(
-        "  <rect x=\"0.00\" y=\"0.00\" width=\"{A4_WIDTH:.2}\" height=\"{A4_HEIGHT:.2}\" fill=\"#ffffff\" stroke=\"#1f2933\" stroke-width=\"0.4\"/>\n"
+        "    <rect data-page-frame=\"true\" x=\"{margin_x:.2}\" y=\"{:.2}\" width=\"{frame_width:.2}\" height=\"{frame_height:.2}\" fill=\"none\" stroke=\"#1f2933\" stroke-width=\"0.4\"/>\n",
+        page_top + margin_y
     ));
     svg.push_str(&format!(
-        "  <rect data-page-frame=\"true\" x=\"{margin_x:.2}\" y=\"{margin_y:.2}\" width=\"{frame_width:.2}\" height=\"{frame_height:.2}\" fill=\"none\" stroke=\"#1f2933\" stroke-width=\"0.4\"/>\n"
-    ));
-    svg.push_str(&format!(
-        "  <g data-drawing=\"SCH\" data-content=\"{content_width:.2} {content_height:.2}\" data-scale=\"{scale:.4}\" transform=\"translate({offset_x:.2} {offset_y:.2}) scale({scale:.4})\">\n"
+        "    <g data-drawing=\"SCH\" data-content=\"{content_width:.2} {content_height:.2}\" data-scale=\"{scale:.4}\" transform=\"translate({offset_x:.2} {offset_y:.2}) scale({scale:.4})\">\n"
     ));
     svg.push_str(&content);
+    svg.push_str("    </g>\n");
+    push_svg_title_block(svg, design, &page_sheets, 0.0, page_top + margin_y, A4_WIDTH, A4_HEIGHT - margin_y, index, total);
     svg.push_str("  </g>\n");
-    push_svg_title_block(&mut svg, design, sheets, 0.0, margin_y, A4_WIDTH, A4_HEIGHT - margin_y);
-    svg.push_str("</svg>\n");
-    SvgProjection { document: svg, width, height }
 }
 
 /// Builds the natural-size content of one schematic page.
@@ -9753,6 +9778,8 @@ pub(crate) fn push_svg_title_block(
     view_y: f64,
     view_width: f64,
     view_height: f64,
+    page_index: usize,
+    page_total: usize,
 ) {
     let strip_y = view_y + view_height - TITLE_BLOCK_HEIGHT;
     let components: usize = sheets.iter().map(|sheet| sheet.components.len()).sum();
@@ -9761,7 +9788,6 @@ pub(crate) fn push_svg_title_block(
     let sheet_names = sheets.iter().map(|sheet| sheet.name.as_str()).collect::<Vec<_>>().join(", ");
     let rev = if design.rev.trim().is_empty() { "-" } else { design.rev.as_str() };
     let drawing_number = format!("DWG {}", design.id);
-    let sheet_count = format!("{} sheet(s)", sheets.len());
     svg.push_str("  <g data-title-block=\"true\">\n");
     svg.push_str(&format!(
         "    <line x1=\"{:.2}\" y1=\"{:.2}\" x2=\"{:.2}\" y2=\"{:.2}\" stroke=\"#1f2933\" stroke-width=\"0.4\"/>\n",
@@ -9817,7 +9843,7 @@ pub(crate) fn push_svg_title_block(
         strip_y + 9.0,
         escape_xml(&drawings::fit_text(&sheet_names, cell_width(1), 3.2))
     ));
-    let identity = format!("{sheet_count} | {drawing_number}");
+    let identity = format!("SHEET {}/{} | {drawing_number}", page_index + 1, page_total);
     svg.push_str(&format!(
         "    <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"2.4\" text-anchor=\"start\" fill=\"#64748b\">{}</text>\n",
         cell_x(1),
@@ -10611,7 +10637,12 @@ fn render_net_xref_pdf(design: &Design) -> (String, usize, usize, usize) {
         format!("0 0 0 rg BT /F1 {size:.1} Tf {x:.2} {y:.2} Td ({literal}) Tj ET\n")
     };
     let title = design.title.as_deref().map(str::trim).filter(|text| !text.is_empty()).unwrap_or(design.id.as_str());
-    let node_chars = 118usize;
+    // The NODES column is far wider than the old 72 pt clip assumed. Wrap to
+    // the real column width so a long reference list continues on following
+    // lines instead of being elided with dots.
+    let nodes_x: f64 = 220.0;
+    let nodes_width: f64 = 470.0;
+    let node_chars = ((nodes_width / (7.0 * 0.5)).floor() as usize).max(8);
     let prepared: Vec<(String, Vec<String>, String)> = rows
         .iter()
         .map(|row| {
@@ -10654,7 +10685,7 @@ fn render_net_xref_pdf(design: &Design) -> (String, usize, usize, usize) {
         ));
         let header_y = PDF_PAGE_HEIGHT - 48.0;
         content.push_str(&text_at("NET", 8.0, 40.0, header_y));
-        content.push_str(&text_at("NODES (REFERENCE.PIN)", 8.0, 120.0, header_y));
+        content.push_str(&text_at("NODES (REFERENCE.PIN)", 8.0, nodes_x, header_y));
         content.push_str(&text_at("SHEET", 8.0, 700.0, header_y));
         content.push_str(&format!(
             "0.12 0.16 0.2 RG 0.4 w {PDF_MARGIN:.2} {:.2} m {:.2} {:.2} l S\n",
@@ -10665,9 +10696,9 @@ fn render_net_xref_pdf(design: &Design) -> (String, usize, usize, usize) {
         let mut y = header_y - 20.0;
         for index in indexes {
             let (name, node_lines, sheets) = &prepared[*index];
-            content.push_str(&text_at(&clip_pdf_text(name, 11.0, 7.0), 7.0, 40.0, y));
+            content.push_str(&text_at(&clip_pdf_text(name, nodes_x - 48.0, 7.0), 7.0, 40.0, y));
             for (line, text) in node_lines.iter().enumerate() {
-                content.push_str(&text_at(&clip_pdf_text(text, 72.0, 7.0), 7.0, 120.0, y - line as f64 * 10.0));
+                content.push_str(&text_at(&clip_pdf_text(text, nodes_width, 7.0), 7.0, nodes_x, y - line as f64 * 10.0));
             }
             content.push_str(&text_at(sheets, 7.0, 700.0, y));
             y -= node_lines.len().max(1) as f64 * 10.0 + 5.0;
@@ -10924,11 +10955,12 @@ fn pdf_page(design: &Design, sheet: Option<&Sheet>, index: usize, total: usize, 
                         if inside_box { pin.root[1] + 0.7 } else { pin.root[1] - 1.2 },
                     ],
                 );
-                let x =
-                    if pin.left { map_x(name_at[0]) } else { map_x(name_at[0]) - pdf_text_width(&pin.name, label_size * 0.7) };
+                // Keep pin names at or above 2 mm so a dense sheet stays
+                // readable; this is the smallest body text on a schematic page.
+                let pin_size = (label_size * 0.7).max(5.7);
+                let x = if pin.left { map_x(name_at[0]) } else { map_x(name_at[0]) - pdf_text_width(&pin.name, pin_size) };
                 content.push_str(&format!(
-                    "0.2 0.25 0.33 rg BT /F1 {:.2} Tf {x:.2} {:.2} Td {} Tj ET\n",
-                    label_size * 0.7,
+                    "0.2 0.25 0.33 rg BT /F1 {pin_size:.2} Tf {x:.2} {:.2} Td {} Tj ET\n",
                     map_y(name_at[1]),
                     pdf_literal(&pin.name)
                 ));
@@ -11014,7 +11046,7 @@ fn push_pdf_title_block(
     content.push_str(&format!("0.4 w 0 0 0 RG {left:.2} {strip_top:.2} m {right:.2} {strip_top:.2} l S\n"));
     let columns = [0.42, 0.24, 0.14, 0.20];
     let mut cursor = left;
-    for fraction in &columns[1..] {
+    for fraction in &columns[..3] {
         cursor += width * fraction;
         content.push_str(&format!("{:.2} {PDF_MARGIN:.2} m {:.2} {strip_top:.2} l S\n", cursor, cursor));
     }
