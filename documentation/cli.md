@@ -96,6 +96,7 @@ child sheet and never bumps the revision.
 | `open-eda component show <file> <ref>` | Report one component's placement, custom properties, pins and the nets that reach each pin |
 | `open-eda component add <file> --ref <ref> [--value <text>] --x <n> --y <n> [--rotation <deg>] [--pins <list>] [--footprint <text>] [--sheet <id>]` | Place a component |
 | `open-eda component copy <file> --ref <ref> --as <new-ref> [--dx <n>] [--dy <n>] [--sheet <id>]` | Copy placement and metadata without net nodes |
+| `open-eda component duplicate <file> --ref <ref> [--dx <n>] [--dy <n>] [--sheet <id>]` | Copy placement and metadata under the next free reference without net nodes |
 | `open-eda component move <file> --ref <ref> --x <n> --y <n> [--rotation <deg>] [--sheet <id>]` | Move or rotate a component |
 | `open-eda component update <file> <ref> [--value <text>] [--footprint <text>] [--x <n>] [--y <n>] [--rotation <deg>] [--sheet <id>]` | Update only the given fields of a component |
 | `open-eda component footprint <file> --ref <ref> --footprint <text> [--sheet <id>]` | Assign or clear the footprint |
@@ -206,20 +207,23 @@ Port directions: `input`, `output`, `bidirectional`, `tri_state`, `passive`.
 | `open-eda netlist <file> --out <file.net> [--overwrite]` | Write the flat netlist |
 
 Export formats: `net`, `net_csv`, `net_hier`, `net_class`, `net_length`, `spice`,
-`spice_subckt`, `svg`, `bom`, `bom_json`, `bom_html`, `pdf`, `report`, `json`,
-`kicad_sch`, `kicad_sym`. `net_class` groups pin rows by declared net class and
-adds the pin electrical role. `net_length` writes
+`spice_subckt`, `svg`, `png`, `bom`, `bom_json`, `bom_html`, `pdf`, `report`,
+`json`, `kicad_sch`, `kicad_sym`, `kicad_net`. `net_class` groups pin rows by
+declared net class and adds the pin electrical role. `net_length` writes
 `Sheet,Net,Length,Wires,Unrouted` rows for the declared nets: `Length` sums the
 drawn wire segments the net names, and `Unrouted` is `yes` when no wire names
-the net. A variant is accepted by `bom`, `bom_json` and
+the net. `kicad_net` writes a KiCad 6/7 `(export (version "D"))` netlist with
+components, nets and `REF.PIN` nodes that the `netlist import` reader accepts
+again. A variant is accepted by `bom`, `bom_json` and
 `bom_html` only; other targets reject it instead of ignoring it.
 
-`--sheet <id|name>` limits the drawing projections `svg` and `pdf` to one sheet;
-every other target rejects it. `pdf` writes one page per sheet by default, and
-`--sheet` writes a single page for that sheet; each page is centred between the
-margins and the title block. `svg` has a single viewport, so by default it paints
-every sheet and a multi-sheet design overlaps them; use `--sheet` to isolate a
-sheet without losing the rest of the document.
+`--sheet <id|name>` limits the drawing projections `svg`, `pdf` and `png` to one
+sheet; every other target rejects it. `pdf` writes one page per sheet by default,
+and `--sheet` writes a single page for that sheet; each page is centred between
+the margins and the title block. `svg` and `png` have a single viewport, so by
+default they paint every sheet and a multi-sheet design overlaps them; use
+`--sheet` to isolate a sheet without losing the rest of the document. `png`
+rasterizes the geometry onto a fixed 1024×768 canvas without text.
 
 ## Worked example
 
@@ -238,5 +242,7 @@ open-eda export blinker.oeda --format net --out blinker.net
 open-eda export blinker.oeda --format bom --variant lite --out blinker-lite.csv
 open-eda export blinker.oeda --format svg --sheet sheet-1 --out blinker.svg
 open-eda export blinker.oeda --format pdf --out blinker.pdf
+open-eda export blinker.oeda --format png --out blinker.png
 open-eda export blinker.oeda --format kicad_sch --out blinker.kicad_sch
+open-eda export blinker.oeda --format kicad_net --out blinker.kicad_net
 ```

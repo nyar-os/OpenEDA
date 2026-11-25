@@ -39,14 +39,15 @@ answer about the document, such as a pin-to-pin path.
 | junction and no-connect editing | supported | add a junction by coordinate and remove it by 0-based index; add a no-connect flag with or without a `REF.PIN` node and remove it by index; a duplicate junction coordinate is refused (`junction/duplicate`) and so is a second flag on one pin (`no-connect/duplicate`); `capabilities()` reports `edits.junctions` and `edits.noConnects` |
 | component pin editing | supported | add, remove and rename pins after placement; an empty or `REF.PIN`-breaking name is `session/argument-invalid`, a repeated name `pin/duplicate`, a missing pin `pin/not-found` and a removal that a net node or no-connect flag still uses `pin/in-use`; a rename follows every net node, no-connect node and electrical role; `capabilities()` reports `edits.pins` |
 | component pin swapping | supported | swap the net connections of two pins of one placed component; each pin takes the other pin's connection, an unconnected pin receives the transferred one, no-connect flags follow the swap, a self-swap or empty name is `session/argument-invalid`, a missing component `object/not-found` and an undeclared pin `pin/not-found`; an unconnected pair adds no revision; `capabilities()` reports `edits.pinSwap` |
-| export `net`, `net_csv`, `net_hier`, `net_class`, `net_length`, `spice`, `spice_subckt`, `svg`, `bom`, `bom_json`, `bom_html`, `pdf`, `report`, `json`, `kicad_sch`, `kicad_sym` | supported | read-only projections; `kicad_pcb` and `gbr` are unsupported |
+| component duplicate `component duplicate` | supported | duplicate one placed component on the same sheet under the next free reference: the leading letters of the source reference form the prefix and the smallest positive number no sheet already uses with that prefix is taken, so `R1` in a design holding `R1` and `R3` duplicates to `R2`; the copy keeps value, footprint, rotation, pins, pin roles, custom properties and component class and moves by `dx`/`dy` (zero by default); net nodes, wires and no-connect flags are never copied; a source reference without leading letters is `session/argument-invalid`, a missing component `object/not-found`; one call adds exactly one revision; `capabilities()` reports `edits.duplicate` |
+| export `net`, `net_csv`, `net_hier`, `net_class`, `net_length`, `spice`, `spice_subckt`, `svg`, `png`, `bom`, `bom_json`, `bom_html`, `pdf`, `report`, `json`, `kicad_sch`, `kicad_sym`, `kicad_net` | supported | read-only projections; `kicad_pcb` and `gbr` are unsupported |
 | import `kicad_sch` | supported | symbols, wires, junctions, no-connect flags, text, labels, hierarchical sheet symbols and ports; other constructs are reported as losses |
 | hierarchy editing | supported | add/list/remove parent symbol declarations and their ports; editing never reads the child files |
 | hierarchy check `hierarchy check` | supported | read-only depth-first walk of `.oeda` children; reports extension, missing file, parse, cycle, depth and port/label mismatches as `hierarchy/*` issues |
 | import `kicad_sym` | supported | read-only symbol declarations: unit count and each pin's number, name, role and unit |
 | export `kicad_sym` | supported | one library symbol per derived library id, with pins and roles; no symbol body is invented |
 | KiCad board, Gerber, drill, STEP | unsupported | declared in the capability matrix only |
-| interactive schematic/board renderer | unsupported | the preview is an SVG/PDF projection that draws component bodies, pin stubs on a 2.54 pitch, wires, junctions, labels and text; there is no PNG raster export |
+| interactive schematic/board renderer | unsupported | the preview is an SVG/PDF projection that draws component bodies, pin stubs on a 2.54 pitch, wires, junctions, labels and text; the `png` export rasterizes the same geometry without text on a fixed 1024×768 canvas, but there is no interactive renderer |
 | DRC | unsupported | `capability/not-implemented` |
 | board layout, routing, simulation | unsupported | not modelled |
 
@@ -342,6 +343,14 @@ an error, so the reader's losses never fail the check on their own.
 
 - `net` emits `# OpenEDA netlist v1`, `BUS <name> <width>` lines and
   `NET <name>` / `NODE <ref>.<pin>` lines.
+- `kicad_net` emits a KiCad 6/7 style `(export (version "D") ...)` netlist with
+  one `(comp (ref) (value) (footprint) (lib_id))` per component and one
+  `(net (code) (name) (node (ref) (pin)))` per declared net; components follow
+  sheet and declaration order, nets follow document order with ascending
+  `code`, nodes keep declaration order, and a net without nodes is still
+  listed. Bus declarations are not expanded because the netlist grammar carries
+  no bus section. The projection re-reads through the `net` importer without
+  losses, so it round-trips, and one revision exports byte-identically.
 - `net_hier` prefixes nets with a sanitized sheet path (`NET Main/VCC`) and emits
   `SHEET <path>` lines.
 - `net_csv` emits `Sheet,Net,Ref,Pin` rows with CSV quoting.
@@ -401,6 +410,14 @@ an error, so the reader's losses never fail the check on their own.
 - `report` writes deterministic Markdown with a design header, per-sheet object
   counts, per-sheet `Net | Nodes | Pins` tables and inspection findings by
   severity.
+- `png` rasterizes the drawing onto a fixed 1024×768 truecolour canvas: the
+  sheet frame, wires, junctions, no-connect marks, component bodies (honouring
+  rotation), pin stubs and label outlines, using the same colours as the SVG
+  projection. Text is not rasterized because the model carries no font engine,
+  so label outlines mark where labels sit. The view fits the painted sheets and
+  centres them; `--sheet <id|name>` selects one sheet like `svg`. The encoder
+  writes a valid PNG from uncompressed deflate blocks with hand-computed CRC-32
+  and Adler-32, so one revision rasterizes byte-identically.
 - `json` writes a read-only `open-eda-projection` of the design header and every
   sheet's objects.
 
@@ -427,11 +444,12 @@ Every file is written through a temporary file and a rename.
 ## Tests
 
 - `projects/crates/eda-model/tests/unit/lib.rs` — create, edit, inspect, save
-  and reopen, writers (including the net-class grouped netlist and the
-  net-length report), statistics, annotation, labels, variants, properties,
-  partial component updates, numeric BOM designator ordering, the `drivers`
-  and `pin_types` checks, the symbol-library `library-check` findings,
-  determinism and KiCad round-trips.
+  and reopen, writers (including the net-class grouped netlist, the
+  net-length report, the `kicad_net` projection with its importer round-trip and
+  the `png` raster export with sheet selection), statistics, annotation, labels,
+  variants, properties, partial component updates, numeric BOM designator
+  ordering, the `drivers` and `pin_types` checks, the symbol-library
+  `library-check` findings, determinism and KiCad round-trips.
 - `projects/crates/eda-model/tests/unit/kicad.rs` — parser and writer subset.
 - `projects/crates/eda-model/tests/unit/diff.rs` — structural comparison.
 - `projects/crates/eda-model/tests/unit/connectivity.rs` — net and pin analysis.
@@ -457,6 +475,14 @@ Every file is written through a temporary file and a rename.
   interior point, net and sheet retention, deterministic ids, both endpoints,
   off-segment points, unknown ids, non-finite and zero-length refusals, one
   revision and one undo step, and save/reopen persistence.
+- `projects/crates/eda-model/tests/unit/duplicate.rs` — `component duplicate`
+  next-free-reference selection across sheets, preserved body and class, offset,
+  untouched nets/wires/no-connects, the `object/not-found`,
+  `session/argument-invalid` and prefixless refusals, one revision, undo and
+  save/reopen persistence.
+- `projects/crates/eda-model/tests/unit/png.rs` — CRC-32 and Adler-32 known
+  answers, a valid RGB PNG chunk stream, the fixed 1024×768 raster with painted
+  geometry, byte-stable re-runs and the empty-design export.
 - `projects/crates/eda-model/tests/unit/pins.rs` — pin add, remove and rename
   validation, reference-safe removal, net/no-connect rewrites, history and
   save/reopen persistence.
