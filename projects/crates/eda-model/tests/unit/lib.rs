@@ -6415,6 +6415,53 @@ fn pdf_label_decorations_follow_the_font_size_not_the_drawing_scale() {
 }
 
 #[test]
+fn svg_net_names_lift_clear_of_component_text_and_stay_in_view() {
+    let dir = TempDir::new("svg-net-name-collision");
+    let path = dir.join("collision.svg");
+    let created = create(CreateRequest::default()).expect("create");
+    let handle = created["handle"].as_u64().expect("handle");
+    add_component(
+        handle,
+        AddComponentRequest {
+            sheet: None,
+            reference: "D1".to_string(),
+            value: "LED".to_string(),
+            x: 130.0,
+            y: 18.0,
+            rotation: 0.0,
+            pins: vec!["A".to_string(), "K".to_string()],
+        },
+    )
+    .expect("add D1");
+    add_wire(handle, AddWireRequest { sheet: None, net: Some("LED".to_string()), from: [137.76, 18.0], to: [150.0, 18.0] })
+        .expect("add wire");
+
+    export(handle, "svg", &path).expect("export svg");
+    let text = fs::read_to_string(&path).expect("read svg");
+    let view: Vec<f64> = text
+        .split("viewBox=\"")
+        .nth(1)
+        .expect("viewBox")
+        .split('"')
+        .next()
+        .expect("viewBox value")
+        .split_whitespace()
+        .map(|value| value.parse().expect("viewBox number"))
+        .collect();
+    // The "LED" annotation sits above the wire midpoint unless it collides with
+    // the "K" pin name; after the lift the boxes must be disjoint.
+    let net_line = text.lines().find(|line| line.contains("data-net=\"LED\">")).expect("net name text");
+    let net_y: f64 = net_line.split(" y=\"").nth(1).expect("net y").split('"').next().expect("net y").parse().expect("net y");
+    let pin_line = text.lines().find(|line| line.contains(">K</text>")).expect("pin name text");
+    let pin_y: f64 = pin_line.split(" y=\"").nth(1).expect("pin y").split('"').next().expect("pin y").parse().expect("pin y");
+    let net_box = (net_y - 2.2, net_y + 0.4);
+    let pin_box = (pin_y - 1.5, pin_y + 0.5);
+    assert!(net_box.1 <= pin_box.0 || pin_box.1 <= net_box.0, "net name box {net_box:?} overlaps pin name {pin_box:?}");
+    assert!(net_box.0 >= view[1], "net name {net_box:?} escapes the viewBox top {}", view[1]);
+    close(handle).expect("close");
+}
+
+#[test]
 fn empty_design_exports_every_supported_format_without_panic() {
     let dir = TempDir::new("empty-export");
     let created =

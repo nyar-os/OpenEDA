@@ -8250,6 +8250,59 @@ fn component_extents(component: &Component) -> ([f64; 2], [f64; 2]) {
     (min, max)
 }
 
+/// Axis-aligned boxes of the reference, value and pin-name texts of one
+/// component after rotation, in model coordinates.
+///
+/// The boxes mirror exactly where [`svg_projection`] and the PDF page paint
+/// the texts, so collision avoidance can reason about the printed labels
+/// instead of the component outline alone. Each box is `[min_x, min_y, max_x,
+/// max_y]`.
+fn component_text_boxes(component: &Component) -> Vec<[f64; 4]> {
+    let (artwork, keeps_box) = symbol_artwork(component);
+    let inside_box = keeps_box || artwork.is_empty();
+    let mut boxes = Vec::with_capacity(component.pins.len() + 2);
+    let mut push = |x: f64, y: f64, width: f64, size: f64, middle: bool| {
+        let left = if middle { x - width / 2.0 } else { x };
+        let corners = [
+            [left, y - size * 0.75],
+            [left + width, y - size * 0.75],
+            [left, y + size * 0.25],
+            [left + width, y + size * 0.25],
+        ];
+        let mut min = [f64::INFINITY, f64::INFINITY];
+        let mut max = [f64::NEG_INFINITY, f64::NEG_INFINITY];
+        for corner in corners {
+            let point = rotate_about(component, corner);
+            min[0] = min[0].min(point[0]);
+            min[1] = min[1].min(point[1]);
+            max[0] = max[0].max(point[0]);
+            max[1] = max[1].max(point[1]);
+        }
+        boxes.push([min[0], min[1], max[0], max[1]]);
+    };
+    push(
+        component.x,
+        if inside_box { component.y - 0.6 } else { component.y - 4.5 },
+        component.reference.chars().count() as f64 * 3.2 * 0.6,
+        3.2,
+        true,
+    );
+    push(
+        component.x,
+        if inside_box { component.y + 3.0 } else { component.y + 4.5 },
+        component.value.chars().count() as f64 * 2.6 * 0.6,
+        2.6,
+        true,
+    );
+    for pin in component_pins(component) {
+        let x = if pin.left { pin.root[0] + 0.9 } else { pin.root[0] - 0.9 };
+        let width = pin.name.chars().count() as f64 * PIN_NAME_SIZE * 0.6;
+        let left = if pin.left { x } else { x - width };
+        push(left, if inside_box { pin.root[1] + 0.7 } else { pin.root[1] - 1.2 }, width, PIN_NAME_SIZE, false);
+    }
+    boxes
+}
+
 /// Schematic body class derived from the reference prefix.
 #[derive(Clone, Copy)]
 enum SymbolClass {
@@ -8454,6 +8507,15 @@ fn drawing_bounds<'a>(sheets: impl IntoIterator<Item = &'a Sheet>) -> (f64, f64,
             max_x = max_x.max(flag.x + 1.0);
             min_y = min_y.min(flag.y - 1.0);
             max_y = max_y.max(flag.y + 1.0);
+        }
+        for (net, (from, to)) in net_name_anchors(sheet) {
+            any = true;
+            let [name_x, name_y] = net_name_point(sheet, from, to, &net);
+            let half = net.chars().count() as f64 * 2.2 * 0.3;
+            min_x = min_x.min(name_x - half);
+            max_x = max_x.max(name_x + half);
+            min_y = min_y.min(name_y - 2.2);
+            max_y = max_y.max(name_y);
         }
     }
     if any { (min_x, min_y, max_x, max_y) } else { (0.0, 0.0, 100.0, 60.0) }
@@ -8685,21 +8747,29 @@ fn net_name_anchors(sheet: &Sheet) -> Vec<NetAnchor> {
 /// Baseline point of a net-name annotation in model coordinates.
 ///
 /// The default spot is one unit above the wire midpoint; when that box would
-/// collide with a label of any scope, the annotation is lifted one text line
-/// per collision (at most three lines) so the grey net name never sits on top
-/// of a green local label or a boxed global label.
+/// collide with a label of any scope or with the reference, value or pin-name
+/// text of a placed component, the annotation is lifted one text line per
+/// collision (at most three lines) so the grey net name never sits on top of
+/// a green local label, a boxed global label or a printed pin name.
 fn net_name_point(sheet: &Sheet, from: [f64; 2], to: [f64; 2], net: &str) -> [f64; 2] {
     let mid_x = (from[0] + to[0]) / 2.0;
     let mut baseline = (from[1] + to[1]) / 2.0 - 1.0;
     let half = net.chars().count() as f64 * 2.2 * 0.3;
     let collides = |baseline: f64| {
-        sheet.labels.iter().any(|label| {
+        let label_hit = sheet.labels.iter().any(|label| {
             let width = label.text.chars().count() as f64 * 2.8 * 0.6;
             label.x < mid_x + half + 0.4
                 && label.x + width > mid_x - half - 0.4
                 && label.y - 2.8 < baseline
                 && baseline - 2.2 < label.y + 0.6
-        })
+        });
+        let text_hit = sheet.components.iter().flat_map(component_text_boxes).any(|box_min| {
+            box_min[0] < mid_x + half + 0.4
+                && box_min[2] > mid_x - half - 0.4
+                && box_min[1] < baseline + 0.4
+                && baseline - 2.2 < box_min[3]
+        });
+        label_hit || text_hit
     };
     let mut lifts = 0;
     while collides(baseline) && lifts < 3 {
