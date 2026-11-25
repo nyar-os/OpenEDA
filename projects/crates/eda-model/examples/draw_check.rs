@@ -219,7 +219,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "hierarchy",
         "erc",
     ] {
-        let target = out.join(format!("drawing_{format}.svg"));
+        let extension = if format == "png" {
+            "png"
+        }
+        else if format == "pdf" || format.ends_with("_pdf") {
+            "pdf"
+        }
+        else {
+            "svg"
+        };
+        let target = out.join(format!("drawing_{format}.{extension}"));
         match export(handle, format, &target) {
             Ok(report) => println!("OK {format}: {report}"),
             Err(err) => println!("ERR {format}: {}", err.message),
