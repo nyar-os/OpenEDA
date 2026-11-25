@@ -5156,10 +5156,10 @@ pub fn export_with_variant(handle: u64, format: &str, path: &Path, variant: Opti
 ///
 /// A sheet selection applies to the drawing projections `svg`, `pdf` and `png`:
 /// a selected export paints only that sheet, while the default paints every
-/// sheet. PDF gives every sheet its own page; SVG and PNG have one view, so
-/// selecting a sheet is the way to isolate overlapping multi-sheet drawings.
-/// Formats that do not paint a drawing reject the sheet instead of silently
-/// ignoring it.
+/// sheet. PDF gives every sheet its own page, and the multi-sheet SVG and PNG
+/// stack every sheet into its own labelled region so sheets that share design
+/// coordinates never overlap. Formats that do not paint a drawing reject the
+/// sheet instead of silently ignoring it.
 pub fn export_with_options(
     handle: u64,
     format: &str,
@@ -5188,7 +5188,7 @@ pub fn export_with_options(
         None => design.sheets.iter().collect(),
     };
     if format == "png" {
-        let bytes = png::render_png(&sheets);
+        let bytes = png::render_png(&design, &sheets);
         let written = write_atomic_bytes(path, &bytes, true)?;
         return Ok(json!({
             "revision": design.revision,
@@ -8511,7 +8511,7 @@ enum SymbolClass {
     Capacitor,
     Inductor,
     Diode,
-    /// Three-pin `Q`/`J` part: the generic box stays and gains the enclosing circle.
+    /// Three-pin `Q`/`J` part: the enclosing circle replaces the generic box.
     Transistor,
     /// Generic multi-pin and `U` parts, painted exactly as before.
     Box,
@@ -8585,7 +8585,7 @@ fn symbol_artwork_unmirrored(component: &Component) -> (Vec<SymbolPrimitive>, bo
                     [cx + radius * angle.cos(), cy + radius * angle.sin()]
                 })
                 .collect();
-            (vec![SymbolPrimitive::Stroke(ring)], true)
+            (vec![SymbolPrimitive::Stroke(ring)], false)
         }
         SymbolClass::Resistor => {
             let zigzag = vec![
@@ -8753,8 +8753,12 @@ pub(crate) const TITLE_BLOCK_HEIGHT: f64 = 14.0;
 /// The export writer passes every sheet unless a sheet is selected; the preview
 /// passes exactly one, so the viewport and the painted geometry always describe
 /// the same sheet set. The design supplies the title-block text; only the
-/// listed sheets are painted.
+/// listed sheets are painted. More than one sheet is stacked into separate
+/// page regions instead of sharing one coordinate space.
 fn svg_projection(design: &Design, sheets: &[&Sheet]) -> SvgProjection {
+    if sheets.len() > 1 {
+        return svg_paged_projection(design, sheets);
+    }
     let (min_x, min_y, max_x, max_y) = drawing_bounds(sheets.iter().copied());
     let padding = 10.0;
     let view_x = min_x - padding;
@@ -8783,6 +8787,66 @@ fn svg_projection(design: &Design, sheets: &[&Sheet]) -> SvgProjection {
         svg.push_str("  </g>\n");
     }
     push_svg_title_block(&mut svg, design, sheets, view_x, view_y, view_width, view_height);
+    svg.push_str("</svg>\n");
+    SvgProjection { document: svg, width, height }
+}
+
+/// Projects several sheets onto one SVG document as stacked page regions.
+///
+/// Sheets routinely place parts at the same design coordinates, so painting
+/// them into one shared space overlaps them. Instead every sheet is translated
+/// into its own vertical band — separator frame, sheet-name header and the
+/// shared sheet painter at unit scale — mirroring the one-page-per-sheet PDF
+/// behaviour while staying a single vector document.
+fn svg_paged_projection(design: &Design, sheets: &[&Sheet]) -> SvgProjection {
+    let bounds: Vec<(f64, f64, f64, f64)> = sheets.iter().map(|sheet| drawing_bounds(std::iter::once(*sheet))).collect();
+    let padding = 10.0;
+    let header = 6.0;
+    let gap = 10.0;
+    let view_x = -padding;
+    let view_width = bounds.iter().map(|bound| bound.2 - bound.0).fold(1.0, f64::max) + 2.0 * padding;
+    let mut view_height = 2.0 * padding + TITLE_BLOCK_HEIGHT - gap;
+    for bound in &bounds {
+        view_height += header + (bound.3 - bound.1).max(1.0) + gap;
+    }
+    let width = (view_width * 8.0).round();
+    let height = (view_height * 8.0).round();
+
+    let mut svg = String::new();
+    svg.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
+    svg.push_str(&format!(
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"{view_x:.2} {view_y:.2} {view_width:.2} {view_height:.2}\" width=\"{width:.0}\" height=\"{height:.0}\">\n",
+        view_y = -padding,
+    ));
+    svg.push_str(&format!(
+        "  <rect x=\"{view_x:.2}\" y=\"{:.2}\" width=\"{view_width:.2}\" height=\"{view_height:.2}\" fill=\"#ffffff\" stroke=\"#1f2933\" stroke-width=\"0.4\"/>\n",
+        -padding,
+    ));
+    let mut region_top = -padding;
+    for (sheet, bound) in sheets.iter().zip(&bounds) {
+        let (min_x, min_y, _, max_y) = *bound;
+        let span_y = (max_y - min_y).max(1.0);
+        svg.push_str(&format!(
+            "  <rect x=\"{view_x:.2}\" y=\"{region_top:.2}\" width=\"{view_width:.2}\" height=\"{:.2}\" fill=\"none\" stroke=\"#64748b\" stroke-width=\"0.4\" stroke-dasharray=\"2.4 1.6\"/>\n",
+            header + span_y,
+        ));
+        svg.push_str(&format!(
+            "  <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"3.2\" fill=\"#1f2933\">{}</text>\n",
+            view_x + 2.0,
+            region_top + 4.4,
+            escape_xml(&drawings::fit_text(&sheet.name, view_width - 4.0, 3.2)),
+        ));
+        svg.push_str(&format!(
+            "  <g data-sheet=\"{}\" transform=\"translate({:.2} {:.2})\">\n",
+            escape_xml(&sheet.id),
+            -min_x,
+            region_top + header - min_y,
+        ));
+        push_svg_sheet_contents(&mut svg, sheet);
+        svg.push_str("  </g>\n");
+        region_top += header + span_y + gap;
+    }
+    push_svg_title_block(&mut svg, design, sheets, view_x, -padding, view_width, view_height);
     svg.push_str("</svg>\n");
     SvgProjection { document: svg, width, height }
 }
@@ -8991,22 +9055,26 @@ fn net_name_anchors(sheet: &Sheet) -> Vec<NetAnchor> {
 /// collide with a label of any scope or with the reference, value or pin-name
 /// text of a placed component, the annotation is lifted one text line per
 /// collision (at most three lines) so the grey net name never sits on top of
-/// a green local label, a boxed global label or a printed pin name.
+/// a green local label, a boxed global label or a printed pin name. A vertical
+/// anchor wire would otherwise run straight through a centred name, so the
+/// annotation is shifted sideways past the wire end instead, clearing the
+/// stroke by a label gap.
 fn net_name_point(sheet: &Sheet, from: [f64; 2], to: [f64; 2], net: &str) -> [f64; 2] {
-    let mid_x = (from[0] + to[0]) / 2.0;
-    let mut baseline = (from[1] + to[1]) / 2.0 - 1.0;
     let half = net.chars().count() as f64 * 2.2 * 0.3;
+    let vertical = (to[0] - from[0]).abs() < (to[1] - from[1]).abs();
+    let name_x = if vertical { (from[0] + to[0]) / 2.0 + half + 0.8 } else { (from[0] + to[0]) / 2.0 };
+    let mut baseline = (from[1] + to[1]) / 2.0 - 1.0;
     let collides = |baseline: f64| {
         let label_hit = sheet.labels.iter().any(|label| {
             let width = label.text.chars().count() as f64 * 2.8 * 0.6;
-            label.x < mid_x + half + 0.4
-                && label.x + width > mid_x - half - 0.4
+            label.x < name_x + half + 0.4
+                && label.x + width > name_x - half - 0.4
                 && label.y - 2.8 < baseline
                 && baseline - 2.2 < label.y + 0.6
         });
         let text_hit = sheet.components.iter().flat_map(component_text_boxes).any(|box_min| {
-            box_min[0] < mid_x + half + 0.4
-                && box_min[2] > mid_x - half - 0.4
+            box_min[0] < name_x + half + 0.4
+                && box_min[2] > name_x - half - 0.4
                 && box_min[1] < baseline + 0.4
                 && baseline - 2.2 < box_min[3]
         });
@@ -9017,7 +9085,7 @@ fn net_name_point(sheet: &Sheet, from: [f64; 2], to: [f64; 2], net: &str) -> [f6
         baseline -= 3.0;
         lifts += 1;
     }
-    [mid_x, baseline]
+    [name_x, baseline]
 }
 
 /// Paints the title-block strip along the bottom of the sheet frame.

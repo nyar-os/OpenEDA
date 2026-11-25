@@ -6253,8 +6253,8 @@ fn two_pin_parts_render_standard_symbols_without_moving_connection_points() {
     assert!(svg.contains("<circle cx=\"4.76\" cy=\"80.00\" r=\"0.45\""), "{svg}");
     assert!(svg.contains("<circle cx=\"35.24\" cy=\"80.00\" r=\"0.45\""), "{svg}");
 
-    // The transistor keeps its box and pin artwork and gains the ring.
-    assert!(svg.contains("<rect x=\"7.30\" y=\"92.38\" width=\"25.40\" height=\"15.24\""), "{svg}");
+    // The transistor ring replaces the generic box; the two never overlap.
+    assert!(!svg.contains("<rect x=\"7.30\" y=\"92.38\" width=\"25.40\" height=\"15.24\""), "{svg}");
     assert!(svg.contains("<polyline points=\"35.88,100.00"), "{svg}");
 
     // The four-pin IC is untouched, box, stubs and inside-box labels alike.

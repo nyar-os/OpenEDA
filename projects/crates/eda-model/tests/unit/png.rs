@@ -109,12 +109,12 @@ fn encoder_writes_a_valid_rgb_png() {
 fn raster_is_fixed_size_deterministic_and_paints_the_geometry() {
     let design = sample_design();
     let sheets = design.sheets.iter().collect::<Vec<_>>();
-    let bytes = render_png(&sheets);
+    let bytes = render_png(&design, &sheets);
     let parsed = chunks(&bytes);
     let ihdr = &parsed[0].1;
     assert_eq!(&ihdr[..8], &[0, 0, 4, 0, 0, 0, 3, 0], "IHDR declares 1024x768");
     assert_eq!(&ihdr[8..], &[8, 2, 0, 0, 0], "bit depth 8, truecolour, no interlace");
-    assert_eq!(bytes, render_png(&sheets), "the same document rasterizes byte-identically");
+    assert_eq!(bytes, render_png(&design, &sheets), "the same document rasterizes byte-identically");
 
     // Reconstruct the pixels from the stored blocks and look for the painted colours.
     let idat = &parsed.iter().find(|(kind, _)| kind == "IDAT").expect("IDAT").1;
@@ -138,6 +138,85 @@ fn raster_is_fixed_size_deterministic_and_paints_the_geometry() {
     assert!(painted(FRAME), "the sheet frame is rasterized");
 }
 
+/// Decodes the stored deflate blocks back into filtered scanline bytes.
+fn raw_pixels(bytes: &[u8]) -> Vec<u8> {
+    let parsed = chunks(bytes);
+    let idat = &parsed.iter().find(|(kind, _)| kind == "IDAT").expect("IDAT").1;
+    let mut raw = Vec::new();
+    let mut offset = 2;
+    while idat[offset] & 1 == 0 {
+        let length = u16::from_le_bytes(idat[offset + 1..offset + 3].try_into().expect("block length")) as usize;
+        raw.extend_from_slice(&idat[offset + 5..offset + 5 + length]);
+        offset += 5 + length;
+    }
+    let length = u16::from_le_bytes(idat[offset + 1..offset + 3].try_into().expect("block length")) as usize;
+    raw.extend_from_slice(&idat[offset + 5..offset + 5 + length]);
+    raw
+}
+
+/// True when one pixel of `colour` appears inside the given row window,
+/// restricted to the columns that no frame border can reach.
+fn painted_between(raw: &[u8], colour: Rgb, from_row: usize, to_row: usize, from_column: usize, to_column: usize) -> bool {
+    let stride = (WIDTH as usize) * 3 + 1;
+    (from_row..to_row).any(|row| {
+        let line = &raw[row * stride + 1 + from_column * 3..row * stride + 1 + to_column * 3];
+        line.chunks(3).any(|pixel| pixel == &colour[..])
+    })
+}
+
+#[test]
+fn raster_paints_text_with_the_bitmap_font() {
+    let design = sample_design();
+    let sheets = design.sheets.iter().collect::<Vec<_>>();
+    let raw = raw_pixels(&render_png(&design, &sheets));
+    // The TEXT colour is only ever used by bitmap-font runs: references,
+    // values and title-block lines. A raster without the font has none.
+    assert!(
+        painted_between(&raw, TEXT, 0, HEIGHT as usize, 0, WIDTH as usize),
+        "component references and values must be rasterized as text"
+    );
+    // The title-block strip along the canvas bottom carries its own text lines.
+    assert!(
+        painted_between(&raw, TEXT, (HEIGHT - TITLE_STRIP as u32) as usize + 2, HEIGHT as usize, 0, WIDTH as usize),
+        "the title block must print text into its strip"
+    );
+}
+
+#[test]
+fn multi_sheet_raster_stacks_bands_with_headers() {
+    let mut design = sample_design();
+    let mut second = design.sheets[0].clone();
+    second.id = "sheet-2".to_string();
+    second.name = "Copy".to_string();
+    design.sheets.push(second);
+    let sheets = design.sheets.iter().collect::<Vec<_>>();
+    let raw = raw_pixels(&render_png(&design, &sheets));
+
+    // Both sheets share design coordinates; the band layout must keep them
+    // apart: the first band's frame bottom sits above the second band's top.
+    let band_height = HEIGHT as i32 - 2 * MARGIN as i32 - BAND_GAP * (sheets.len() as i32 - 1);
+    let band_height = band_height / sheets.len() as i32;
+    let band_top = |index: usize| MARGIN as i32 + index as i32 * (band_height + BAND_GAP);
+    assert!(band_top(0) + band_height - 1 < band_top(1), "bands must not touch");
+
+    // Every band header row (inside the frame, above the sheet view) is only
+    // ever painted by the `SHEET n OF m - name` text, so FRAME-coloured pixels
+    // there prove the header was rasterized.
+    let header_rows_painted = |index: usize| {
+        let top = band_top(index) as usize;
+        painted_between(
+            &raw,
+            FRAME,
+            top + 2,
+            top + BAND_HEADER as usize - 1,
+            MARGIN as usize + 3,
+            WIDTH as usize - MARGIN as usize - 3,
+        )
+    };
+    assert!(header_rows_painted(0), "the first band names its sheet");
+    assert!(header_rows_painted(1), "the second band names its sheet");
+}
+
 #[test]
 fn an_empty_design_still_rasterizes() {
     let mut design = sample_design();
@@ -148,7 +227,7 @@ fn an_empty_design_still_rasterizes() {
     sheet.no_connects.clear();
     sheet.labels.clear();
     let sheets = design.sheets.iter().collect::<Vec<_>>();
-    let bytes = render_png(&sheets);
+    let bytes = render_png(&design, &sheets);
     assert_eq!(&bytes[..8], &[137, 80, 78, 71, 13, 10, 26, 10]);
     assert_eq!(chunks(&bytes).len(), 3, "IHDR, IDAT and IEND");
 }
@@ -156,7 +235,7 @@ fn an_empty_design_still_rasterizes() {
 /// Rebuilds the raster and returns the colour of the pixel a design point maps to.
 fn pixel_of(design: &Design, point: [f64; 2]) -> Rgb {
     let sheets = design.sheets.iter().collect::<Vec<_>>();
-    let parsed = chunks(&render_png(&sheets));
+    let parsed = chunks(&render_png(design, &sheets));
     let idat = &parsed.iter().find(|(kind, _)| kind == "IDAT").expect("IDAT").1;
     let mut raw = Vec::new();
     let mut offset = 2;
@@ -168,8 +247,13 @@ fn pixel_of(design: &Design, point: [f64; 2]) -> Rgb {
     let length = u16::from_le_bytes(idat[offset + 1..offset + 3].try_into().expect("block length")) as usize;
     raw.extend_from_slice(&idat[offset + 5..offset + 5 + length]);
     let stride = (WIDTH as usize) * 3 + 1;
-    let (min_x, min_y, max_x, max_y) = drawing_bounds(design.sheets.iter());
-    let view = View::new(min_x, min_y, max_x, max_y);
+    let bounds = drawing_bounds(design.sheets.iter());
+    // Mirror the single-sheet raster pass: the canvas minus margins and the
+    // title-block strip is the fit rectangle.
+    let view = View::in_rect(
+        bounds,
+        (MARGIN, MARGIN, f64::from(WIDTH) - 2.0 * MARGIN, f64::from(HEIGHT) - 2.0 * MARGIN - f64::from(TITLE_STRIP)),
+    );
     let (px, py) = view.project(point);
     let start = (py as usize) * stride + 1 + (px as usize) * 3;
     [raw[start], raw[start + 1], raw[start + 2]]

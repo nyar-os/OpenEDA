@@ -36,6 +36,23 @@ fn start_document(view_width: f64, view_height: f64) -> String {
     svg
 }
 
+/// Truncates text so a monospace run at `size` design units stays within
+/// `max_units`, marking a cut with an ASCII ellipsis so no label can paint
+/// over a neighbouring box or leave the canvas.
+pub(crate) fn fit_text(text: &str, max_units: f64, size: f64) -> String {
+    let max_chars = (max_units / (size * 0.6)).floor().max(0.0) as usize;
+    let characters = text.chars().count();
+    if characters <= max_chars {
+        return text.to_string();
+    }
+    if max_chars <= 3 {
+        return text.chars().take(max_chars).collect();
+    }
+    let mut cut: String = text.chars().take(max_chars - 3).collect();
+    cut.push_str("...");
+    cut
+}
+
 /// The net block diagram drawing and the counts it painted.
 pub(crate) struct BlockDiagram {
     /// The complete SVG document.
@@ -54,8 +71,11 @@ pub(crate) struct BlockDiagram {
 /// Components are layered by breadth-first distance from the first unvisited
 /// reference in natural order, so connected parts land in adjacent columns and
 /// each net chain runs left-to-right with one elbow per segment. Same-column
-/// segments route below both boxes, so no edge ever crosses a node body. The
-/// net name is printed once, on the first segment of its chain.
+/// segments route below both boxes, so no edge ever crosses a node body; two
+/// nodes that share a centre line get a single straight segment instead of a
+/// zero-width fold-back. The net name is printed once, on the first segment of
+/// its chain, pushed one text line down whenever it would overlap a name that
+/// was already painted.
 pub(crate) fn render_block_diagram(design: &Design) -> BlockDiagram {
     let mut components: Vec<&Component> = design.sheets.iter().flat_map(|sheet| &sheet.components).collect();
     components.sort_by(|left, right| natural_compare(&left.reference, &right.reference));
@@ -134,6 +154,9 @@ pub(crate) fn render_block_diagram(design: &Design) -> BlockDiagram {
     svg.push_str("  <g data-block-diagram=\"true\">\n");
     let mut edges = 0usize;
     let mut nets = 0usize;
+    // Boxes of the net names painted so far, `[min_x, min_y, max_x, max_y]`;
+    // a colliding name is pushed one text line down until it has its own spot.
+    let mut painted_names: Vec<[f64; 4]> = Vec::new();
     for (net, set) in &members {
         let mut chain: Vec<&str> = set.iter().copied().collect();
         if chain.len() < 2 {
@@ -148,30 +171,62 @@ pub(crate) fn render_block_diagram(design: &Design) -> BlockDiagram {
             let left_layer = layer[pair[0]];
             let right_layer = layer[pair[1]];
             let (points, label_at) = if left_layer == right_layer {
-                let below = left[1].max(right[1]) + node_height + 6.0;
                 let from = [left[0] + node_width / 2.0, left[1] + node_height];
                 let to = [right[0] + node_width / 2.0, right[1] + node_height];
-                ([from, [from[0], below], [to[0], below], to], [(from[0] + to[0]) / 2.0, below - 1.2])
+                if (from[0] - to[0]).abs() < 0.01 {
+                    // Same column and same centre line: the elbow detour would
+                    // run down and straight back up over itself, so the chain
+                    // takes the direct vertical segment instead.
+                    (vec![from, to], [(from[0] + to[0]) / 2.0, (from[1] + to[1]) / 2.0 - 1.2])
+                }
+                else {
+                    let below = left[1].max(right[1]) + node_height + 6.0;
+                    (vec![from, [from[0], below], [to[0], below], to], [(from[0] + to[0]) / 2.0, below - 1.2])
+                }
             }
             else {
                 let (source, target) = if left_layer < right_layer { (left, right) } else { (right, left) };
                 let from = [source[0] + node_width, source[1] + node_height / 2.0];
                 let to = [target[0], target[1] + node_height / 2.0];
                 let mid_x = (from[0] + to[0]) / 2.0;
-                ([from, [mid_x, from[1]], [mid_x, to[1]], to], [mid_x, (from[1] + to[1]) / 2.0 - 1.2])
+                (vec![from, [mid_x, from[1]], [mid_x, to[1]], to], [mid_x, (from[1] + to[1]) / 2.0 - 1.2])
             };
-            let rendered = points.iter().map(|point| format!("{:.2},{:.2}", point[0], point[1])).collect::<Vec<_>>().join(" ");
+            let mut unique: Vec<[f64; 2]> = Vec::with_capacity(points.len());
+            for point in points {
+                if unique.last() != Some(&point) {
+                    unique.push(point);
+                }
+            }
+            let rendered = unique.iter().map(|point| format!("{:.2},{:.2}", point[0], point[1])).collect::<Vec<_>>().join(" ");
             svg.push_str(&format!(
                 "    <polyline points=\"{rendered}\" fill=\"none\" stroke=\"#0f766e\" stroke-width=\"0.5\" data-net=\"{}\"/>\n",
                 escape_xml(net)
             ));
             if segment == 0 {
+                let shown = fit_text(net, view_width - 4.0, 2.4);
+                let half = shown.chars().count() as f64 * 2.4 * 0.3;
+                let mut name_y = label_at[1];
+                let overlaps = |name_y: f64| {
+                    painted_names.iter().any(|box_min| {
+                        box_min[0] < label_at[0] + half
+                            && label_at[0] - half < box_min[2]
+                            && box_min[1] < name_y
+                            && name_y - 2.4 < box_min[3]
+                    })
+                };
+                let strip_top = view_height - TITLE_BLOCK_HEIGHT;
+                let mut shifts = 0;
+                while overlaps(name_y) && shifts < 5 && name_y + 3.0 <= strip_top {
+                    name_y += 3.0;
+                    shifts += 1;
+                }
+                painted_names.push([label_at[0] - half, name_y - 2.4, label_at[0] + half, name_y]);
                 svg.push_str(&format!(
                     "    <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"2.4\" text-anchor=\"middle\" fill=\"#64748b\" data-net-name=\"{}\">{}</text>\n",
                     label_at[0],
-                    label_at[1],
+                    name_y,
                     escape_xml(net),
-                    escape_xml(net)
+                    escape_xml(&shown)
                 ));
             }
         }
@@ -187,13 +242,13 @@ pub(crate) fn render_block_diagram(design: &Design) -> BlockDiagram {
             "      <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"3.0\" text-anchor=\"middle\">{}</text>\n",
             top[0] + node_width / 2.0,
             top[1] + 5.0,
-            escape_xml(&component.reference)
+            escape_xml(&fit_text(&component.reference, node_width - 2.0, 3.0))
         ));
         svg.push_str(&format!(
             "      <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"2.4\" text-anchor=\"middle\" fill=\"#64748b\">{}</text>\n",
             top[0] + node_width / 2.0,
             top[1] + 9.6,
-            escape_xml(&component.value)
+            escape_xml(&fit_text(&component.value, node_width - 2.0, 2.4))
         ));
         svg.push_str("    </g>\n");
     }
@@ -250,11 +305,11 @@ pub(crate) fn render_sheet_overview(design: &Design) -> SheetOverview {
             .min((cell_height - header_height - 2.0 * cell_padding) / (max_y - min_y).max(1.0))
             .min(1.0);
         let content_width = (max_x - min_x) * scale;
-        let content_height = (max_y - min_y) * scale;
         let shift_x = cell_x + cell_padding + (cell_width - 2.0 * cell_padding - content_width) / 2.0 - min_x * scale;
-        let shift_y =
-            cell_y + header_height + cell_padding + (cell_height - header_height - 2.0 * cell_padding - content_height) / 2.0
-                - min_y * scale;
+        // Content is top-aligned inside the cell (not vertically centred) so
+        // every sheet in a row starts drawing at the same y regardless of how
+        // tall its own bounds are.
+        let shift_y = cell_y + header_height + cell_padding - min_y * scale;
         svg.push_str(&format!(
             "    <rect x=\"{:.2}\" y=\"{:.2}\" width=\"{:.2}\" height=\"{:.2}\" fill=\"none\" stroke=\"#64748b\" stroke-width=\"0.4\" stroke-dasharray=\"2.4 1.6\"/>\n",
             cell_x, cell_y, cell_width, cell_height
@@ -263,7 +318,7 @@ pub(crate) fn render_sheet_overview(design: &Design) -> SheetOverview {
             "    <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"3.2\" fill=\"#1f2933\">{}</text>\n",
             cell_x + 2.0,
             cell_y + 4.4,
-            escape_xml(&sheet.name)
+            escape_xml(&fit_text(&sheet.name, cell_width - 4.0, 3.2))
         ));
         svg.push_str(&format!(
             "    <g data-sheet=\"{}\" transform=\"translate({:.2} {:.2}) scale({:.4})\">\n",
@@ -343,11 +398,10 @@ pub(crate) fn render_pinout_chart(design: &Design) -> PinoutChart {
             block_x, block_y
         ));
         svg.push_str(&format!(
-            "      <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"3.0\">{} {}</text>\n",
+            "      <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"3.0\">{}</text>\n",
             block_x + 2.0,
             block_y + 4.2,
-            escape_xml(&component.reference),
-            escape_xml(&component.value)
+            escape_xml(&fit_text(&format!("{} {}", component.reference, component.value), block_width - 4.0, 3.0))
         ));
         for (pin_index, pin) in component.pins.iter().enumerate() {
             let line_y = block_y + header_height + pin_index as f64 * row_height;
@@ -364,7 +418,7 @@ pub(crate) fn render_pinout_chart(design: &Design) -> PinoutChart {
                 "        <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"2.6\" text-anchor=\"end\">{}</text>\n",
                 block_x + pin_column,
                 line_y + 3.0,
-                escape_xml(pin)
+                escape_xml(&fit_text(pin, pin_column - 2.0, 2.6))
             ));
             let key = (component.reference.as_str(), pin.as_str());
             if no_connects.contains(&key) {
@@ -379,7 +433,7 @@ pub(crate) fn render_pinout_chart(design: &Design) -> PinoutChart {
                     "        <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"2.6\" fill=\"#0f766e\">{}</text>\n",
                     block_x + pin_column + 4.0,
                     line_y + 3.0,
-                    escape_xml(&nets.join(", "))
+                    escape_xml(&fit_text(&nets.join(", "), block_width - pin_column - 6.0, 2.6))
                 ));
             }
             else {
@@ -464,7 +518,7 @@ pub(crate) fn render_symbol_library(design: &Design) -> SymbolLibrary {
             "      <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"2.2\" text-anchor=\"middle\" fill=\"#64748b\">{}</text>\n",
             cell_x + cell_width / 2.0,
             cell_y + cell_height - 2.0,
-            escape_xml(&component.pins.join(", "))
+            escape_xml(&fit_text(&component.pins.join(", "), cell_width - 4.0, 2.2))
         ));
         svg.push_str("    </g>\n");
     }
