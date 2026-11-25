@@ -85,6 +85,10 @@ fn capability_matrix_reports_only_the_implemented_entries() {
     assert_eq!(matrix["exportTargets"]["sheet_overview"], "supported");
     assert_eq!(matrix["exportTargets"]["pinout_chart"], "supported");
     assert_eq!(matrix["exportTargets"]["symbol_library"], "supported");
+    assert_eq!(matrix["exportTargets"]["net_topology"], "supported");
+    assert_eq!(matrix["exportTargets"]["power_distribution"], "supported");
+    assert_eq!(matrix["exportTargets"]["bom_drawing"], "supported");
+    assert_eq!(matrix["exportTargets"]["bom_drawing_pdf"], "supported");
     assert_eq!(matrix["exportTargets"]["kicad_pcb"], "unsupported");
     assert_eq!(matrix["exportTargets"]["gbr"], "unsupported");
     assert_eq!(matrix["edits"]["components"], "supported");
@@ -6257,10 +6261,12 @@ fn two_pin_parts_render_standard_symbols_without_moving_connection_points() {
     assert!(!svg.contains("<rect x=\"7.30\" y=\"92.38\" width=\"25.40\" height=\"15.24\""), "{svg}");
     assert!(svg.contains("<polyline points=\"35.88,100.00"), "{svg}");
 
-    // The four-pin IC is untouched, box, stubs and inside-box labels alike.
+    // The four-pin IC keeps its box and stubs; reference and value now sit
+    // outside the visible body instead of printing inside it.
     assert!(svg.contains("<rect x=\"47.30\" y=\"32.38\" width=\"25.40\" height=\"15.24\""), "{svg}");
     assert!(svg.contains("<text x=\"48.20\" y=\"39.43\" font-family=\"monospace\" font-size=\"2.0\""), "{svg}");
-    assert!(svg.contains("<text x=\"60.00\" y=\"39.40\" font-family=\"monospace\" font-size=\"3.2\""), "{svg}");
+    assert!(svg.contains("<text x=\"60.00\" y=\"30.42\" font-family=\"monospace\" font-size=\"3.2\""), "{svg}");
+    assert!(svg.contains("<text x=\"60.00\" y=\"49.58\" font-family=\"monospace\" font-size=\"2.6\""), "{svg}");
     close(handle).expect("close");
 }
 

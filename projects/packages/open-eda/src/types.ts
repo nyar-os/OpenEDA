@@ -92,6 +92,16 @@ export type ExportTarget =
     | 'pdf'
     | 'svg'
     | 'png'
+    | 'block_diagram'
+    | 'sheet_overview'
+    | 'pinout_chart'
+    | 'symbol_library'
+    | 'net_topology'
+    | 'power_distribution'
+    | 'bom_drawing'
+    | 'bom_drawing_pdf'
+    | 'net_xref'
+    | 'net_xref_pdf'
     | 'bom'
     | 'bom_json'
     | 'bom_html'
@@ -1929,7 +1939,7 @@ export interface Design {
     inspect(options?: InspectOptions): Promise<InspectReport>;
     /** Writes the native `.oeda` document; defaults to the path it was opened from. */
     save(options?: SaveOptions): Promise<SaveReport>;
-    /** Projects the design to `net`, `net_csv`, `spice`, `svg`, `png`, `bom`, `bom_json`, `bom_html`, `pdf`, `report`, `json`, `kicad_sch`, `kicad_sym` or `kicad_net`; other targets report `capability/not-implemented`. */
+    /** Projects the design to `net`, `net_csv`, `spice`, `svg`, `png`, `bom`, `bom_json`, `bom_html`, `pdf`, `report`, `json`, `kicad_sch`, `kicad_sym`, `kicad_net` or one of the drawings `block_diagram`, `sheet_overview`, `pinout_chart`, `symbol_library`, `net_topology`, `power_distribution`, `bom_drawing`, `bom_drawing_pdf`, `net_xref`, `net_xref_pdf`; other targets report `capability/not-implemented`. */
     export(options: ExportOptions): Promise<ExportReport>;
     /** Updates title, drawing revision, company and date; an empty string clears a field. */
     setProperties(properties: DesignPropertiesInput): Promise<DesignPropertiesResult>;

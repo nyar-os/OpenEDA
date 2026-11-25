@@ -119,6 +119,16 @@ const exportTargets: readonly ExportTarget[] = [
     'pdf',
     'svg',
     'png',
+    'block_diagram',
+    'sheet_overview',
+    'pinout_chart',
+    'symbol_library',
+    'net_topology',
+    'power_distribution',
+    'bom_drawing',
+    'bom_drawing_pdf',
+    'net_xref',
+    'net_xref_pdf',
     'bom',
     'bom_json',
     'bom_html',
@@ -3180,7 +3190,7 @@ cli
         if (format === undefined) {
             ctx.fail('open-eda.cli.format-required', {
                 message:
-                    '`--format` must be one of kicad_sch, kicad_sym, kicad_net, kicad_pcb, net, net_csv, net_hier, net_class, net_length, spice, spice_subckt, gbr, pdf, svg, bom, bom_json, bom_html, report, json',
+                    '`--format` must be one of kicad_sch, kicad_sym, kicad_net, kicad_pcb, net, net_csv, net_hier, net_class, net_length, spice, spice_subckt, gbr, pdf, svg, png, block_diagram, sheet_overview, pinout_chart, symbol_library, net_topology, power_distribution, bom_drawing, bom_drawing_pdf, net_xref, net_xref_pdf, bom, bom_json, bom_html, report, json',
             });
             return 2;
         }

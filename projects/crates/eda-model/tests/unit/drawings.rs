@@ -1,5 +1,10 @@
-use super::*;
-use crate::{Component, Design, DesignRules, Net, Node, Sheet};
+use crate::{
+    Component, Design, DesignRules, Net, Node, Sheet,
+    drawings::{
+        render_block_diagram, render_bom_drawing, render_net_topology, render_net_xref, render_pinout_chart,
+        render_power_distribution, render_sheet_overview, render_symbol_library,
+    },
+};
 use std::collections::BTreeMap;
 
 /// Builds one component with the given reference, value and pins.
@@ -331,15 +336,17 @@ fn block_diagram_layers_nodes_and_chains_each_multi_member_net() {
     assert_eq!(drawing.nets, 4, "VCC, GND, IO1 and LED are multi-member; SIG dedupes to one member");
     assert_eq!(drawing.edges, 6, "2 + 2 + 1 + 1 segments");
 
-    // Breadth-first layering starts from the first reference of each island,
-    // so C1 roots the main island at the left margin and its VCC/GND partner
-    // MCU lands one column right (node width 30 + gap 26).
-    let c1_x = svg.find(r#"data-block="C1""#).expect("C1 node");
-    let u1_x = svg.find(r#"data-block="U1""#).expect("U1 node");
-    let c1_rect = &svg[c1_x..c1_x + 220];
-    let u1_rect = &svg[u1_x..u1_x + 220];
-    assert!(c1_rect.contains(r#"x="10.00""#), "the BFS root sits at the left margin, got: {c1_rect}");
-    assert!(u1_rect.contains(r#"x="66.00""#), "a net partner is layered one column right, got: {u1_rect}");
+    // The layout splits tall BFS layers into columns and pad the page, so the
+    // root no longer has to sit at x = 10. What matters is that the partner is
+    // layered to the right and the whole grid is painted.
+    let node_x = |reference: &str| -> f64 {
+        let at = svg.find(&format!(r#"data-block="{reference}""#)).expect("node group");
+        let rect = at + svg[at..].find("<rect x=\"").expect("node rect") + "<rect x=\"".len();
+        let value = &svg[rect..];
+        value[..value.find('"').expect("quote")].parse().expect("number")
+    };
+    assert!(node_x("U1") > node_x("C1"), "a net partner is layered to the right");
+    assert!(node_x("C1") >= 0.0, "nodes stay inside the content box");
 
     assert_eq!(svg, &render_block_diagram(&design).svg, "the layout is deterministic");
 }
@@ -395,9 +402,11 @@ fn pinout_chart_maps_pins_to_nets_and_marks_no_connects() {
     assert!(j1_block.contains(r#"data-no-connect="true""#), "a flagged pin is marked NC");
     assert!(j1_block.contains(">NC</text>"), "the NC marker is printed as text");
 
-    // Q1.E has no net node, so its row prints the em dash placeholder.
+    // Q1.E has no net node, so its row stays blank rather than filling the
+    // column with placeholder dashes.
     let q1 = svg.find(r#"data-ref="Q1""#).expect("Q1 block");
-    assert!(svg[q1..].contains("—"), "an unconnected pin prints a dash");
+    assert!(!svg.contains("—"), "unconnected pins do not print a dash");
+    assert!(svg[q1..].contains(r#"data-pin="E""#), "the unconnected pin still has a row");
 
     assert_eq!(drawing.components, 8, "one block per component");
     assert_eq!(drawing.rows, 19, "4+2+2+2+2+2+2+3 pin rows");
@@ -405,19 +414,17 @@ fn pinout_chart_maps_pins_to_nets_and_marks_no_connects() {
 }
 
 #[test]
-fn oversized_labels_are_clipped_to_their_cells() {
+fn oversized_labels_widen_the_measured_column_instead_of_clipping() {
     let mut design = sample_design();
     design.sheets[0].components[0].value = "V".repeat(60);
     let drawing = render_pinout_chart(&design);
-    // The U1 header must fit its 52-unit block at font size 3.0: at most
-    // floor(48 / 1.8) = 26 characters, with the cut marked by an ellipsis.
     let at = drawing.svg.find(r#"data-ref="U1""#).expect("U1 block");
     let text_at = at + drawing.svg[at..].find("<text").expect("header text");
     let tag_end = drawing.svg[text_at..].find('>').expect("tag end");
     let shown = &drawing.svg[text_at + tag_end + 1..];
     let shown = &shown[..shown.find('<').expect("text end")];
-    assert!(shown.chars().count() <= 26, "header text overflows its block: {shown}");
-    assert!(shown.ends_with("..."), "the cut is marked: {shown}");
+    assert!(shown.contains(&"V".repeat(60)), "the measured header keeps the whole value: {shown}");
+    assert!(!shown.ends_with("..."), "no truncation when the column can grow: {shown}");
 }
 
 #[test]
@@ -439,4 +446,264 @@ fn symbol_library_dedupes_symbols_by_prefix_and_pins() {
     assert!(!svg.contains(r#"data-ref="R3""#), "R3 shares the R1 cell and is not painted again");
     assert!(svg.contains(r#"transform="rotate(0.00 "#), "library symbols are drawn upright");
     assert_eq!(svg, &render_symbol_library(&design).svg, "the library is deterministic");
+}
+
+/// Collects the painted box of every `<text>` element, estimating monospace
+/// run widths at 0.6 em and honouring the `text-anchor` variants.
+fn text_boxes(svg: &str) -> Vec<[f64; 4]> {
+    let mut boxes = Vec::new();
+    let mut rest = svg;
+    while let Some(at) = rest.find("<text ") {
+        let tag_end = at + rest[at..].find('>').expect("tag end");
+        let tag = &rest[at..tag_end];
+        let number_after = |key: &str| -> Option<f64> {
+            tag.find(key).map(|a| tag[a + key.len()..].split('"').next().expect("value").parse().expect("number"))
+        };
+        let x = number_after("x=\"").expect("x");
+        let y = number_after(" y=\"").expect("y");
+        let size = number_after("font-size=\"").expect("font-size");
+        let content = &rest[tag_end + 1..];
+        let text = &content[..content.find('<').expect("element end")];
+        let width = text.chars().count() as f64 * size * 0.6;
+        let left = if tag.contains("text-anchor=\"middle\"") {
+            x - width / 2.0
+        }
+        else if tag.contains("text-anchor=\"end\"") {
+            x - width
+        }
+        else {
+            x
+        };
+        boxes.push([left, y - size * 0.8, left + width, y]);
+        rest = &content[text.len() + 1..];
+    }
+    boxes
+}
+
+/// Asserts every text box lies inside the document viewBox.
+fn assert_inside_canvas(svg: &str, boxes: &[[f64; 4]]) {
+    let view = &svg[svg.find("viewBox=\"").expect("viewBox") + 9..];
+    let view = &view[..view.find('"').expect("viewBox end")];
+    let numbers = view.split_whitespace().map(str::parse::<f64>).collect::<Result<Vec<_>, _>>().expect("viewBox numbers");
+    for box_edges in boxes {
+        assert!(
+            box_edges[0] >= numbers[0] - 0.01
+                && box_edges[2] <= numbers[0] + numbers[2] + 0.01
+                && box_edges[1] >= numbers[1] - 0.01
+                && box_edges[3] <= numbers[1] + numbers[3] + 0.01,
+            "text leaves the canvas: {box_edges:?} outside {numbers:?}"
+        );
+    }
+}
+
+/// The y of the first `<rect>` element at or after `from`.
+fn rect_y_in(svg: &str, from: usize) -> f64 {
+    let at = from + svg[from..].find("<rect ").expect("rect");
+    let end = at + svg[at..].find('>').expect("rect end");
+    let tag = &svg[at..end];
+    let y = &tag[tag.find(" y=\"").expect("y") + 4..];
+    y[..y.find('"').expect("quote")].parse().expect("number")
+}
+
+/// Asserts no two text boxes intersect.
+fn assert_no_text_overlap(boxes: &[[f64; 4]]) {
+    for (index, left) in boxes.iter().enumerate() {
+        for right in &boxes[index + 1..] {
+            let disjoint = left[2] <= right[0] || right[2] <= left[0] || left[3] <= right[1] || right[3] <= left[1];
+            assert!(disjoint, "text boxes overlap: {left:?} vs {right:?}");
+        }
+    }
+}
+
+#[test]
+fn net_topology_paints_the_component_net_incidence_graph() {
+    let design = sample_design();
+    let drawing = render_net_topology(&design);
+    let svg = &drawing.svg;
+
+    assert!(svg.contains(r#"data-net-topology="true""#), "the sheet carries its group marker");
+    // Six nets carry known members: VCC(3) GND(3) IO1(2) LED(2) SPARE(1) SIG(1).
+    assert_eq!(drawing.components, 8, "one box per component");
+    assert_eq!(drawing.nets, 6, "one node per net with members");
+    assert_eq!(drawing.edges, 12, "one edge per component-net incidence");
+    assert_eq!(occurrences(svg, "<polyline"), 12, "edges are routed");
+    assert_eq!(svg, &render_net_topology(&design).svg, "the graph is deterministic");
+
+    // Single-member nets stay visible, unlike in the block diagram chain.
+    assert!(svg.contains(r#"data-net-node="SPARE""#), "single-member nets are painted");
+
+    let boxes = text_boxes(svg);
+    assert_inside_canvas(svg, &boxes);
+    assert_no_text_overlap(&boxes);
+}
+
+#[test]
+fn power_distribution_groups_rails_by_net_convention() {
+    let design = sample_design();
+    let drawing = render_power_distribution(&design);
+    let svg = &drawing.svg;
+
+    assert!(svg.contains(r#"data-power-distribution="true""#), "the sheet carries its group marker");
+    assert_eq!(drawing.power_nets, 1, "VCC is the only power net");
+    assert_eq!(drawing.ground_nets, 1, "GND is the only ground net");
+    assert_eq!(drawing.components, 8, "every component is hung on the map");
+    assert_eq!(drawing.connections, 6, "VCC has three members and GND has three");
+    assert!(svg.contains(r#"data-rail="power" data-net="VCC""#), "the VCC rail bar is painted");
+    assert!(svg.contains(r#"data-rail="ground" data-net="GND""#), "the GND rail bar is painted");
+    assert!(!svg.contains(r#"data-net="IO1""#), "signal nets are not rails");
+
+    // The power rail sits above the component field and the ground below.
+    let rect_y = |marker: &str| -> f64 {
+        let mut rest: &str = svg;
+        loop {
+            let at = rest.find("<rect ").expect("rect");
+            let end = at + rest[at..].find('>').expect("rect end");
+            let tag = &rest[at..end];
+            if tag.contains(marker) {
+                let y = &tag[tag.find(" y=\"").expect("y") + 4..];
+                return y[..y.find('"').expect("quote")].parse().expect("number");
+            }
+            rest = &rest[end..];
+        }
+    };
+    let power_y = rect_y(r#"data-rail="power""#);
+    let ground_y = rect_y(r#"data-rail="ground""#);
+    let group = svg.find("data-block=").expect("component group");
+    let box_y = rect_y_in(svg, group);
+    assert!(power_y < box_y, "power rails sit above the components");
+    assert!(ground_y > box_y, "ground rails sit below the components");
+
+    let boxes = text_boxes(svg);
+    assert_inside_canvas(svg, &boxes);
+    assert_no_text_overlap(&boxes);
+}
+
+#[test]
+fn power_distribution_honours_power_pin_types_and_notes_railless_designs() {
+    let mut design = sample_design();
+    design.sheets[0].components[0].pin_types.insert("IO1".to_string(), crate::PinType::PowerIn);
+    let drawing = render_power_distribution(&design);
+    assert!(drawing.svg.contains(r#"data-net="IO1""#), "a PowerIn pin promotes the net to a power rail");
+    assert_eq!(drawing.power_nets, 2, "VCC plus the promoted IO1 rail");
+
+    let mut railless = sample_design();
+    railless.sheets[0].nets.retain(|net| net.name == "IO1" || net.name == "LED");
+    railless.sheets[1].nets.retain(|net| net.name == "SIG");
+    let drawing = render_power_distribution(&railless);
+    assert_eq!(drawing.power_nets, 0, "no rail names survive the filter");
+    assert_eq!(drawing.ground_nets, 0, "no ground names survive the filter");
+    assert!(drawing.svg.contains("no power or ground nets detected"), "the map explains its emptiness");
+    let boxes = text_boxes(&drawing.svg);
+    assert_inside_canvas(&drawing.svg, &boxes);
+}
+
+#[test]
+fn bom_drawing_paints_the_grouped_table() {
+    let design = sample_design();
+    let drawing = render_bom_drawing(&design);
+    let svg = &drawing.svg;
+
+    assert!(svg.contains(r#"data-bom-drawing="true""#), "the sheet carries its group marker");
+    assert_eq!(drawing.rows, 7, "eight parts group into seven value/footprint rows");
+    assert_eq!(drawing.components, 8, "the rows cover every part");
+    assert_eq!(occurrences(svg, "data-bom-cell="), 35, "five columns per row");
+    assert!(svg.contains(">R1, R3<"), "the two 10k parts share one designator cell");
+    assert!(svg.contains(r#"data-title-block="true""#), "the table carries the shared title block");
+    assert_eq!(svg, &render_bom_drawing(&design).svg, "the table is deterministic");
+
+    let boxes = text_boxes(svg);
+    assert_inside_canvas(svg, &boxes);
+    assert_no_text_overlap(&boxes);
+}
+
+#[test]
+fn bom_drawing_pdf_paginates_and_stays_deterministic() {
+    let design = sample_design();
+    let (contents, dropped, pages) = crate::render_bom_pdf(&design);
+    assert!(contents.starts_with("%PDF-1.4"), "the artifact is a PDF");
+    assert_eq!(dropped, 0, "the BOM cells are plain ASCII");
+    assert_eq!(pages, 1, "seven rows fit one page");
+    assert!(contents.contains("bill of materials"), "the page header names the artifact");
+    assert!(contents.contains("Tj"), "the rows are written as text");
+    let (again, _, _) = crate::render_bom_pdf(&design);
+    assert_eq!(contents, again, "the PDF is byte-deterministic");
+
+    let mut many = sample_design();
+    many.sheets.truncate(1);
+    many.sheets[0].nets.clear();
+    many.sheets[0].components =
+        (1..=30).map(|index| component(&format!("T{index:02}"), &format!("V{index}"), 10.0, 10.0, &["1"])).collect();
+    let (contents, dropped, pages) = crate::render_bom_pdf(&many);
+    assert_eq!(pages, 2, "thirty rows need two pages");
+    assert_eq!(dropped, 0);
+    assert!(contents.contains("(page 1 of 2)"), "the first page counts itself");
+    assert!(contents.contains("(page 2 of 2)"), "the last page counts itself");
+    assert!(contents.contains("T01"), "the first row lands on page one");
+    assert!(contents.contains("T30"), "the last row lands on page two");
+}
+
+#[test]
+fn net_xref_lists_members_and_sheet_numbers() {
+    let design = sample_design();
+    let drawing = render_net_xref(&design);
+    let svg = &drawing.svg;
+    assert!(svg.contains(r#"data-net-xref="true""#), "the sheet carries its group marker");
+    assert!(svg.contains(r#"data-title-block="true""#), "the table carries the shared title block");
+    assert!(svg.contains("NET CROSS REFERENCE"), "the table is named");
+    assert!(svg.contains(">VCC</text>"), "a net name is listed");
+    assert!(svg.contains("U1.VCC") && svg.contains("C1.2"), "nodes are grouped under the net");
+    assert_eq!(drawing.nets, 6, "VCC, GND, IO1, LED, SPARE and SIG");
+    assert_eq!(drawing.nodes, 14, "every distinct reference.pin member is listed");
+    assert_eq!(drawing.pages, 1, "the sample fits one table page");
+    assert_eq!(svg, &render_net_xref(&design).svg, "the table is deterministic");
+    let boxes = text_boxes(svg);
+    assert_inside_canvas(svg, &boxes);
+    assert_no_text_overlap(&boxes);
+}
+
+#[test]
+fn net_xref_wraps_long_member_lists_into_aligned_lines() {
+    let mut design = sample_design();
+    design.sheets.truncate(1);
+    design.sheets[0].components = (1..=24).map(|index| component(&format!("U{index:02}"), "IO", 10.0, 10.0, &["1"])).collect();
+    design.sheets[0].nets = vec![Net {
+        id: "net-long".to_string(),
+        name: "LONG_MEMBER_LIST".to_string(),
+        nodes: (1..=24).map(|index| Node { reference: format!("U{index:02}"), pin: "1".to_string() }).collect(),
+    }];
+    let drawing = render_net_xref(&design);
+    let nodes_cells = occurrences(&drawing.svg, "data-table-cell=\"true\"");
+    assert!(nodes_cells >= 5, "the long member list wraps onto several text lines");
+    assert!(drawing.svg.contains("U24.1"), "the last member survives the wrap");
+    let boxes = text_boxes(&drawing.svg);
+    assert_inside_canvas(&drawing.svg, &boxes);
+    assert_no_text_overlap(&boxes);
+}
+
+#[test]
+fn net_xref_pdf_paginates_and_stays_deterministic() {
+    let design = sample_design();
+    let (contents, dropped, pages, nets) = crate::render_net_xref_pdf(&design);
+    assert!(contents.starts_with("%PDF-1.4"), "the artifact is a PDF");
+    assert_eq!(dropped, 0, "the cross-reference cells are plain ASCII");
+    assert_eq!(pages, 1, "the sample fits one page");
+    assert_eq!(nets, 6, "every net is listed");
+    assert!(contents.contains("net cross reference"), "the page header names the artifact");
+    assert!(contents.contains("REFERENCE"), "the node column is named");
+    let (again, _, _, _) = crate::render_net_xref_pdf(&design);
+    assert_eq!(contents, again, "the PDF is byte-deterministic");
+
+    let mut many = sample_design();
+    many.sheets.truncate(1);
+    many.sheets[0].components = (1..=80).map(|index| component(&format!("U{index:02}"), "IO", 10.0, 10.0, &["1"])).collect();
+    many.sheets[0].nets = (1..=40)
+        .map(|index| Net {
+            id: format!("net-{index}"),
+            name: format!("NET_{index:02}"),
+            nodes: (1..=20).map(|member| Node { reference: format!("U{member:02}"), pin: "1".to_string() }).collect(),
+        })
+        .collect();
+    let (_, dropped, pages, _) = crate::render_net_xref_pdf(&many);
+    assert_eq!(dropped, 0);
+    assert!(pages > 1, "a wrapped cross-reference needs more than one page");
 }

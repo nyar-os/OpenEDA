@@ -106,6 +106,12 @@ const EXPORT_TARGETS: &[&str] = &[
     "sheet_overview",
     "pinout_chart",
     "symbol_library",
+    "net_topology",
+    "power_distribution",
+    "bom_drawing",
+    "bom_drawing_pdf",
+    "net_xref",
+    "net_xref_pdf",
     "bom",
     "bom_json",
     "bom_html",
@@ -132,6 +138,12 @@ const SUPPORTED_EXPORTS: &[&str] = &[
     "sheet_overview",
     "pinout_chart",
     "symbol_library",
+    "net_topology",
+    "power_distribution",
+    "bom_drawing",
+    "bom_drawing_pdf",
+    "net_xref",
+    "net_xref_pdf",
     "bom",
     "bom_json",
     "bom_html",
@@ -5398,6 +5410,80 @@ pub fn export_with_options(
             });
             (drawing.svg, artifact)
         }
+        "net_topology" => {
+            let drawing = drawings::render_net_topology(&design);
+            let artifact = json!({
+                "kind": "net_topology",
+                "components": drawing.components,
+                "nets": drawing.nets,
+                "edges": drawing.edges,
+            });
+            (drawing.svg, artifact)
+        }
+        "power_distribution" => {
+            let drawing = drawings::render_power_distribution(&design);
+            let artifact = json!({
+                "kind": "power_distribution",
+                "powerNets": drawing.power_nets,
+                "groundNets": drawing.ground_nets,
+                "components": drawing.components,
+                "connections": drawing.connections,
+            });
+            (drawing.svg, artifact)
+        }
+        "bom_drawing" => {
+            let drawing = drawings::render_bom_drawing(&design);
+            let artifact = json!({
+                "kind": "bom_drawing",
+                "rows": drawing.rows,
+                "components": drawing.components,
+            });
+            (drawing.svg, artifact)
+        }
+        "bom_drawing_pdf" => {
+            let (contents, dropped, pages) = render_bom_pdf(&design);
+            if dropped > 0 {
+                losses.push(json!({
+                    "loss": "pdf-font",
+                    "detail": format!("{dropped} characters are outside the PDF base-14 font"),
+                }));
+            }
+            let rows = bom_rows(&design, None);
+            let artifact = json!({
+                "kind": "bom_drawing_pdf",
+                "pages": pages,
+                "rows": rows.len(),
+                "components": rows.iter().map(|row| row.designators.len()).sum::<usize>(),
+                "mediaBox": "a4-landscape",
+            });
+            (contents, artifact)
+        }
+        "net_xref" => {
+            let drawing = drawings::render_net_xref(&design);
+            let artifact = json!({
+                "kind": "net_xref",
+                "nets": drawing.nets,
+                "nodes": drawing.nodes,
+                "pages": drawing.pages,
+            });
+            (drawing.svg, artifact)
+        }
+        "net_xref_pdf" => {
+            let (contents, dropped, pages, nets) = render_net_xref_pdf(&design);
+            if dropped > 0 {
+                losses.push(json!({
+                    "loss": "pdf-font",
+                    "detail": format!("{dropped} characters are outside the PDF base-14 font"),
+                }));
+            }
+            let artifact = json!({
+                "kind": "net_xref_pdf",
+                "pages": pages,
+                "nets": nets,
+                "mediaBox": "a4-landscape",
+            });
+            (contents, artifact)
+        }
         "report" => {
             let (contents, sections, issue_count) = render_report(&design);
             let artifact = json!({
@@ -8451,55 +8537,138 @@ fn component_extents(component: &Component) -> ([f64; 2], [f64; 2]) {
     (min, max)
 }
 
-/// Axis-aligned boxes of the reference, value and pin-name texts of one
-/// component after rotation, in model coordinates.
+/// Axis-aligned bounds of the painted symbol: its body and artwork plus every
+/// pin stub, after mirroring and rotation.
 ///
-/// The boxes mirror exactly where [`svg_projection`] and the PDF page paint
-/// the texts, so collision avoidance can reason about the printed labels
-/// instead of the component outline alone. Each box is `[min_x, min_y, max_x,
-/// max_y]`.
+/// Unlike [`component_extents`] this ignores the invisible generic box around
+/// two-pin parts, so reference and value labels can sit just outside the
+/// visible artwork instead of floating at the box margin.
+fn component_visual_extents(component: &Component) -> ([f64; 2], [f64; 2]) {
+    let (artwork, keeps_box) = symbol_artwork(component);
+    let inside_box = keeps_box || artwork.is_empty();
+    let mut points = Vec::new();
+    if inside_box {
+        let half_height = component_half_height(component);
+        points.extend([
+            [component.x - COMPONENT_HALF_WIDTH, component.y - half_height],
+            [component.x + COMPONENT_HALF_WIDTH, component.y - half_height],
+            [component.x + COMPONENT_HALF_WIDTH, component.y + half_height],
+            [component.x - COMPONENT_HALF_WIDTH, component.y + half_height],
+        ]);
+    }
+    for primitive in &artwork {
+        match primitive {
+            SymbolPrimitive::Stroke(primitive_points) | SymbolPrimitive::Fill(primitive_points) => {
+                points.extend(primitive_points.iter().copied());
+            }
+        }
+    }
+    for pin in component_pins(component) {
+        points.push(pin.root);
+        points.push(pin.end);
+    }
+    let mut min = [f64::INFINITY, f64::INFINITY];
+    let mut max = [f64::NEG_INFINITY, f64::NEG_INFINITY];
+    for point in points {
+        let point = rotate_about(component, point);
+        min[0] = min[0].min(point[0]);
+        min[1] = min[1].min(point[1]);
+        max[0] = max[0].max(point[0]);
+        max[1] = max[1].max(point[1]);
+    }
+    (min, max)
+}
+
+/// One horizontally painted reference or value label.
+#[derive(Clone, Copy)]
+struct ComponentLabel {
+    /// Text baseline x.
+    x: f64,
+    /// Text baseline y.
+    y: f64,
+    /// SVG text anchor.
+    anchor: &'static str,
+    /// Font size in design units.
+    size: f64,
+}
+
+impl ComponentLabel {
+    /// The painted box `[min_x, min_y, max_x, max_y]` of the label.
+    fn bounds(self, text: &str) -> [f64; 4] {
+        let width = text.chars().count() as f64 * self.size * 0.6;
+        let left = match self.anchor {
+            "middle" => self.x - width / 2.0,
+            "end" => self.x - width,
+            _ => self.x,
+        };
+        [left, self.y - self.size * 0.75, left + width, self.y + self.size * 0.25]
+    }
+}
+
+/// Places the reference and value labels outside the visible symbol.
+///
+/// Wide symbols prefer the free space above the reference and below the value;
+/// tall (rotated) symbols stack both labels horizontally to the right so the
+/// text never rotates with the body. Every candidate is checked against the
+/// symbol bounds and the label already placed, so a label that would touch a
+/// pin, the body or its sibling moves to the next side.
+fn component_labels(component: &Component) -> (ComponentLabel, ComponentLabel) {
+    let (min, max) = component_visual_extents(component);
+    let (span_x, span_y) = (max[0] - min[0], max[1] - min[1]);
+    let center_x = (min[0] + max[0]) / 2.0;
+    let center_y = (min[1] + max[1]) / 2.0;
+    let body = [min[0], min[1], max[0], max[1]];
+    let overlaps = |a: [f64; 4], b: [f64; 4]| a[0] < b[2] && b[0] < a[2] && a[1] < b[3] && b[1] < a[3];
+    let top = ComponentLabel { x: center_x, y: min[1] - 1.96, anchor: "middle", size: 3.2 };
+    let bottom = ComponentLabel { x: center_x, y: max[1] + 1.96, anchor: "middle", size: 2.6 };
+    let right_reference = ComponentLabel { x: max[0] + 1.2, y: center_y - 0.6, anchor: "start", size: 3.2 };
+    let right_value = ComponentLabel { x: max[0] + 1.2, y: center_y + 3.0, anchor: "start", size: 2.6 };
+    let left_reference = ComponentLabel { x: min[0] - 1.2, y: center_y - 0.6, anchor: "end", size: 3.2 };
+    let left_value = ComponentLabel { x: min[0] - 1.2, y: center_y + 3.0, anchor: "end", size: 2.6 };
+    let reference = if span_x >= span_y {
+        let candidate = if overlaps(top.bounds(&component.reference), body) { bottom } else { top };
+        let candidate = if overlaps(candidate.bounds(&component.reference), body) { right_reference } else { candidate };
+        if overlaps(candidate.bounds(&component.reference), body) { left_reference } else { candidate }
+    }
+    else {
+        let candidate =
+            if overlaps(right_reference.bounds(&component.reference), body) { left_reference } else { right_reference };
+        if overlaps(candidate.bounds(&component.reference), body) { top } else { candidate }
+    };
+    let reference_box = reference.bounds(&component.reference);
+    let value_candidates: [ComponentLabel; 4] =
+        if span_x >= span_y { [bottom, top, right_value, left_value] } else { [right_value, left_value, bottom, top] };
+    let value = value_candidates
+        .into_iter()
+        .find(|candidate| {
+            !overlaps(candidate.bounds(&component.value), body) && !overlaps(candidate.bounds(&component.value), reference_box)
+        })
+        .unwrap_or(bottom);
+    (reference, value)
+}
+
+/// Axis-aligned boxes of the reference, value and pin-name texts of one
+/// component, in model coordinates.
+///
+/// The boxes mirror exactly where [`push_svg_component`] paints the texts, so
+/// collision avoidance can reason about the printed labels instead of the
+/// component outline alone. Each box is `[min_x, min_y, max_x, max_y]`.
 fn component_text_boxes(component: &Component) -> Vec<[f64; 4]> {
     let (artwork, keeps_box) = symbol_artwork(component);
     let inside_box = keeps_box || artwork.is_empty();
-    let mut boxes = Vec::with_capacity(component.pins.len() + 2);
-    let mut push = |x: f64, y: f64, width: f64, size: f64, middle: bool| {
-        let left = if middle { x - width / 2.0 } else { x };
-        let corners = [
-            [left, y - size * 0.75],
-            [left + width, y - size * 0.75],
-            [left, y + size * 0.25],
-            [left + width, y + size * 0.25],
-        ];
-        let mut min = [f64::INFINITY, f64::INFINITY];
-        let mut max = [f64::NEG_INFINITY, f64::NEG_INFINITY];
-        for corner in corners {
-            let point = rotate_about(component, corner);
-            min[0] = min[0].min(point[0]);
-            min[1] = min[1].min(point[1]);
-            max[0] = max[0].max(point[0]);
-            max[1] = max[1].max(point[1]);
-        }
-        boxes.push([min[0], min[1], max[0], max[1]]);
-    };
-    push(
-        component.x,
-        if inside_box { component.y - 0.6 } else { component.y - 4.5 },
-        component.reference.chars().count() as f64 * 3.2 * 0.6,
-        3.2,
-        true,
-    );
-    push(
-        component.x,
-        if inside_box { component.y + 3.0 } else { component.y + 4.5 },
-        component.value.chars().count() as f64 * 2.6 * 0.6,
-        2.6,
-        true,
-    );
+    let (reference, value) = component_labels(component);
+    let mut boxes = vec![reference.bounds(&component.reference), value.bounds(&component.value)];
     for pin in component_pins(component) {
-        let x = if pin.left { pin.root[0] + 0.9 } else { pin.root[0] - 0.9 };
+        let anchor = rotate_about(
+            component,
+            [
+                if pin.left { pin.root[0] + 0.9 } else { pin.root[0] - 0.9 },
+                if inside_box { pin.root[1] + 0.7 } else { pin.root[1] - 1.2 },
+            ],
+        );
         let width = pin.name.chars().count() as f64 * PIN_NAME_SIZE * 0.6;
-        let left = if pin.left { x } else { x - width };
-        push(left, if inside_box { pin.root[1] + 0.7 } else { pin.root[1] - 1.2 }, width, PIN_NAME_SIZE, false);
+        let left = if pin.left { anchor[0] } else { anchor[0] - width };
+        boxes.push([left, anchor[1] - PIN_NAME_SIZE * 0.75, left + width, anchor[1] + PIN_NAME_SIZE * 0.25]);
     }
     boxes
 }
@@ -8690,6 +8859,12 @@ pub(crate) fn drawing_bounds<'a>(sheets: impl IntoIterator<Item = &'a Sheet>) ->
             max_x = max_x.max(max[0]);
             min_y = min_y.min(min[1]);
             max_y = max_y.max(max[1]);
+            for text in component_text_boxes(component) {
+                min_x = min_x.min(text[0]);
+                max_x = max_x.max(text[2]);
+                min_y = min_y.min(text[1]);
+                max_y = max_y.max(text[3]);
+            }
         }
         for wire in &sheet.wires {
             any = true;
@@ -8760,11 +8935,15 @@ fn svg_projection(design: &Design, sheets: &[&Sheet]) -> SvgProjection {
         return svg_paged_projection(design, sheets);
     }
     let (min_x, min_y, max_x, max_y) = drawing_bounds(sheets.iter().copied());
-    let padding = 10.0;
+    // Reserve at least 8% of the final page width on every side. Solving
+    // content + 2 * (0.08 * page) = page keeps the frame margin honest for
+    // wide and narrow designs alike.
+    let content_width = (max_x - min_x).max(1.0);
+    let padding = content_width * 0.08 / 0.84;
     let view_x = min_x - padding;
     let view_y = min_y - padding;
-    let view_width = (max_x - min_x + 2.0 * padding).max(1.0);
-    let view_height = (max_y - min_y + 2.0 * padding).max(1.0) + TITLE_BLOCK_HEIGHT;
+    let view_width = content_width + 2.0 * padding;
+    let view_height = (max_y - min_y).max(1.0) + 2.0 * padding + TITLE_BLOCK_HEIGHT;
     // The SVG viewBox counts millimetres. A standalone file opens at eight
     // pixels per millimetre so pin labels and references stay legible instead
     // of rendering as a postage stamp.
@@ -8800,14 +8979,18 @@ fn svg_projection(design: &Design, sheets: &[&Sheet]) -> SvgProjection {
 /// behaviour while staying a single vector document.
 fn svg_paged_projection(design: &Design, sheets: &[&Sheet]) -> SvgProjection {
     let bounds: Vec<(f64, f64, f64, f64)> = sheets.iter().map(|sheet| drawing_bounds(std::iter::once(*sheet))).collect();
-    let padding = 10.0;
     let header = 6.0;
     let gap = 10.0;
+    let content_width = bounds.iter().map(|bound| bound.2 - bound.0).fold(1.0, f64::max);
+    let padding = content_width * 0.08 / 0.84;
     let view_x = -padding;
-    let view_width = bounds.iter().map(|bound| bound.2 - bound.0).fold(1.0, f64::max) + 2.0 * padding;
-    let mut view_height = 2.0 * padding + TITLE_BLOCK_HEIGHT - gap;
+    let view_width = content_width + 2.0 * padding;
+    // One full padding above the first band and one below the last, so every
+    // sheet keeps the same eight-percent margin from the page border.
+    let mut view_height = 2.0 * padding + TITLE_BLOCK_HEIGHT;
     for bound in &bounds {
-        view_height += header + (bound.3 - bound.1).max(1.0) + gap;
+        // Two extra units keep text descenders off the band frame.
+        view_height += header + (bound.3 - bound.1).max(1.0) + 2.0 + gap;
     }
     let width = (view_width * 8.0).round();
     let height = (view_height * 8.0).round();
@@ -8825,7 +9008,7 @@ fn svg_paged_projection(design: &Design, sheets: &[&Sheet]) -> SvgProjection {
     let mut region_top = -padding;
     for (sheet, bound) in sheets.iter().zip(&bounds) {
         let (min_x, min_y, _, max_y) = *bound;
-        let span_y = (max_y - min_y).max(1.0);
+        let span_y = (max_y - min_y).max(1.0) + 2.0;
         svg.push_str(&format!(
             "  <rect x=\"{view_x:.2}\" y=\"{region_top:.2}\" width=\"{view_width:.2}\" height=\"{:.2}\" fill=\"none\" stroke=\"#64748b\" stroke-width=\"0.4\" stroke-dasharray=\"2.4 1.6\"/>\n",
             header + span_y,
@@ -8857,6 +9040,12 @@ fn svg_paged_projection(design: &Design, sheets: &[&Sheet]) -> SvgProjection {
 /// Shared by the sheet projection and the multi-sheet overview drawing so both
 /// paint byte-identical primitives; the caller owns the surrounding group.
 pub(crate) fn push_svg_sheet_contents(svg: &mut String, sheet: &Sheet) {
+    let pin_key = |point: [f64; 2]| -> (i64, i64) { ((point[0] * 100.0).round() as i64, (point[1] * 100.0).round() as i64) };
+    let mut connected: BTreeSet<(i64, i64)> = BTreeSet::new();
+    for wire in &sheet.wires {
+        connected.insert(pin_key(wire.from));
+        connected.insert(pin_key(wire.to));
+    }
     for wire in &sheet.wires {
         svg.push_str(&format!(
             "    <line x1=\"{:.2}\" y1=\"{:.2}\" x2=\"{:.2}\" y2=\"{:.2}\" stroke=\"#0f766e\" stroke-width=\"0.5\"/>\n",
@@ -8882,8 +9071,19 @@ pub(crate) fn push_svg_sheet_contents(svg: &mut String, sheet: &Sheet) {
                 flag.y - 0.7
             ));
     }
+    let labelled: BTreeSet<String> = sheet.labels.iter().map(|label| label.text.to_lowercase()).collect();
     for (net, (from, to)) in net_name_anchors(sheet) {
+        if labelled.contains(&net.to_lowercase()) {
+            continue;
+        }
         let [mid_x, mid_y] = net_name_point(sheet, from, to, &net);
+        let half = net.chars().count() as f64 * 2.2 * 0.3;
+        svg.push_str(&format!(
+            "    <rect x=\"{:.2}\" y=\"{:.2}\" width=\"{:.2}\" height=\"2.8\" fill=\"#ffffff\" data-net-name-box=\"true\"/>\n",
+            mid_x - half - 0.4,
+            mid_y - 2.1,
+            half * 2.0 + 0.8
+        ));
         svg.push_str(&format!(
                 "    <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"2.2\" text-anchor=\"middle\" fill=\"#64748b\" data-net=\"{}\">{}</text>\n",
                 mid_x,
@@ -8892,10 +9092,21 @@ pub(crate) fn push_svg_sheet_contents(svg: &mut String, sheet: &Sheet) {
                 escape_xml(&net)
             ));
     }
+    let mut painted_labels: BTreeSet<(String, String)> = BTreeSet::new();
     for label in &sheet.labels {
+        let key = (format!("{:?}", label.scope), label.text.clone());
+        if !painted_labels.insert(key) {
+            continue;
+        }
         let width = label.text.chars().count() as f64 * 2.8 * 0.6;
         match label.scope {
             LabelScope::Local => {
+                svg.push_str(&format!(
+                    "    <rect x=\"{:.2}\" y=\"{:.2}\" width=\"{:.2}\" height=\"4.2\" fill=\"#ffffff\"/>\n",
+                    label.x - 0.4,
+                    label.y - 3.4,
+                    width + 0.8
+                ));
                 svg.push_str(&format!(
                         "    <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"2.8\" text-anchor=\"start\" fill=\"#0f766e\">{}</text>\n",
                         label.x,
@@ -8948,6 +9159,13 @@ pub(crate) fn push_svg_sheet_contents(svg: &mut String, sheet: &Sheet) {
         }
     }
     for text in &sheet.texts {
+        let width = text.text.chars().count() as f64 * 3.2 * 0.6;
+        svg.push_str(&format!(
+            "    <rect x=\"{:.2}\" y=\"{:.2}\" width=\"{:.2}\" height=\"4.6\" fill=\"#ffffff\" data-text-box=\"true\"/>\n",
+            text.x - 0.5,
+            text.y - 3.6,
+            width + 1.0
+        ));
         svg.push_str(&format!(
             "    <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"3.2\" text-anchor=\"start\">{}</text>\n",
             text.x,
@@ -8956,19 +9174,16 @@ pub(crate) fn push_svg_sheet_contents(svg: &mut String, sheet: &Sheet) {
         ));
     }
     for component in &sheet.components {
-        push_svg_component(svg, component);
+        push_svg_component_marked(svg, component, Some(&connected));
     }
 }
 
-/// Paints one component symbol — body, artwork, pin stubs, reference and value
-/// — into an SVG document at its design placement.
-///
-/// Shared by the sheet projection and the symbol-library drawing; the library
-/// places a component clone at a cell centre, so the caller owns the
-/// surrounding group.
-pub(crate) fn push_svg_component(svg: &mut String, component: &Component) {
+/// Paints one component symbol and suppresses pin dots that coincide with a
+/// wire endpoint in `connected` (rounded to 0.01 unit). `None` marks every pin.
+pub(crate) fn push_svg_component_marked(svg: &mut String, component: &Component, connected: Option<&BTreeSet<(i64, i64)>>) {
     let (artwork, keeps_box) = symbol_artwork(component);
     let inside_box = keeps_box || artwork.is_empty();
+    let (reference, value) = component_labels(component);
     svg.push_str(&format!(
         "    <g transform=\"rotate({:.2} {:.2} {:.2})\" data-ref=\"{}\">\n",
         component.rotation,
@@ -8993,32 +9208,46 @@ pub(crate) fn push_svg_component(svg: &mut String, component: &Component) {
             "      <line x1=\"{:.2}\" y1=\"{:.2}\" x2=\"{:.2}\" y2=\"{:.2}\" stroke=\"#1f6feb\" stroke-width=\"0.35\"/>\n",
             pin.root[0], pin.root[1], pin.end[0], pin.end[1]
         ));
-        svg.push_str(&format!(
-            "      <circle cx=\"{:.2}\" cy=\"{:.2}\" r=\"0.45\" fill=\"#1f6feb\"/>\n",
-            pin.end[0], pin.end[1]
-        ));
+        let end = rotate_about(component, pin.end);
+        let unconnected =
+            connected.is_none_or(|set| !set.contains(&((end[0] * 100.0).round() as i64, (end[1] * 100.0).round() as i64)));
+        if unconnected {
+            svg.push_str(&format!(
+                "      <circle cx=\"{:.2}\" cy=\"{:.2}\" r=\"0.45\" fill=\"#1f6feb\"/>\n",
+                pin.end[0], pin.end[1]
+            ));
+        }
         let (x, anchor) = if pin.left { (pin.root[0] + 0.9, "start") } else { (pin.root[0] - 0.9, "end") };
         let name_y = if inside_box { pin.root[1] + 0.7 } else { pin.root[1] - 1.2 };
         svg.push_str(&format!(
-                    "      <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"{PIN_NAME_SIZE:.1}\" text-anchor=\"{anchor}\" fill=\"#334155\">{}</text>\n",
+                    "      <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"{PIN_NAME_SIZE:.1}\" text-anchor=\"{anchor}\" fill=\"#334155\" transform=\"rotate({:.2} {:.2} {:.2})\">{}</text>\n",
+                    x,
+                    name_y,
+                    -component.rotation,
                     x,
                     name_y,
                     escape_xml(&pin.name)
                 ));
     }
-    svg.push_str(&format!(
-        "      <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"3.2\" text-anchor=\"middle\">{}</text>\n",
-        component.x,
-        if inside_box { component.y - 0.6 } else { component.y - 4.5 },
-        escape_xml(&component.reference)
-    ));
-    svg.push_str(&format!(
-        "      <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"2.6\" text-anchor=\"middle\">{}</text>\n",
-        component.x,
-        if inside_box { component.y + 3.0 } else { component.y + 4.5 },
-        escape_xml(&component.value)
-    ));
     svg.push_str("    </g>\n");
+    for (label, text) in [(reference, component.reference.as_str()), (value, component.value.as_str())] {
+        let box_min = label.bounds(text);
+        svg.push_str(&format!(
+            "    <rect x=\"{:.2}\" y=\"{:.2}\" width=\"{:.2}\" height=\"{:.2}\" fill=\"#ffffff\" data-component-text=\"true\"/>\n",
+            box_min[0] - 0.3,
+            box_min[1] - 0.2,
+            box_min[2] - box_min[0] + 0.6,
+            box_min[3] - box_min[1] + 0.4
+        ));
+        svg.push_str(&format!(
+            "    <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"{:.1}\" text-anchor=\"{}\">{}</text>\n",
+            label.x,
+            label.y,
+            label.size,
+            label.anchor,
+            escape_xml(text)
+        ));
+    }
 }
 
 /// One painted net name and the segment it annotates.
@@ -9108,6 +9337,8 @@ pub(crate) fn push_svg_title_block(
     let title = design.title.as_deref().filter(|title| !title.trim().is_empty()).unwrap_or(&design.id);
     let sheet_names = sheets.iter().map(|sheet| sheet.name.as_str()).collect::<Vec<_>>().join(", ");
     let rev = if design.rev.trim().is_empty() { "-" } else { design.rev.as_str() };
+    let drawing_number = format!("DWG {}", design.id);
+    let sheet_count = format!("{} sheet(s)", sheets.len());
     svg.push_str("  <g data-title-block=\"true\">\n");
     svg.push_str(&format!(
         "    <line x1=\"{:.2}\" y1=\"{:.2}\" x2=\"{:.2}\" y2=\"{:.2}\" stroke=\"#1f2933\" stroke-width=\"0.4\"/>\n",
@@ -9163,10 +9394,11 @@ pub(crate) fn push_svg_title_block(
         escape_xml(&sheet_names)
     ));
     svg.push_str(&format!(
-        "    <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"2.2\" text-anchor=\"start\" fill=\"#64748b\">{}</text>\n",
+        "    <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"2.2\" text-anchor=\"start\" fill=\"#64748b\">{} | {}</text>\n",
         cell_x(1),
         strip_y + 9.5,
-        escape_xml(&format!("{} sheet(s)", sheets.len()))
+        escape_xml(&sheet_count),
+        escape_xml(&drawings::fit_text(&drawing_number, view_width * columns[1] - 3.0, 2.2))
     ));
     svg.push_str(&format!(
         "    <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"2.6\" text-anchor=\"start\" fill=\"#1f2933\">REV {}</text>\n",
@@ -9175,10 +9407,10 @@ pub(crate) fn push_svg_title_block(
         escape_xml(rev)
     ));
     svg.push_str(&format!(
-        "    <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"2.2\" text-anchor=\"start\" fill=\"#64748b\">{}</text>\n",
+        "    <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"2.2\" text-anchor=\"start\" fill=\"#64748b\">SCALE 1:1 | UNIT {}</text>\n",
         cell_x(2),
         strip_y + 9.5,
-        escape_xml(&format!("units: {}", design.units))
+        escape_xml(&design.units)
     ));
     svg.push_str(&format!(
         "    <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"2.2\" text-anchor=\"start\" fill=\"#64748b\">{} parts / {} wires</text>\n",
@@ -9809,6 +10041,256 @@ fn render_pdf_for(design: &Design, sheets: &[&Sheet]) -> (String, usize) {
     (assemble_pdf(&pages), dropped)
 }
 
+/// Writes the bill of materials as a paginated A4-landscape PDF table.
+///
+/// The rows reuse the shared BOM grouping with designators compressed into
+/// ranges. Every cell is clipped to its column width so no text can run over
+/// the page border or into the neighbouring cell, and each page carries a
+/// ruled header, row separators and a footer title line.
+fn render_bom_pdf(design: &Design) -> (String, usize, usize) {
+    let rows = bom_rows(design, None);
+    let parts: usize = rows.iter().map(|row| row.designators.len()).sum();
+    let per_page = 24usize;
+    let pages_count = rows.len().div_ceil(per_page).max(1);
+    let title = design.title.as_deref().map(str::trim).filter(|text| !text.is_empty()).unwrap_or(design.id.as_str());
+    let mut dropped = 0usize;
+    let mut text_at = |text: &str, size: f64, x: f64, y: f64| -> String {
+        let (literal, lost) = pdf_text(text);
+        dropped += lost;
+        format!("0 0 0 rg BT /F1 {size:.1} Tf {x:.2} {y:.2} Td ({literal}) Tj ET\n")
+    };
+    let clip = |text: &str, width: f64, size: f64| -> String {
+        let max = (width / (size * 0.5)).floor() as usize;
+        if text.chars().count() <= max {
+            return text.to_string();
+        }
+        if max <= 3 {
+            return text.chars().take(max).collect();
+        }
+        let mut cut: String = text.chars().take(max - 3).collect();
+        cut.push_str("...");
+        cut
+    };
+    let columns: [(f64, f64); 5] = [(40.0, 26.0), (66.0, 124.0), (190.0, 130.0), (320.0, 380.0), (700.0, 60.0)];
+    let mut pages: Vec<String> = Vec::new();
+    for page in 0..pages_count {
+        let slice = &rows[page * per_page..((page + 1) * per_page).min(rows.len())];
+        let mut content = String::new();
+        content.push_str(&format!("0.12 0.16 0.2 RG 0.4 w 0 0 {PDF_PAGE_WIDTH:.2} {PDF_PAGE_HEIGHT:.2} re S\n"));
+        content.push_str(&text_at(
+            &format!(
+                "OpenEDA {} revision {} | bill of materials (page {} of {})",
+                design.id,
+                design.revision,
+                page + 1,
+                pages_count
+            ),
+            9.0,
+            PDF_MARGIN,
+            PDF_PAGE_HEIGHT - 24.0,
+        ));
+        let header_y = PDF_PAGE_HEIGHT - 48.0;
+        for (index, label) in ["#", "COMMENT", "FOOTPRINT", "DESIGNATORS", "QTY"].iter().enumerate() {
+            content.push_str(&text_at(label, 8.0, columns[index].0, header_y));
+        }
+        content.push_str(&format!(
+            "0.12 0.16 0.2 RG 0.4 w {PDF_MARGIN:.2} {:.2} m {:.2} {:.2} l S\n",
+            header_y - 5.0,
+            PDF_PAGE_WIDTH - PDF_MARGIN,
+            header_y - 5.0
+        ));
+        if slice.is_empty() {
+            content.push_str(&text_at("(no components)", 8.0, columns[1].0, header_y - 20.0));
+        }
+        for (index, row) in slice.iter().enumerate() {
+            let y = header_y - 20.0 - index as f64 * 16.0;
+            let designators = clip(&designator_ranges(&row.designators).join(", "), columns[3].1 - 4.0, 8.0);
+            let cells = [
+                format!("{}", page * per_page + index + 1),
+                clip(&row.comment, columns[1].1 - 4.0, 8.0),
+                clip(&row.footprint, columns[2].1 - 4.0, 8.0),
+                designators,
+                format!("{}", row.designators.len()),
+            ];
+            for (column, text) in cells.iter().enumerate() {
+                content.push_str(&text_at(text, 8.0, columns[column].0, y));
+            }
+            content.push_str(&format!(
+                "0.8 0.84 0.88 RG 0.3 w {PDF_MARGIN:.2} {:.2} m {:.2} {:.2} l S\n",
+                y - 5.0,
+                PDF_PAGE_WIDTH - PDF_MARGIN,
+                y - 5.0
+            ));
+        }
+        content.push_str(&format!(
+            "0.12 0.16 0.2 RG 0.4 w {PDF_MARGIN:.2} {PDF_CONTENT_BOTTOM:.2} m {:.2} {PDF_CONTENT_BOTTOM:.2} l S\n",
+            PDF_PAGE_WIDTH - PDF_MARGIN
+        ));
+        let footer_y = PDF_CONTENT_BOTTOM - 12.0;
+        content.push_str(&text_at(&clip(title, 280.0, 9.0), 9.0, PDF_MARGIN + 4.0, footer_y));
+        content.push_str(&text_at(&format!("REV {}", clip(&design.revision.to_string(), 60.0, 9.0)), 9.0, 340.0, footer_y));
+        content.push_str(&text_at(&format!("{} rows / {} parts", rows.len(), parts), 9.0, 470.0, footer_y));
+        content.push_str(&text_at(&format!("page {} of {}", page + 1, pages_count), 9.0, 700.0, footer_y));
+        pages.push(content);
+    }
+    (assemble_pdf(&pages), dropped, pages_count)
+}
+
+/// Breaks a monospace PDF cell into lines of at most `max_chars` characters,
+/// preferring a break after a comma or space so a long net member list stays
+/// readable and aligned with the surrounding rows.
+fn pdf_wrap_cell(text: &str, max_chars: usize) -> Vec<String> {
+    let max_chars = max_chars.max(8);
+    let mut lines = Vec::new();
+    let mut current = String::new();
+    for word in text.split_inclusive([',', ' ']) {
+        if !current.is_empty() && current.chars().count() + word.chars().count() > max_chars {
+            lines.push(current.trim_end().to_string());
+            current.clear();
+        }
+        if word.chars().count() > max_chars {
+            for character in word.chars() {
+                if current.chars().count() == max_chars {
+                    lines.push(current.trim_end().to_string());
+                    current.clear();
+                }
+                current.push(character);
+            }
+        }
+        else {
+            current.push_str(word);
+        }
+    }
+    if !current.trim().is_empty() {
+        lines.push(current.trim_end().to_string());
+    }
+    if lines.is_empty() {
+        lines.push(String::new());
+    }
+    lines
+}
+
+/// Renders the net cross-reference table as paginated A4-landscape pages.
+///
+/// Each net lists its `REFERENCE.PIN` members wrapped inside the node column
+/// and the one-based sheet numbers that name it. Rows are grouped into pages by
+/// accumulated line height, never by a guessed row count, so wrapped networks
+/// cannot overflow the printable area.
+fn render_net_xref_pdf(design: &Design) -> (String, usize, usize, usize) {
+    let rows = drawings::net_xref_rows(design);
+    let nets = rows.len();
+    let mut dropped = 0usize;
+    let mut text_at = |text: &str, size: f64, x: f64, y: f64| -> String {
+        let (literal, lost) = pdf_text(text);
+        dropped += lost;
+        format!("0 0 0 rg BT /F1 {size:.1} Tf {x:.2} {y:.2} Td ({literal}) Tj ET\n")
+    };
+    let title = design.title.as_deref().map(str::trim).filter(|text| !text.is_empty()).unwrap_or(design.id.as_str());
+    let node_chars = 118usize;
+    let prepared: Vec<(String, Vec<String>, String)> = rows
+        .iter()
+        .map(|row| {
+            let node_lines = pdf_wrap_cell(&row.nodes.join(", "), node_chars);
+            let sheets = row.sheets.iter().map(usize::to_string).collect::<Vec<_>>().join(",");
+            (row.name.clone(), node_lines, sheets)
+        })
+        .collect();
+    let mut pages_rows: Vec<Vec<usize>> = Vec::new();
+    let mut current = Vec::new();
+    let mut used = 0.0;
+    for (index, (_, node_lines, _)) in prepared.iter().enumerate() {
+        let height = node_lines.len().max(1) as f64 * 11.0 + 4.0;
+        if !current.is_empty() && used + height > PDF_PAGE_HEIGHT - 150.0 {
+            pages_rows.push(std::mem::take(&mut current));
+            used = 0.0;
+        }
+        used += height;
+        current.push(index);
+    }
+    if pages_rows.is_empty() {
+        pages_rows.push(current);
+    }
+    let pages_count = pages_rows.len().max(1);
+    let mut pages = Vec::new();
+    for (page, indexes) in pages_rows.iter().enumerate() {
+        let mut content = String::new();
+        content.push_str(&format!("0.12 0.16 0.2 RG 0.4 w 0 0 {PDF_PAGE_WIDTH:.2} {PDF_PAGE_HEIGHT:.2} re S\n"));
+        content.push_str(&text_at(
+            &format!(
+                "OpenEDA {} revision {} | net cross reference (page {} of {})",
+                design.id,
+                design.revision,
+                page + 1,
+                pages_count
+            ),
+            9.0,
+            PDF_MARGIN,
+            PDF_PAGE_HEIGHT - 24.0,
+        ));
+        let header_y = PDF_PAGE_HEIGHT - 48.0;
+        content.push_str(&text_at("NET", 8.0, 40.0, header_y));
+        content.push_str(&text_at("NODES (REFERENCE.PIN)", 8.0, 120.0, header_y));
+        content.push_str(&text_at("SHEET", 8.0, 700.0, header_y));
+        content.push_str(&format!(
+            "0.12 0.16 0.2 RG 0.4 w {PDF_MARGIN:.2} {:.2} m {:.2} {:.2} l S\n",
+            header_y - 5.0,
+            PDF_PAGE_WIDTH - PDF_MARGIN,
+            header_y - 5.0
+        ));
+        let mut y = header_y - 20.0;
+        for index in indexes {
+            let (name, node_lines, sheets) = &prepared[*index];
+            content.push_str(&text_at(&clip_pdf_text(name, 11.0, 7.0), 7.0, 40.0, y));
+            for (line, text) in node_lines.iter().enumerate() {
+                content.push_str(&text_at(&clip_pdf_text(text, 72.0, 7.0), 7.0, 120.0, y - line as f64 * 10.0));
+            }
+            content.push_str(&text_at(sheets, 7.0, 700.0, y));
+            y -= node_lines.len().max(1) as f64 * 10.0 + 5.0;
+            content.push_str(&format!(
+                "0.8 0.84 0.88 RG 0.3 w {PDF_MARGIN:.2} {y:.2} m {:.2} {y:.2} l S\n",
+                PDF_PAGE_WIDTH - PDF_MARGIN
+            ));
+            y -= 3.0;
+        }
+        content.push_str(&format!(
+            "0.12 0.16 0.2 RG 0.4 w {PDF_MARGIN:.2} {PDF_CONTENT_BOTTOM:.2} m {:.2} {PDF_CONTENT_BOTTOM:.2} l S\n",
+            PDF_PAGE_WIDTH - PDF_MARGIN
+        ));
+        let footer_y = PDF_CONTENT_BOTTOM - 12.0;
+        content.push_str(&text_at(&clip_pdf_text(title, 280.0, 9.0), 9.0, PDF_MARGIN + 4.0, footer_y));
+        content.push_str(&text_at(
+            &format!("REV {}", clip_pdf_text(&design.revision.to_string(), 60.0, 9.0)),
+            9.0,
+            340.0,
+            footer_y,
+        ));
+        content.push_str(&text_at(
+            &format!("{nets} nets / {} nodes", rows.iter().map(|row| row.nodes.len()).sum::<usize>()),
+            9.0,
+            440.0,
+            footer_y,
+        ));
+        content.push_str(&text_at(&format!("page {} of {}", page + 1, pages_count), 9.0, 700.0, footer_y));
+        pages.push(content);
+    }
+    (assemble_pdf(&pages), dropped, pages_count, nets)
+}
+
+/// Clips a monospace PDF string to `width` points at `size`, appending dots so
+/// a long cell cannot run into the next column.
+fn clip_pdf_text(text: &str, width: f64, size: f64) -> String {
+    let max = (width / (size * 0.5)).floor() as usize;
+    if text.chars().count() <= max {
+        return text.to_string();
+    }
+    if max <= 3 {
+        return text.chars().take(max).collect();
+    }
+    let mut cut: String = text.chars().take(max - 3).collect();
+    cut.push_str("...");
+    cut
+}
+
 /// Builds one page content stream for one sheet.
 fn pdf_page(design: &Design, sheet: Option<&Sheet>, index: usize, total: usize, dropped: &mut usize) -> String {
     let (min_x, min_y, max_x, max_y) = match sheet {
@@ -10227,3 +10709,7 @@ mod duplicate_tests;
 #[cfg(test)]
 #[path = "../tests/unit/component_transform.rs"]
 mod component_transform_tests;
+
+#[cfg(test)]
+#[path = "../tests/unit/drawings.rs"]
+mod drawing_tests;
