@@ -8557,20 +8557,34 @@ fn svg_projection(design: &Design, sheets: &[&Sheet]) -> SvgProjection {
     ));
     for sheet in sheets {
         svg.push_str(&format!("  <g data-sheet=\"{}\">\n", escape_xml(&sheet.id)));
-        for wire in &sheet.wires {
-            svg.push_str(&format!(
-                "    <line x1=\"{:.2}\" y1=\"{:.2}\" x2=\"{:.2}\" y2=\"{:.2}\" stroke=\"#0f766e\" stroke-width=\"0.5\"/>\n",
-                wire.from[0], wire.from[1], wire.to[0], wire.to[1]
-            ));
-        }
-        for junction in &sheet.junctions {
-            svg.push_str(&format!(
-                "    <circle cx=\"{:.2}\" cy=\"{:.2}\" r=\"1.4\" fill=\"#1f2933\" data-junction=\"true\"/>\n",
-                junction.x, junction.y
-            ));
-        }
-        for flag in &sheet.no_connects {
-            svg.push_str(&format!(
+        push_svg_sheet_contents(&mut svg, sheet);
+        svg.push_str("  </g>\n");
+    }
+    push_svg_title_block(&mut svg, design, sheets, view_x, view_y, view_width, view_height);
+    svg.push_str("</svg>\n");
+    SvgProjection { document: svg, width, height }
+}
+
+/// Paints one sheet's wires, junctions, no-connect flags, net annotations,
+/// labels, texts and components into an SVG document at design coordinates.
+///
+/// Shared by the sheet projection and the multi-sheet overview drawing so both
+/// paint byte-identical primitives; the caller owns the surrounding group.
+fn push_svg_sheet_contents(svg: &mut String, sheet: &Sheet) {
+    for wire in &sheet.wires {
+        svg.push_str(&format!(
+            "    <line x1=\"{:.2}\" y1=\"{:.2}\" x2=\"{:.2}\" y2=\"{:.2}\" stroke=\"#0f766e\" stroke-width=\"0.5\"/>\n",
+            wire.from[0], wire.from[1], wire.to[0], wire.to[1]
+        ));
+    }
+    for junction in &sheet.junctions {
+        svg.push_str(&format!(
+            "    <circle cx=\"{:.2}\" cy=\"{:.2}\" r=\"1.4\" fill=\"#1f2933\" data-junction=\"true\"/>\n",
+            junction.x, junction.y
+        ));
+    }
+    for flag in &sheet.no_connects {
+        svg.push_str(&format!(
                 "    <path d=\"M {:.2} {:.2} L {:.2} {:.2} M {:.2} {:.2} L {:.2} {:.2}\" stroke=\"#b91c1c\" stroke-width=\"0.35\" fill=\"none\" data-no-connect=\"true\"/>\n",
                 flag.x - 0.7,
                 flag.y - 0.7,
@@ -8581,51 +8595,51 @@ fn svg_projection(design: &Design, sheets: &[&Sheet]) -> SvgProjection {
                 flag.x + 0.7,
                 flag.y - 0.7
             ));
-        }
-        for (net, (from, to)) in net_name_anchors(sheet) {
-            let [mid_x, mid_y] = net_name_point(sheet, from, to, &net);
-            svg.push_str(&format!(
+    }
+    for (net, (from, to)) in net_name_anchors(sheet) {
+        let [mid_x, mid_y] = net_name_point(sheet, from, to, &net);
+        svg.push_str(&format!(
                 "    <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"2.2\" text-anchor=\"middle\" fill=\"#64748b\" data-net=\"{}\">{}</text>\n",
                 mid_x,
                 mid_y,
                 escape_xml(&net),
                 escape_xml(&net)
             ));
-        }
-        for label in &sheet.labels {
-            let width = label.text.chars().count() as f64 * 2.8 * 0.6;
-            match label.scope {
-                LabelScope::Local => {
-                    svg.push_str(&format!(
+    }
+    for label in &sheet.labels {
+        let width = label.text.chars().count() as f64 * 2.8 * 0.6;
+        match label.scope {
+            LabelScope::Local => {
+                svg.push_str(&format!(
                         "    <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"2.8\" text-anchor=\"start\" fill=\"#0f766e\">{}</text>\n",
                         label.x,
                         label.y,
                         escape_xml(&label.text)
                     ));
-                    svg.push_str(&format!(
-                        "    <line x1=\"{:.2}\" y1=\"{:.2}\" x2=\"{:.2}\" y2=\"{:.2}\" stroke=\"#0f766e\" stroke-width=\"0.3\"/>\n",
-                        label.x,
-                        label.y + 0.6,
-                        label.x + width,
-                        label.y + 0.6
-                    ));
-                }
-                LabelScope::Global => {
-                    svg.push_str(&format!(
+                svg.push_str(&format!(
+                    "    <line x1=\"{:.2}\" y1=\"{:.2}\" x2=\"{:.2}\" y2=\"{:.2}\" stroke=\"#0f766e\" stroke-width=\"0.3\"/>\n",
+                    label.x,
+                    label.y + 0.6,
+                    label.x + width,
+                    label.y + 0.6
+                ));
+            }
+            LabelScope::Global => {
+                svg.push_str(&format!(
                         "    <rect x=\"{:.2}\" y=\"{:.2}\" width=\"{:.2}\" height=\"4.2\" rx=\"0.8\" fill=\"#ffffff\" stroke=\"#b91c1c\" stroke-width=\"0.35\"/>\n",
                         label.x - 0.6,
                         label.y - 3.4,
                         width + 1.2
                     ));
-                    svg.push_str(&format!(
+                svg.push_str(&format!(
                         "    <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"2.8\" text-anchor=\"start\" fill=\"#b91c1c\">{}</text>\n",
                         label.x,
                         label.y,
                         escape_xml(&label.text)
                     ));
-                }
-                LabelScope::Hierarchical => {
-                    svg.push_str(&format!(
+            }
+            LabelScope::Hierarchical => {
+                svg.push_str(&format!(
                         "    <polygon points=\"{:.2},{:.2} {:.2},{:.2} {:.2},{:.2} {:.2},{:.2} {:.2},{:.2}\" fill=\"#ffffff\" stroke=\"#15803d\" stroke-width=\"0.35\"/>\n",
                         label.x,
                         label.y + 0.8,
@@ -8638,82 +8652,87 @@ fn svg_projection(design: &Design, sheets: &[&Sheet]) -> SvgProjection {
                         label.x + width + 1.2,
                         label.y + 0.8
                     ));
-                    svg.push_str(&format!(
+                svg.push_str(&format!(
                         "    <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"2.8\" text-anchor=\"start\" fill=\"#15803d\">{}</text>\n",
                         label.x + 1.8,
                         label.y,
                         escape_xml(&label.text)
                     ));
-                }
             }
         }
-        for text in &sheet.texts {
-            svg.push_str(&format!(
-                "    <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"3.2\" text-anchor=\"start\">{}</text>\n",
-                text.x,
-                text.y,
-                escape_xml(&text.text)
-            ));
-        }
-        for component in &sheet.components {
-            let (artwork, keeps_box) = symbol_artwork(component);
-            let inside_box = keeps_box || artwork.is_empty();
-            svg.push_str(&format!(
-                "    <g transform=\"rotate({:.2} {:.2} {:.2})\" data-ref=\"{}\">\n",
-                component.rotation,
-                component.x,
-                component.y,
-                escape_xml(&component.reference)
-            ));
-            if inside_box {
-                svg.push_str(&format!(
+    }
+    for text in &sheet.texts {
+        svg.push_str(&format!(
+            "    <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"3.2\" text-anchor=\"start\">{}</text>\n",
+            text.x,
+            text.y,
+            escape_xml(&text.text)
+        ));
+    }
+    for component in &sheet.components {
+        push_svg_component(svg, component);
+    }
+}
+
+/// Paints one component symbol — body, artwork, pin stubs, reference and value
+/// — into an SVG document at its design placement.
+///
+/// Shared by the sheet projection and the symbol-library drawing; the library
+/// places a component clone at a cell centre, so the caller owns the
+/// surrounding group.
+fn push_svg_component(svg: &mut String, component: &Component) {
+    let (artwork, keeps_box) = symbol_artwork(component);
+    let inside_box = keeps_box || artwork.is_empty();
+    svg.push_str(&format!(
+        "    <g transform=\"rotate({:.2} {:.2} {:.2})\" data-ref=\"{}\">\n",
+        component.rotation,
+        component.x,
+        component.y,
+        escape_xml(&component.reference)
+    ));
+    if inside_box {
+        svg.push_str(&format!(
                     "      <rect x=\"{:.2}\" y=\"{:.2}\" width=\"{:.2}\" height=\"{:.2}\" fill=\"#f6faff\" stroke=\"#1f6feb\" stroke-width=\"0.5\"/>\n",
                     component.x - COMPONENT_HALF_WIDTH,
                     component.y - component_half_height(component),
                     COMPONENT_HALF_WIDTH * 2.0,
                     component_half_height(component) * 2.0
                 ));
-            }
-            for primitive in &artwork {
-                push_svg_symbol(&mut svg, primitive);
-            }
-            for pin in component_pins(component) {
-                svg.push_str(&format!(
-                    "      <line x1=\"{:.2}\" y1=\"{:.2}\" x2=\"{:.2}\" y2=\"{:.2}\" stroke=\"#1f6feb\" stroke-width=\"0.35\"/>\n",
-                    pin.root[0], pin.root[1], pin.end[0], pin.end[1]
-                ));
-                svg.push_str(&format!(
-                    "      <circle cx=\"{:.2}\" cy=\"{:.2}\" r=\"0.45\" fill=\"#1f6feb\"/>\n",
-                    pin.end[0], pin.end[1]
-                ));
-                let (x, anchor) = if pin.left { (pin.root[0] + 0.9, "start") } else { (pin.root[0] - 0.9, "end") };
-                let name_y = if inside_box { pin.root[1] + 0.7 } else { pin.root[1] - 1.2 };
-                svg.push_str(&format!(
+    }
+    for primitive in &artwork {
+        push_svg_symbol(svg, primitive);
+    }
+    for pin in component_pins(component) {
+        svg.push_str(&format!(
+            "      <line x1=\"{:.2}\" y1=\"{:.2}\" x2=\"{:.2}\" y2=\"{:.2}\" stroke=\"#1f6feb\" stroke-width=\"0.35\"/>\n",
+            pin.root[0], pin.root[1], pin.end[0], pin.end[1]
+        ));
+        svg.push_str(&format!(
+            "      <circle cx=\"{:.2}\" cy=\"{:.2}\" r=\"0.45\" fill=\"#1f6feb\"/>\n",
+            pin.end[0], pin.end[1]
+        ));
+        let (x, anchor) = if pin.left { (pin.root[0] + 0.9, "start") } else { (pin.root[0] - 0.9, "end") };
+        let name_y = if inside_box { pin.root[1] + 0.7 } else { pin.root[1] - 1.2 };
+        svg.push_str(&format!(
                     "      <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"{PIN_NAME_SIZE:.1}\" text-anchor=\"{anchor}\" fill=\"#334155\">{}</text>\n",
                     x,
                     name_y,
                     escape_xml(&pin.name)
                 ));
-            }
-            svg.push_str(&format!(
-                "      <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"3.2\" text-anchor=\"middle\">{}</text>\n",
-                component.x,
-                if inside_box { component.y - 0.6 } else { component.y - 4.5 },
-                escape_xml(&component.reference)
-            ));
-            svg.push_str(&format!(
-                "      <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"2.6\" text-anchor=\"middle\">{}</text>\n",
-                component.x,
-                if inside_box { component.y + 3.0 } else { component.y + 4.5 },
-                escape_xml(&component.value)
-            ));
-            svg.push_str("    </g>\n");
-        }
-        svg.push_str("  </g>\n");
     }
-    push_svg_title_block(&mut svg, design, sheets, view_x, view_y, view_width, view_height);
-    svg.push_str("</svg>\n");
-    SvgProjection { document: svg, width, height }
+    svg.push_str(&format!(
+        "      <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"3.2\" text-anchor=\"middle\">{}</text>\n",
+        component.x,
+        if inside_box { component.y - 0.6 } else { component.y - 4.5 },
+        escape_xml(&component.reference)
+    ));
+    svg.push_str(&format!(
+        "      <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"2.6\" text-anchor=\"middle\">{}</text>\n",
+        component.x,
+        if inside_box { component.y + 3.0 } else { component.y + 4.5 },
+        escape_xml(&component.value)
+    ));
+    svg.push_str("    </g>\n");
 }
 
 /// One painted net name and the segment it annotates.
