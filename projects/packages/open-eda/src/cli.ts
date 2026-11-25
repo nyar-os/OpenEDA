@@ -734,7 +734,8 @@ componentCommand
         const lines = [
             `component ${component.reference} sheet=${report.sheet.name} value=${component.value} ` +
                 `footprint=${component.footprint.length > 0 ? component.footprint : '-'} ` +
-                `at=(${component.x}, ${component.y}) rotation=${component.rotation} properties=${component.properties.length}`,
+                `at=(${component.x}, ${component.y}) rotation=${component.rotation} mirror=${component.mirror ?? '-'} ` +
+                `properties=${component.properties.length}`,
         ];
         for (const pin of report.pins) {
             lines.push(`  pin ${pin.name} nets=${pin.nets.join(',') || '-'} noConnect=${pin.noConnect}`);
@@ -987,6 +988,69 @@ componentCommand
         ctx.emitResult(
             { ...saved, revision: saved.revision, component },
             `updated ${reference} (${changed.join(', ')}) in ${file} revision=${saved.revision}`,
+        );
+        return 0;
+    });
+
+componentCommand
+    .command('rotate', 'cli.cmd.component-rotate')
+    .option('--angle <degrees>', 'cli.opt.angle')
+    .option('--sheet <sheet>', 'cli.opt.sheet')
+    .actionCtx(async (options, _args, ctx) => {
+        const file = input(options);
+        const reference = options._?.[1];
+        if (file === undefined) {
+            ctx.fail('open-eda.cli.file-required', { message: 'a design document is required' });
+            return 2;
+        }
+        if (reference === undefined || reference.trim().length === 0) {
+            ctx.fail('open-eda.cli.arguments-invalid', { message: 'a `<ref>` argument is required' });
+            return 2;
+        }
+        const angle = number(options, 'angle');
+        if (angle === undefined || Number.isNaN(angle)) {
+            ctx.fail('open-eda.cli.arguments-invalid', { message: '`--angle` is required and must be a finite number' });
+            return 2;
+        }
+        const { component, saved } = await withDesign(file, async (design) => {
+            const component = await design.rotateComponent({ sheet: text(options, 'sheet'), reference, angle });
+            return { component, saved: await savedReport(design) };
+        });
+        ctx.emitResult(
+            { ...saved, revision: saved.revision, component },
+            `rotated ${reference} by ${angle} to rotation=${component.rotation} in ${file} revision=${saved.revision}`,
+        );
+        return 0;
+    });
+
+componentCommand
+    .command('mirror', 'cli.cmd.component-mirror')
+    .option('--axis <axis>', 'cli.opt.axis')
+    .option('--sheet <sheet>', 'cli.opt.sheet')
+    .actionCtx(async (options, _args, ctx) => {
+        const file = input(options);
+        const reference = options._?.[1];
+        if (file === undefined) {
+            ctx.fail('open-eda.cli.file-required', { message: 'a design document is required' });
+            return 2;
+        }
+        if (reference === undefined || reference.trim().length === 0) {
+            ctx.fail('open-eda.cli.arguments-invalid', { message: 'a `<ref>` argument is required' });
+            return 2;
+        }
+        const axis = text(options, 'axis');
+        if (axis !== 'x' && axis !== 'y') {
+            ctx.fail('open-eda.cli.arguments-invalid', { message: '`--axis` is required and must be `x` or `y`' });
+            return 2;
+        }
+        const { component, saved } = await withDesign(file, async (design) => {
+            const component = await design.mirrorComponent({ sheet: text(options, 'sheet'), reference, axis });
+            return { component, saved: await savedReport(design) };
+        });
+        const shown = component.mirror ?? '(cleared)';
+        ctx.emitResult(
+            { ...saved, revision: saved.revision, component },
+            `mirrored ${reference} to mirror=${shown} rotation=${component.rotation} in ${file} revision=${saved.revision}`,
         );
         return 0;
     });

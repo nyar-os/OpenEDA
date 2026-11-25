@@ -87,6 +87,8 @@ export interface NativeBinding {
     design_remove_hierarchy_port(handle: number, requestJson: string): string;
     design_move_component(handle: number, requestJson: string): string;
     design_update_component(handle: number, requestJson: string): string;
+    design_rotate_component(handle: number, requestJson: string): string;
+    design_mirror_component(handle: number, requestJson: string): string;
     design_set_component_footprint(handle: number, requestJson: string): string;
     design_set_component_property(handle: number, requestJson: string): string;
     design_remove_component_property(handle: number, requestJson: string): string;

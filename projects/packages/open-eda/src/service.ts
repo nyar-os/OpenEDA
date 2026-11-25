@@ -66,6 +66,7 @@ import type {
     MergeNetsResult,
     MergeWireInput,
     MergeWireResult,
+    MirrorComponentInput,
     MoveComponentInput,
     Net,
     NetAuditReport,
@@ -87,6 +88,7 @@ import type {
     RenameNetInput,
     RenameNetResult,
     RenamePinInput,
+    RotateComponentInput,
     SaveReport,
     SetComponentPropertyInput,
     SetFootprintInput,
@@ -850,6 +852,26 @@ export function updateComponent(handle: number, input: UpdateComponentInput): Co
                 y: input.y,
                 rotation: input.rotation,
             }),
+        ),
+    );
+}
+
+/** Rotates one component by a relative angle. */
+export function rotateComponent(handle: number, input: RotateComponentInput): ComponentResult {
+    return decode<ComponentResult>(() =>
+        binding('design.rotateComponent').design_rotate_component(
+            handle,
+            JSON.stringify({ sheet: input.sheet, reference: input.reference, angle: input.angle }),
+        ),
+    );
+}
+
+/** Mirrors one component about an axis of its local frame. */
+export function mirrorComponent(handle: number, input: MirrorComponentInput): ComponentResult {
+    return decode<ComponentResult>(() =>
+        binding('design.mirrorComponent').design_mirror_component(
+            handle,
+            JSON.stringify({ sheet: input.sheet, reference: input.reference, axis: input.axis }),
         ),
     );
 }

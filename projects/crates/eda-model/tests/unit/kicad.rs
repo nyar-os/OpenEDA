@@ -27,6 +27,7 @@ fn uuids_and_library_ids_are_deterministic() {
         x: 0.0,
         y: 0.0,
         rotation: 0.0,
+        mirror: None,
         pins: vec!["1".to_string(), "2".to_string()],
         pin_types: Default::default(),
         properties: Default::default(),

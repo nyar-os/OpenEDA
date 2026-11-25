@@ -635,6 +635,51 @@ test('component custom properties persist and stay addressable', { skip: without
     }
 });
 
+test('component rotate and mirror transform, persist and undo', { skip: withoutAddon }, async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'open-eda-transform-'));
+    const document = path.join(directory, 'transform.oeda');
+    const eda = new OpenEDA();
+    try {
+        const design = await eda.create({ title: 'Transform' });
+        await design.addComponent({ reference: 'R1', value: '10k', x: 0, y: 0, pins: ['1', '2'] });
+        const turned = await design.rotateComponent({ reference: 'R1', angle: 90 });
+        assert.equal(turned.rotation, 90);
+        assert.equal(turned.mirror, undefined);
+        const before = design.revision;
+        await design.rotateComponent({ reference: 'R1', angle: 360 });
+        assert.equal((await design.listComponents())[0].rotation, 450, 'the sum is stored without wrapping');
+        await design.rotateComponent({ reference: 'R1', angle: 0 });
+        assert.equal(design.revision, before + 1, 'a zero angle adds no revision');
+        const mirrored = await design.mirrorComponent({ reference: 'R1', axis: 'x' });
+        assert.equal(mirrored.mirror, 'x');
+        const cleared = await design.mirrorComponent({ reference: 'R1', axis: 'x' });
+        assert.equal(cleared.mirror, undefined);
+        await design.mirrorComponent({ reference: 'R1', axis: 'y' });
+        const swapped = await design.mirrorComponent({ reference: 'R1', axis: 'x' });
+        assert.equal(swapped.mirror, undefined);
+        assert.equal(swapped.rotation, 630, 'the other axis becomes a half turn on top of 450');
+        await assert.rejects(
+            design.mirrorComponent({ reference: 'R1', axis: 'z' as 'x' }),
+            (error: unknown) => error instanceof OpenEDAError && error.code === 'session/argument-invalid',
+        );
+        await assert.rejects(
+            design.rotateComponent({ reference: 'R9', angle: 90 }),
+            (error: unknown) => error instanceof OpenEDAError && error.code === 'object/not-found',
+        );
+        await design.save({ target: document, overwrite: true });
+        await design.close();
+
+        const reopened = await eda.open({ path: document });
+        const persisted = (await reopened.listComponents())[0];
+        assert.equal(persisted.rotation, 630);
+        assert.equal(persisted.mirror, undefined);
+        await reopened.close();
+    } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+        await eda.dispose();
+    }
+});
+
 test('hierarchical sheet symbols and ports persist', { skip: withoutAddon }, async () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'open-eda-hierarchy-'));
     const document = path.join(directory, 'hierarchy.oeda');
@@ -1169,6 +1214,58 @@ test('wire split command edits a document and reports refusals', { skip: without
         result = run('wire', 'split', target, '--id', 'wire-1');
         assert.equal(result.status, 1, result.stdout + result.stderr);
         assert.match(result.stdout + result.stderr, /open-eda\.cli\.arguments-invalid/);
+    } finally {
+        if (copiedLocales) {
+            fs.rmSync(generatedLocales, { recursive: true, force: true });
+        }
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
+});
+
+test('component rotate and mirror commands edit a document and report refusals', { skip: withoutAddon }, () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'open-eda-cli-transform-'));
+    const target = path.join(directory, 'transform.oeda');
+    const testDirectory = path.dirname(fileURLToPath(import.meta.url));
+    const cli = fileURLToPath(new URL('../src/cli.js', import.meta.url));
+    const generatedLocales = path.resolve(testDirectory, '../locales');
+    const sourceLocales = path.resolve(testDirectory, '../../locales');
+    const copiedLocales = !fs.existsSync(generatedLocales);
+    if (copiedLocales) {
+        fs.cpSync(sourceLocales, generatedLocales, { recursive: true });
+    }
+    const run = (...args: string[]) => spawnSync(process.execPath, [cli, ...args], { encoding: 'utf8' });
+    try {
+        assert.equal(run('create', '--out', target).status, 0);
+        let result = run('component', 'add', target, '--ref', 'R1', '--value', '10k', '--x', '0', '--y', '0', '--pins', '1,2');
+        assert.equal(result.status, 0, result.stderr);
+
+        result = run('component', 'rotate', target, 'R1', '--angle', '90');
+        assert.equal(result.status, 0, result.stderr);
+        assert.match(result.stdout, /rotated R1 by 90 to rotation=90/);
+
+        result = run('component', 'mirror', target, 'R1', '--axis', 'x');
+        assert.equal(result.status, 0, result.stderr);
+        assert.match(result.stdout, /mirrored R1 to mirror=x/);
+
+        result = run('component', 'show', target, 'R1');
+        assert.equal(result.status, 0, result.stderr);
+        assert.match(result.stdout, /mirror=x/);
+
+        result = run('component', 'mirror', target, 'R1', '--axis', 'x');
+        assert.equal(result.status, 0, result.stderr);
+        assert.match(result.stdout, /mirrored R1 to mirror=\(cleared\)/);
+
+        result = run('component', 'rotate', target, 'R1');
+        assert.equal(result.status, 1, result.stdout + result.stderr);
+        assert.match(result.stdout + result.stderr, /`--angle` is required/);
+
+        result = run('component', 'mirror', target, 'R1', '--axis', 'z');
+        assert.equal(result.status, 1, result.stdout + result.stderr);
+        assert.match(result.stdout + result.stderr, /must be `x` or `y`/);
+
+        result = run('component', 'rotate', target, 'R9', '--angle', '90');
+        assert.equal(result.status, 1, result.stdout + result.stderr);
+        assert.match(result.stdout + result.stderr, /no component with reference `R9`/);
     } finally {
         if (copiedLocales) {
             fs.rmSync(generatedLocales, { recursive: true, force: true });

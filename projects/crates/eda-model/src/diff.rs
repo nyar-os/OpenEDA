@@ -324,6 +324,7 @@ fn component_view(component: &Component) -> Value {
         "x": component.x,
         "y": component.y,
         "rotation": component.rotation,
+        "mirror": component.mirror,
         "pins": component.pins,
         "pinTypes": component.pin_types,
     })
@@ -341,6 +342,7 @@ fn component_changes(before: &Component, after: &Component) -> Option<Value> {
     field("x", json!(before.x), json!(after.x));
     field("y", json!(before.y), json!(after.y));
     field("rotation", json!(before.rotation), json!(after.rotation));
+    field("mirror", json!(before.mirror), json!(after.mirror));
     field("pins", json!(before.pins), json!(after.pins));
     field("pinTypes", json!(before.pin_types), json!(after.pin_types));
     if changes.is_empty() { None } else { Some(Value::Object(changes)) }

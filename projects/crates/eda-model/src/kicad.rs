@@ -333,12 +333,19 @@ fn render_library_symbol(out: &mut String, lib_id: &str, symbol: &LibrarySymbol)
 }
 
 fn render_component(out: &mut String, design: &Design, component: &Component) {
+    // KiCad spells the model's mirror axes the same way, so the token is
+    // emitted verbatim and only when a mirror is set.
+    let mirror = match component.mirror.as_deref() {
+        Some(axis @ ("x" | "y")) => format!(" (mirror {}) ", quote(axis)),
+        _ => String::new(),
+    };
     out.push_str(&format!(
-        "  (symbol (lib_id {}) (at {} {} {}) (unit 1)\n    (in_bom yes) (on_board yes) (dnp no)\n    (uuid \"{}\")\n",
+        "  (symbol (lib_id {}) (at {} {} {}){}(unit 1)\n    (in_bom yes) (on_board yes) (dnp no)\n    (uuid \"{}\")\n",
         quote(&lib_id_for(component)),
         num(component.x),
         num(component.y),
         num(component.rotation),
+        mirror,
         uuid_for(&format!("{}:component:{}", design.id, component.id))
     ));
     out.push_str(&format!(
@@ -642,6 +649,7 @@ pub(crate) fn import_net(text: &str) -> Result<(Design, Vec<Value>), ServiceErro
                 x: 25.0 + (index % 8) as f64 * 25.0,
                 y: 25.0 + (index / 8) as f64 * 25.0,
                 rotation: 0.0,
+                mirror: None,
                 pins: Vec::new(),
                 pin_types: BTreeMap::new(),
                 properties: BTreeMap::new(),
@@ -958,7 +966,21 @@ fn read_symbol(
         losses.push(loss(MISSING_REFERENCE, format!("a symbol without a reference property was named `{fallback}`")));
         reference = fallback.to_string();
     }
-    Some(Component { id: String::new(), reference, value, footprint, x, y, rotation, pins, pin_types, properties })
+    // KiCad records a horizontal mirror as `(mirror "x")` and a vertical one
+    // as `(mirror "y")`, matching this model's axis names; anything else (for
+    // example the combined `"x,y"`) stays unmapped and is reported as a loss.
+    let mirror = match child_text(node, "mirror") {
+        Some(axis @ ("x" | "y")) => Some(axis.to_string()),
+        Some(other) => {
+            losses.push(loss(
+                UNSUPPORTED_ELEMENT,
+                format!("symbol mirror `{other}` is outside the imported subset and was skipped"),
+            ));
+            None
+        }
+        None => None,
+    };
+    Some(Component { id: String::new(), reference, value, footprint, x, y, rotation, mirror, pins, pin_types, properties })
 }
 
 fn read_wire(node: &Node, losses: &mut Vec<Value>) -> Option<([f64; 2], [f64; 2])> {

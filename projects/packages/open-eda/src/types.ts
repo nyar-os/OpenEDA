@@ -126,6 +126,8 @@ export interface DesignCapabilities {
         readonly pins: SupportLevel;
         readonly annotate: SupportLevel;
         readonly duplicate: SupportLevel;
+        readonly rotate: SupportLevel;
+        readonly mirror: SupportLevel;
     };
     /** Read-only queries that are not rule checks, such as the pin trace. */
     readonly queries: { readonly trace: SupportLevel; readonly netAudit: SupportLevel };
@@ -250,6 +252,8 @@ export interface Component {
     readonly x: number;
     readonly y: number;
     readonly rotation: number;
+    /** Mirror axis applied in the local frame before rotation; absent when unmirrored. */
+    readonly mirror?: 'x' | 'y';
     readonly pins: readonly string[];
     /** Electrical role of the typed pins, keyed by pin name; absent when no pin is typed. */
     readonly pinTypes?: Readonly<Record<string, PinType>>;
@@ -440,6 +444,8 @@ export interface ComponentDetail {
     readonly x: number;
     readonly y: number;
     readonly rotation: number;
+    /** Mirror axis applied in the local frame before rotation; null when unmirrored. */
+    readonly mirror: 'x' | 'y' | null;
     /** Custom properties sorted by key. */
     readonly properties: readonly ComponentProperty[];
 }
@@ -1310,6 +1316,22 @@ export interface UpdateComponentInput {
     readonly rotation?: number;
 }
 
+/** Input of `design.rotateComponent()`. */
+export interface RotateComponentInput {
+    readonly sheet?: SheetId;
+    readonly reference: string;
+    /** Relative rotation in degrees, added to the current rotation without wrapping. */
+    readonly angle: number;
+}
+
+/** Input of `design.mirrorComponent()`. */
+export interface MirrorComponentInput {
+    readonly sheet?: SheetId;
+    readonly reference: string;
+    /** Mirror axis in the component's local frame: `x` flips left-right, `y` flips top-bottom. */
+    readonly axis: 'x' | 'y';
+}
+
 /** Input of `design.setFootprint()`; an empty footprint clears the assignment. */
 export interface SetFootprintInput {
     readonly sheet?: SheetId;
@@ -1961,6 +1983,10 @@ export interface Design {
     moveComponent(input: MoveComponentInput): Promise<Component>;
     /** Replaces the value text of one component. */
     updateComponent(input: UpdateComponentInput): Promise<Component>;
+    /** Rotates one component by a relative angle; a zero angle changes nothing and adds no revision. */
+    rotateComponent(input: RotateComponentInput): Promise<Component>;
+    /** Mirrors one component about a local axis; the same axis clears it, the other axis adds 180 degrees. */
+    mirrorComponent(input: MirrorComponentInput): Promise<Component>;
     /** Assigns or clears the footprint of one component; the BOM and KiCad writer use it verbatim. */
     setFootprint(input: SetFootprintInput): Promise<Component>;
     /** Assigns one custom key/value property of a component; an unchanged value adds no revision. */

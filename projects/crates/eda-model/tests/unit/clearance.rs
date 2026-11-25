@@ -9,6 +9,7 @@ fn component(id: &str, reference: &str, x: f64, y: f64, rotation: f64) -> Compon
         x,
         y,
         rotation,
+        mirror: None,
         pins: vec!["1".to_string()],
         pin_types: BTreeMap::new(),
         properties: BTreeMap::new(),

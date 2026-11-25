@@ -466,6 +466,15 @@ pub struct Component {
     pub y: f64,
     /// Rotation in degrees.
     pub rotation: f64,
+    /// Mirror axis applied in the component's local frame, before rotation.
+    ///
+    /// `Some("x")` flips the symbol left-right about its own vertical centre
+    /// line, `Some("y")` flips it top-bottom about its horizontal centre line.
+    /// `None`, the field absent from the document, keeps the symbol as drawn.
+    /// The projections mirror the body artwork and the pin stubs; the reference,
+    /// value and pin-name texts stay readable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mirror: Option<String>,
     /// Pin names this component exposes.
     pub pins: Vec<String>,
     /// Electrical role of the pins that have one, keyed by pin name.
@@ -1013,11 +1022,38 @@ pub struct UpdateComponentRequest {
     pub rotation: Option<f64>,
 }
 
+/// Request of [`rotate_component`].
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RotateComponentRequest {
+    /// Target sheet id or name; the first sheet is used when omitted.
+    #[serde(default)]
+    pub sheet: Option<String>,
+    /// Reference designator of the placed component.
+    pub reference: String,
+    /// Relative rotation in degrees, added to the current rotation.
+    pub angle: f64,
+}
+
+/// Request of [`mirror_component`].
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MirrorComponentRequest {
+    /// Target sheet id or name; the first sheet is used when omitted.
+    #[serde(default)]
+    pub sheet: Option<String>,
+    /// Reference designator of the placed component.
+    pub reference: String,
+    /// Mirror axis in the component's local frame: `x` flips left-right, `y`
+    /// flips top-bottom.
+    pub axis: String,
+}
+
 /// Request of [`copy_component`].
 ///
 /// The copy stays on the source sheet, keeps the source value, footprint,
-/// rotation, pins, pin roles and custom properties, and moves by `dx`/`dy`.
-/// Net nodes, wires and no-connect flags are never copied.
+/// rotation, mirror, pins, pin roles and custom properties, and moves by
+/// `dx`/`dy`. Net nodes, wires and no-connect flags are never copied.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CopyComponentRequest {
@@ -1039,8 +1075,8 @@ pub struct CopyComponentRequest {
 /// Request of [`duplicate_component`].
 ///
 /// The duplicate stays on the source sheet, keeps the source value, footprint,
-/// rotation, pins, pin roles, custom properties and component class, and moves
-/// by `dx`/`dy`. The reference is chosen automatically as the next free number
+/// rotation, mirror, pins, pin roles, custom properties and component class,
+/// and moves by `dx`/`dy`. The reference is chosen automatically as the next free number
 /// of the source reference prefix.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1462,7 +1498,9 @@ pub struct Waiver {
 /// [`rename_pin`] exist and are covered by tests. Reference annotation is an
 /// editing surface as well: `edits.annotate` is `supported` because [`annotate`]
 /// exists and is covered by tests. Wire splitting reports `edits.wireSplit` as
-/// `supported` because [`split_wire`] exists and is covered by tests.
+/// `supported` because [`split_wire`] exists and is covered by tests. Component
+/// transforms report `edits.rotate` and `edits.mirror` as `supported` because
+/// [`rotate_component`] and [`mirror_component`] exist and are covered by tests.
 ///
 /// Read-only queries live under `queries`, next to `checks`: `queries.trace`
 /// reports the pin-to-pin path query of [`trace_pins`] and `queries.net` reports
@@ -1513,6 +1551,8 @@ pub fn capabilities() -> Value {
         "netRename": level("edit.net-rename".to_string()),
         "wireSplit": level("edit.wire-split".to_string()),
         "duplicate": level("edit.component-duplicate".to_string()),
+        "rotate": level("edit.component-rotate".to_string()),
+        "mirror": level("edit.component-mirror".to_string()),
     });
 
     let mut queries = Map::new();
@@ -1566,6 +1606,8 @@ fn capability_matrix() -> CapabilityMatrix {
     matrix.insert(Capability::new("edit.net-rename", "edit", Support::Supported));
     matrix.insert(Capability::new("edit.wire-split", "edit", Support::Supported));
     matrix.insert(Capability::new("edit.component-duplicate", "edit", Support::Supported));
+    matrix.insert(Capability::new("edit.component-rotate", "edit", Support::Supported));
+    matrix.insert(Capability::new("edit.component-mirror", "edit", Support::Supported));
     matrix.insert(Capability::new("query.component", "query", Support::Supported));
     matrix.insert(Capability::new("query.net", "query", Support::Supported));
     matrix.insert(Capability::new("query.trace", "query", Support::Supported));
@@ -2606,6 +2648,7 @@ pub fn add_component(handle: u64, request: AddComponentRequest) -> Result<Value,
             x: request.x,
             y: request.y,
             rotation: request.rotation,
+            mirror: None,
             pins: request.pins,
             pin_types: BTreeMap::new(),
             properties: BTreeMap::new(),
@@ -2621,8 +2664,8 @@ pub fn add_component(handle: u64, request: AddComponentRequest) -> Result<Value,
 /// Copies one placed component under a new reference designator.
 ///
 /// The copy stays on the source sheet, receives a fresh `component-N` identity
-/// and inherits the source value, footprint, rotation, pins, pin roles, custom
-/// properties and component class. It is placed at the source position plus
+/// and inherits the source value, footprint, rotation, mirror, pins, pin roles,
+/// custom properties and component class. It is placed at the source position plus
 /// `dx`/`dy`. Net nodes, wires and no-connect flags are never copied, so the new
 /// component starts electrically unconnected. The new reference must be unique
 /// across every sheet and reuses the duplicate error code of [`add_component`].
@@ -2662,6 +2705,7 @@ pub fn copy_component(handle: u64, request: CopyComponentRequest) -> Result<Valu
             x,
             y,
             rotation: source.rotation,
+            mirror: source.mirror,
             pins: source.pins,
             pin_types: source.pin_types,
             properties: source.properties,
@@ -2679,8 +2723,8 @@ pub fn copy_component(handle: u64, request: CopyComponentRequest) -> Result<Valu
 
 /// Duplicates one placed component on the same sheet under the next free reference.
 ///
-/// The duplicate keeps the source value, footprint, rotation, pins, pin roles,
-/// custom properties and component class, and is placed at the source position
+/// The duplicate keeps the source value, footprint, rotation, mirror, pins,
+/// pin roles, custom properties and component class, and is placed at the source position
 /// plus `dx`/`dy`. Its reference is derived from the leading ASCII letters of
 /// the source reference and takes the smallest positive number that no sheet
 /// already uses with that prefix, so `R1` in a design holding `R1` and `R3`
@@ -2735,6 +2779,7 @@ pub fn duplicate_component(handle: u64, request: DuplicateComponentRequest) -> R
             x,
             y,
             rotation: source.rotation,
+            mirror: source.mirror,
             pins: source.pins,
             pin_types: source.pin_types,
             properties: source.properties,
@@ -2881,6 +2926,90 @@ pub fn update_component(handle: u64, request: UpdateComponentRequest) -> Result<
         design.revision += 1;
         let mut payload = Map::new();
         payload.insert("component".to_string(), json!(component));
+        Ok(payload)
+    })
+}
+
+/// Rotates one placed component by a relative angle.
+///
+/// The angle is added to the current rotation and the sum is stored exactly as
+/// computed, without wrapping (`450` stays `450`), so repeated turns accumulate
+/// predictably. A non-finite angle, or an angle that would overflow the stored
+/// rotation, is refused (`session/argument-invalid`). A zero angle changes
+/// nothing: the revision stays put, no undo step is recorded and the payload
+/// reports `changed: false`. The reference must be placed on the sheet
+/// (`object/not-found`). One turn that changes the rotation adds exactly one
+/// revision.
+pub fn rotate_component(handle: u64, request: RotateComponentRequest) -> Result<Value, ServiceError> {
+    if !request.angle.is_finite() {
+        return Err(ServiceError::new("session/argument-invalid", "component rotation must be a finite number"));
+    }
+    mutate(handle, |design| {
+        let index = sheet_index(design, request.sheet.as_deref())?;
+        let sheet = &mut design.sheets[index];
+        let component =
+            sheet.components.iter_mut().find(|component| component.reference == request.reference).ok_or_else(|| {
+                not_found(format!("no component with reference `{}` is placed on this sheet", request.reference))
+            })?;
+        let rotation = component.rotation + request.angle;
+        if !rotation.is_finite() {
+            return Err(ServiceError::new("session/argument-invalid", "component rotation must be a finite number"));
+        }
+        let changed = rotation != component.rotation;
+        component.rotation = rotation;
+        let component = component.clone();
+        if changed {
+            design.revision += 1;
+        }
+        let mut payload = Map::new();
+        payload.insert("component".to_string(), json!(component));
+        payload.insert("changed".to_string(), json!(changed));
+        Ok(payload)
+    })
+}
+
+/// Mirrors one placed component about an axis of its local frame.
+///
+/// The mirror is applied before the rotation, in the component's own frame:
+/// `x` flips the symbol left-right about its vertical centre line, `y` flips it
+/// top-bottom about its horizontal centre line. Requesting the axis the
+/// component already mirrors clears the mirror; requesting the other axis
+/// replaces it and adds 180 degrees, the exact rotational equivalent of
+/// flipping the second axis on top of the first. Every call changes the
+/// document, so one call adds exactly one revision. An axis other than `x` or
+/// `y` is refused (`session/argument-invalid`), as is a component the sheet
+/// does not place (`object/not-found`).
+pub fn mirror_component(handle: u64, request: MirrorComponentRequest) -> Result<Value, ServiceError> {
+    if request.axis != "x" && request.axis != "y" {
+        return Err(ServiceError::new(
+            "session/argument-invalid",
+            format!("mirror axis `{}` must be `x` or `y`", request.axis),
+        ));
+    }
+    mutate(handle, |design| {
+        let index = sheet_index(design, request.sheet.as_deref())?;
+        let sheet = &mut design.sheets[index];
+        let component =
+            sheet.components.iter_mut().find(|component| component.reference == request.reference).ok_or_else(|| {
+                not_found(format!("no component with reference `{}` is placed on this sheet", request.reference))
+            })?;
+        let (mirror, extra) = match component.mirror.as_deref() {
+            Some(current) if current == request.axis => (None, 0.0),
+            Some(_) => (None, 180.0),
+            None => (Some(request.axis.clone()), 0.0),
+        };
+        let rotation = component.rotation + extra;
+        if !rotation.is_finite() {
+            return Err(ServiceError::new("session/argument-invalid", "component rotation must be a finite number"));
+        }
+        component.mirror = mirror;
+        component.rotation = rotation;
+        let component = component.clone();
+        design.revision += 1;
+        let mut payload = Map::new();
+        payload.insert("component".to_string(), json!(component.clone()));
+        payload.insert("mirror".to_string(), json!(component.mirror));
+        payload.insert("changed".to_string(), json!(true));
         Ok(payload)
     })
 }
@@ -5818,6 +5947,12 @@ fn validate_design(design: &Design) -> Result<(), ServiceError> {
             if !component.x.is_finite() || !component.y.is_finite() || !component.rotation.is_finite() {
                 return Err(invalid(format!("component `{}` has a non-finite coordinate", component.reference)));
             }
+            if let Some(axis) = &component.mirror
+                && axis != "x"
+                && axis != "y"
+            {
+                return Err(invalid(format!("component `{}` mirror axis `{axis}` must be `x` or `y`", component.reference)));
+            }
             for pin in component.pin_types.keys() {
                 if !component.pins.iter().any(|declared| declared == pin) {
                     return Err(invalid(format!("component `{}` types missing pin `{pin}`", component.reference)));
@@ -7068,6 +7203,7 @@ pub fn component_report(handle: u64, reference: &str) -> Result<Value, ServiceEr
                 "x": component.x,
                 "y": component.y,
                 "rotation": component.rotation,
+                "mirror": component.mirror,
                 "properties": properties,
             },
             "pins": pins,
@@ -8236,17 +8372,33 @@ fn component_half_height(component: &Component) -> f64 {
     COMPONENT_HALF_HEIGHT.max(rows * PIN_PITCH / 2.0 + PIN_PITCH)
 }
 
+/// Mirrors one local point about the component centre, before rotation.
+///
+/// `x` flips left-right about the vertical centre line, `y` flips top-bottom
+/// about the horizontal one; any other value, including `None`, keeps the
+/// point. The projections feed body artwork and pin stubs through this helper
+/// so a mirrored symbol draws flipped while its texts stay readable.
+fn mirror_local(component: &Component, point: [f64; 2]) -> [f64; 2] {
+    match component.mirror.as_deref() {
+        Some("x") => [2.0 * component.x - point[0], point[1]],
+        Some("y") => [point[0], 2.0 * component.y - point[1]],
+        _ => point,
+    }
+}
+
 /// Pins of one symbol, split over the left and right sides on a fixed pitch.
 ///
 /// The model stores pin names only, so the projection owns this layout. Left
 /// pins take the first half of the list, right pins the rest, and every stub is
 /// [`PIN_LENGTH`] long so wires can attach to [`PinShape::end`] without
-/// overlapping the body.
+/// overlapping the body. A component mirrored on `x` swaps the two sides, so
+/// the [`PinShape::left`] flag and the stub directions follow the mirror.
 fn component_pins(component: &Component) -> Vec<PinShape> {
     let count = component.pins.len();
     if count == 0 {
         return Vec::new();
     }
+    let flipped = component.mirror.as_deref() == Some("x");
     let left_count = count.div_ceil(2);
     let right_count = count - left_count;
     let mut pins = Vec::with_capacity(count);
@@ -8258,7 +8410,9 @@ fn component_pins(component: &Component) -> Vec<PinShape> {
         let y = component.y + offset;
         let root_x = if left { component.x - COMPONENT_HALF_WIDTH } else { component.x + COMPONENT_HALF_WIDTH };
         let end_x = if left { root_x - PIN_LENGTH } else { root_x + PIN_LENGTH };
-        pins.push(PinShape { name: name.clone(), end: [end_x, y], root: [root_x, y], left });
+        let root = mirror_local(component, [root_x, y]);
+        let end = mirror_local(component, [end_x, y]);
+        pins.push(PinShape { name: name.clone(), end, root, left: left != flipped });
     }
     pins
 }
@@ -8388,13 +8542,34 @@ fn symbol_class(component: &Component) -> SymbolClass {
     }
 }
 
+/// Body artwork for one symbol, with the component's mirror applied.
+///
+/// Every primitive point is fed through [`mirror_local`] so a mirrored symbol
+/// draws flipped in the same local frame [`component_pins`] uses; the rotation
+/// itself stays with the callers, which apply [`rotate_about`] or an SVG
+/// `rotate` group exactly as before.
+fn symbol_artwork(component: &Component) -> (Vec<SymbolPrimitive>, bool) {
+    let (mut primitives, keeps_box) = symbol_artwork_unmirrored(component);
+    if component.mirror.is_some() {
+        for primitive in &mut primitives {
+            let points = match primitive {
+                SymbolPrimitive::Stroke(points) | SymbolPrimitive::Fill(points) => points,
+            };
+            for point in points {
+                *point = mirror_local(component, *point);
+            }
+        }
+    }
+    (primitives, keeps_box)
+}
+
 /// Body artwork for one symbol class, in unrotated design units centred on
 /// the component origin, and whether the generic box is still painted.
 ///
 /// The two-pin bodies and their leads span about ten grid units between the
 /// [`PIN_LENGTH`] stub roots, so the stubs and their [`PinShape::end`]
 /// connection points stay exactly as [`component_pins`] places them.
-fn symbol_artwork(component: &Component) -> (Vec<SymbolPrimitive>, bool) {
+fn symbol_artwork_unmirrored(component: &Component) -> (Vec<SymbolPrimitive>, bool) {
     let cx = component.x;
     let cy = component.y;
     let left_root = [cx - COMPONENT_HALF_WIDTH, cy];
@@ -9980,3 +10155,7 @@ mod dangling_tests;
 #[cfg(test)]
 #[path = "../tests/unit/duplicate.rs"]
 mod duplicate_tests;
+
+#[cfg(test)]
+#[path = "../tests/unit/component_transform.rs"]
+mod component_transform_tests;

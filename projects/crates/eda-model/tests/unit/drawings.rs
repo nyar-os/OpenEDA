@@ -12,6 +12,7 @@ fn component(reference: &str, value: &str, x: f64, y: f64, pins: &[&str]) -> Com
         x,
         y,
         rotation: 0.0,
+        mirror: None,
         pins: pins.iter().map(|pin| pin.to_string()).collect(),
         pin_types: BTreeMap::new(),
         properties: BTreeMap::new(),

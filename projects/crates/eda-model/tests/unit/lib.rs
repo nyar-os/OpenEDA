@@ -96,6 +96,8 @@ fn capability_matrix_reports_only_the_implemented_entries() {
     assert_eq!(matrix["edits"]["netRename"], "supported");
     assert_eq!(matrix["edits"]["wireSplit"], "supported");
     assert_eq!(matrix["edits"]["duplicate"], "supported");
+    assert_eq!(matrix["edits"]["rotate"], "supported");
+    assert_eq!(matrix["edits"]["mirror"], "supported");
     assert_eq!(matrix["queries"]["component"], "supported");
     assert_eq!(matrix["queries"]["net"], "supported");
     assert_eq!(matrix["queries"]["trace"], "supported");
@@ -639,6 +641,7 @@ fn duplicate_references_are_an_inspection_finding() {
                     x: 0.0,
                     y: 0.0,
                     rotation: 0.0,
+                    mirror: None,
                     pins: vec!["1".to_string()],
                     pin_types: BTreeMap::new(),
                     properties: BTreeMap::new(),
@@ -651,6 +654,7 @@ fn duplicate_references_are_an_inspection_finding() {
                     x: 10.0,
                     y: 0.0,
                     rotation: 0.0,
+                    mirror: None,
                     pins: vec!["1".to_string()],
                     pin_types: BTreeMap::new(),
                     properties: BTreeMap::new(),
@@ -684,6 +688,7 @@ fn inspection_component(id: &str, reference: &str, x: f64, y: f64) -> Component 
         x,
         y,
         rotation: 0.0,
+        mirror: None,
         pins: vec!["1".to_string()],
         pin_types: BTreeMap::new(),
         properties: BTreeMap::new(),
@@ -856,6 +861,7 @@ fn inspection_applies_severity_overrides_and_waivers() {
                 x: 0.0,
                 y: 0.0,
                 rotation: 0.0,
+                mirror: None,
                 pins: vec!["1".to_string(), "2".to_string(), "3".to_string(), "4".to_string()],
                 pin_types: BTreeMap::new(),
                 properties: BTreeMap::new(),
@@ -1980,6 +1986,7 @@ fn open_rejects_unknown_tags_versions_and_inconsistent_documents() {
                 x: 0.0,
                 y: 0.0,
                 rotation: 0.0,
+                mirror: None,
                 pins: vec!["1".to_string()],
                 pin_types: BTreeMap::new(),
                 properties: BTreeMap::new(),
@@ -3474,6 +3481,7 @@ fn connectivity_report_flags_single_node_and_dangling_nets_without_mutating() {
                 x: 0.0,
                 y: 0.0,
                 rotation: 0.0,
+                mirror: None,
                 pins: vec!["1".to_string(), "2".to_string()],
                 pin_types: BTreeMap::new(),
                 properties: BTreeMap::new(),
@@ -3571,6 +3579,7 @@ fn component_report_lists_pins_nets_properties_and_no_connect() {
             "x": 12.5,
             "y": -3.0,
             "rotation": 90.0,
+            "mirror": null,
             "properties": [
                 { "key": "Datasheet", "value": "DS-1" },
                 { "key": "MPN", "value": "BUF42" },
@@ -4222,6 +4231,7 @@ fn inspection_flags_duplicate_pins_and_dangling_nets() {
                 x: 0.0,
                 y: 0.0,
                 rotation: 0.0,
+                mirror: None,
                 pins: vec!["1".to_string(), "1".to_string(), "2".to_string()],
                 pin_types: BTreeMap::new(),
                 properties: BTreeMap::new(),
@@ -4272,6 +4282,7 @@ fn inspection_rejects_names_that_break_the_node_and_net_grammar() {
                     x: 0.0,
                     y: 0.0,
                     rotation: 0.0,
+                    mirror: None,
                     pins: vec!["1".to_string(), "2".to_string()],
                     pin_types: BTreeMap::new(),
                     properties: BTreeMap::new(),
@@ -4284,6 +4295,7 @@ fn inspection_rejects_names_that_break_the_node_and_net_grammar() {
                     x: 10.0,
                     y: 0.0,
                     rotation: 0.0,
+                    mirror: None,
                     pins: vec!["1.2".to_string()],
                     pin_types: BTreeMap::new(),
                     properties: BTreeMap::new(),
@@ -4341,6 +4353,7 @@ fn nets_check_reports_bus_member_collisions() {
                 x: 0.0,
                 y: 0.0,
                 rotation: 0.0,
+                mirror: None,
                 pins: vec!["1".to_string(), "2".to_string()],
                 pin_types: BTreeMap::new(),
                 properties: BTreeMap::new(),
@@ -4398,6 +4411,7 @@ fn nets_check_reports_two_nets_resolving_to_one_bus_through_an_alias() {
                 x: 0.0,
                 y: 0.0,
                 rotation: 0.0,
+                mirror: None,
                 pins: vec!["1".to_string(), "2".to_string()],
                 pin_types: BTreeMap::new(),
                 properties: BTreeMap::new(),

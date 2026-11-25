@@ -10,6 +10,7 @@ fn component(id: &str, reference: &str, value: &str) -> Component {
         x: 10.0,
         y: 20.0,
         rotation: 0.0,
+        mirror: None,
         pins: vec!["1".to_string(), "2".to_string()],
         pin_types: BTreeMap::new(),
         properties: BTreeMap::new(),

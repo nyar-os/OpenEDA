@@ -458,6 +458,7 @@ pub(crate) fn render_symbol_library(design: &Design) -> SymbolLibrary {
         placed.x = cell_x + cell_width / 2.0;
         placed.y = cell_y + (cell_height - 6.0) / 2.0;
         placed.rotation = 0.0;
+        placed.mirror = None;
         push_svg_component(&mut svg, &placed);
         svg.push_str(&format!(
             "      <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"2.2\" text-anchor=\"middle\" fill=\"#64748b\">{}</text>\n",

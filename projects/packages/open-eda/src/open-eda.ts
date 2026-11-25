@@ -72,6 +72,7 @@ import type {
     MergeNetsResult,
     MergeWireInput,
     MergeWireResult,
+    MirrorComponentInput,
     MoveComponentInput,
     Net,
     NetAuditReport,
@@ -94,6 +95,7 @@ import type {
     RenameNetInput,
     RenameNetResult,
     RenamePinInput,
+    RotateComponentInput,
     SaveOptions,
     SaveReport,
     SetComponentPropertyInput,
@@ -627,6 +629,16 @@ function attach(opened: service.DesignHandle, options: AttachOptions): Design {
         },
         async updateComponent(input: UpdateComponentInput): Promise<Component> {
             const result = await mutate(() => service.updateComponent(handle, input));
+            current = result.design;
+            return result.component;
+        },
+        async rotateComponent(input: RotateComponentInput): Promise<Component> {
+            const result = await mutate(() => service.rotateComponent(handle, input));
+            current = result.design;
+            return result.component;
+        },
+        async mirrorComponent(input: MirrorComponentInput): Promise<Component> {
+            const result = await mutate(() => service.mirrorComponent(handle, input));
             current = result.design;
             return result.component;
         },

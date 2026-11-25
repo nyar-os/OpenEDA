@@ -25,10 +25,11 @@ use open_eda_model::{
     AddBusRequest, AddComponentRequest, AddHierarchyPortRequest, AddHierarchyRequest, AddJunctionRequest, AddLabelRequest,
     AddNoConnectRequest, AddPinRequest, AddTextRequest, AddWireRequest, ComponentClassRequest, ConnectNetRequest,
     CopyComponentRequest, CreateRequest, DeleteNetRequest, DisconnectNetRequest, DuplicateComponentRequest, InspectOptions,
-    MergeNetsRequest, MoveComponentRequest, NetClassRequest, ReferencePrefixRequest, RemoveComponentPropertyRequest,
-    RemoveHierarchyPortRequest, RemovePinRequest, RenameNetRequest, RenamePinRequest, ServiceError,
-    SetComponentPropertyRequest, SetFootprintRequest, SetPinTypeRequest, SplitWireRequest, SwapPinsRequest, TranslateRequest,
-    UpdateComponentRequest, UpdateDesignRequest, UpdateLabelRequest, UpdateTextRequest, UpdateWireRequest,
+    MergeNetsRequest, MirrorComponentRequest, MoveComponentRequest, NetClassRequest, ReferencePrefixRequest,
+    RemoveComponentPropertyRequest, RemoveHierarchyPortRequest, RemovePinRequest, RenameNetRequest, RenamePinRequest,
+    RotateComponentRequest, ServiceError, SetComponentPropertyRequest, SetFootprintRequest, SetPinTypeRequest,
+    SplitWireRequest, SwapPinsRequest, TranslateRequest, UpdateComponentRequest, UpdateDesignRequest, UpdateLabelRequest,
+    UpdateTextRequest, UpdateWireRequest,
 };
 use serde_json::{Value, json};
 use wae::{
@@ -768,6 +769,24 @@ fn design_update_component(ctx: CallContext) -> Result<JsValue> {
     respond(&ctx, &report)
 }
 
+/// Rotates one placed component by a relative angle.
+#[function]
+fn design_rotate_component(ctx: CallContext) -> Result<JsValue> {
+    let handle = handle(&ctx, 0)?;
+    let request: RotateComponentRequest = decode(serde_json::from_str(&text(&ctx, 1)?))?;
+    let report = open_eda_model::rotate_component(handle, request).map_err(fail)?;
+    respond(&ctx, &report)
+}
+
+/// Mirrors one placed component about a local axis.
+#[function]
+fn design_mirror_component(ctx: CallContext) -> Result<JsValue> {
+    let handle = handle(&ctx, 0)?;
+    let request: MirrorComponentRequest = decode(serde_json::from_str(&text(&ctx, 1)?))?;
+    let report = open_eda_model::mirror_component(handle, request).map_err(fail)?;
+    respond(&ctx, &report)
+}
+
 /// Assigns or clears the footprint text of one placed component.
 #[function]
 fn design_set_component_footprint(ctx: CallContext) -> Result<JsValue> {
@@ -1307,6 +1326,32 @@ impl IpcHandler for DesignIpcHandler {
                     match serde_json::from_value::<UpdateComponentRequest>(request) {
                         Ok(request) => match open_eda_model::update_component(handle, request) {
                             Ok(payload) => reply(id, "updateComponentResult", payload),
+                            Err(error) => failed(id, &error),
+                        },
+                        Err(error) => failure(id, "error", format!("session/argument-invalid: {error}")),
+                    }
+                }
+                Err(message) => failure(id, "error", message),
+            },
+            "design.rotateComponent" => match ipc_handle(&value) {
+                Ok(handle) => {
+                    let request = value.get("request").cloned().unwrap_or(Value::Null);
+                    match serde_json::from_value::<RotateComponentRequest>(request) {
+                        Ok(request) => match open_eda_model::rotate_component(handle, request) {
+                            Ok(payload) => reply(id, "rotateComponentResult", payload),
+                            Err(error) => failed(id, &error),
+                        },
+                        Err(error) => failure(id, "error", format!("session/argument-invalid: {error}")),
+                    }
+                }
+                Err(message) => failure(id, "error", message),
+            },
+            "design.mirrorComponent" => match ipc_handle(&value) {
+                Ok(handle) => {
+                    let request = value.get("request").cloned().unwrap_or(Value::Null);
+                    match serde_json::from_value::<MirrorComponentRequest>(request) {
+                        Ok(request) => match open_eda_model::mirror_component(handle, request) {
+                            Ok(payload) => reply(id, "mirrorComponentResult", payload),
                             Err(error) => failed(id, &error),
                         },
                         Err(error) => failure(id, "error", format!("session/argument-invalid: {error}")),
@@ -1857,6 +1902,8 @@ register_module![
     design_remove_hierarchy_port,
     design_move_component,
     design_update_component,
+    design_rotate_component,
+    design_mirror_component,
     design_set_component_footprint,
     design_set_component_property,
     design_remove_component_property,
