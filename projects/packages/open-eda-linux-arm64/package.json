@@ -1,6 +1,6 @@
 {
     "name": "@wae/open-eda-linux-arm64",
-    "version": "0.0.8",
+    "version": "0.0.9",
     "description": "Linux arm64 native addon for @wae/open-eda",
     "license": "MPL-2.0",
     "os": [
