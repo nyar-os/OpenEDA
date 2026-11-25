@@ -1360,3 +1360,271 @@ fn sheet_overview_scales_labels_without_overlap_or_page_overflow() {
     assert_texts_apart(&texts, "sheet overview");
     assert_eq!(svg, render_sheet_overview(&design).svg, "the thumbnail layout is deterministic");
 }
+
+/// Every SVG drawing plus the base schematic export, labelled for assertions.
+fn all_svg_exports(design: &Design) -> Vec<(&'static str, String)> {
+    let sheets: Vec<&Sheet> = design.sheets.iter().collect();
+    vec![
+        ("block diagram", render_block_diagram(design).svg),
+        ("sheet overview", render_sheet_overview(design).svg),
+        ("pinout chart", render_pinout_chart(design).svg),
+        ("symbol library", render_symbol_library(design).svg),
+        ("net topology", render_net_topology(design).svg),
+        ("power distribution", render_power_distribution(design).svg),
+        ("bom", render_bom_drawing(design).svg),
+        ("net xref", render_net_xref(design).svg),
+        ("hierarchy", render_hierarchy(design).svg),
+        ("erc", render_erc(design).svg),
+        ("schematic svg", crate::render_svg_for(design, &sheets)),
+    ]
+}
+
+/// Every text tag that carries `needle` anywhere in its attributes.
+fn tags_with(fragment: &str, needle: &str) -> Vec<String> {
+    let mut tags = Vec::new();
+    let mut rest = fragment;
+    while let Some(at) = rest.find(needle) {
+        let start = rest[..at].rfind('<').expect("tag start");
+        let end = start + rest[start..].find('>').expect("tag end");
+        tags.push(rest[start..end].to_string());
+        rest = &rest[end..];
+    }
+    tags
+}
+
+#[test]
+fn all_exports_use_a4_with_an_inner_frame_and_keep_content_inside_it() {
+    let design = sample_design();
+    for (name, svg) in all_svg_exports(&design) {
+        assert_eq!(view_box(&svg), [0.0, 0.0, 297.0, 210.0], "{name} is A4 landscape");
+        assert_eq!(occurrences(&svg, r#"data-title-block="true""#), 1, "{name} has one title block");
+        assert_eq!(occurrences(&svg, r#"data-drawing=""#), 1, "{name} has one fitted content group");
+        let frames = rects_with(&svg, r#"data-page-frame="true""#);
+        assert_eq!(frames.len(), 1, "{name} paints exactly one inner frame");
+        let frame = frames[0];
+        assert!((frame[0] - 23.76).abs() < 0.1 && (frame[1] - 16.80).abs() < 0.1, "{name} inner frame origin: {frame:?}");
+        assert!((frame[2] - 273.24).abs() < 0.1 && (frame[3] - 171.20).abs() < 0.1, "{name} inner frame size: {frame:?}");
+
+        let page = page(&svg);
+        let content = [
+            page.translate.0,
+            page.translate.1,
+            page.translate.0 + page.content_size.0 * page.scale,
+            page.translate.1 + page.content_size.1 * page.scale,
+        ];
+        assert!(
+            content[0] >= frame[0] - 1.0
+                && content[1] >= frame[1] - 1.0
+                && content[2] <= frame[2] + 1.0
+                && content[3] <= frame[3] + 1.0,
+            "{name} fitted content leaves the inner frame: {content:?} vs {frame:?}"
+        );
+
+        // The title block deliberately sits below the frame, so only compare
+        // texts above it.
+        let texts: Vec<PlacedText> = placed_texts(&svg).into_iter().filter(|run| run.bounds[3] <= frame[3] + 1.0).collect();
+        for placed in &texts {
+            let bounds = placed.bounds;
+            assert!(
+                bounds[0] >= frame[0] - 1.0
+                    && bounds[1] >= frame[1] - 1.0
+                    && bounds[2] <= frame[2] + 1.0
+                    && bounds[3] <= frame[3] + 1.0,
+                "{name} paints `{}` outside the inner frame {frame:?} at {bounds:?}",
+                placed.text
+            );
+        }
+    }
+}
+
+#[test]
+fn no_svg_export_truncates_text_with_an_ellipsis() {
+    let design = sample_design();
+    for (name, svg) in all_svg_exports(&design) {
+        assert!(!svg.contains("..."), "{name} truncates text with an ellipsis");
+    }
+}
+
+#[test]
+fn table_text_stays_inside_its_declared_cell() {
+    let mut erc_design = sample_design();
+    erc_design.sheets[0].components.push(component("U1", "DUPLICATE", 10.0, 10.0, &["1"]));
+    let drawings = [
+        ("bom", render_bom_drawing(&sample_design()).svg),
+        ("net xref", render_net_xref(&sample_design()).svg),
+        ("erc", render_erc(&erc_design).svg),
+    ];
+    for (name, svg) in &drawings {
+        let page = page(svg);
+        let mut checked = 0;
+        for run in text_runs(&page.content) {
+            let Some(left) = attribute(&run.attributes, " data-cell-left=\"")
+            else {
+                continue;
+            };
+            let width = attribute(&run.attributes, " data-cell-width=\"").expect("cell width");
+            let bounds = text_box(&run, (0.0, 0.0), 1.0);
+            assert!(
+                bounds[0] >= left - 0.1 && bounds[2] <= left + width + 0.1,
+                "{name} paints `{}` outside its cell [{left:.2}, {:.2}]: {bounds:?}",
+                run.text,
+                left + width
+            );
+            checked += 1;
+        }
+        assert!(checked > 0, "{name} paints table text with cell metadata");
+    }
+}
+
+#[test]
+fn erc_report_fills_the_page_without_a_sparse_position_column() {
+    let mut design = sample_design();
+    for index in 0..24 {
+        design.sheets[0].components.push(component(&format!("X{index:02}"), "1k", 10.0 + index as f64, 10.0, &["1"]));
+    }
+    // Remove coordinates so the POSITION column would be mostly blank.
+    for sheet in &mut design.sheets {
+        sheet.wires.clear();
+    }
+    let drawing = render_erc(&design);
+    let page = page(&drawing.svg);
+    assert!(drawing.findings > 18, "enough findings to fill the table");
+    assert!(!page.content.contains("POSITION"), "a sparse position column is dropped");
+    assert!(
+        page.scale > 0.95,
+        "the report is not shrunk into unreadability (scale {:.3}, content {:?})",
+        page.scale,
+        page.content_size
+    );
+    let height = page.content_size.1 * page.scale;
+    assert!(height >= drawable().1 * 0.9, "the report only covers {:.0}% of the page height", height / drawable().1 * 100.0);
+    assert!(!page.content.contains("..."), "long descriptions wrap instead of truncating");
+}
+
+#[test]
+fn net_topology_marks_every_unrelated_crossing_with_a_hop_and_real_junctions() {
+    let design = sample_design();
+    let page = page(&render_net_topology(&design).svg);
+
+    let trunks: Vec<(f64, f64, f64)> = tags_with(&page.content, r#"data-trunk="true""#)
+        .iter()
+        .map(|tag| {
+            (
+                attribute(tag, " x1=\"").expect("trunk x"),
+                attribute(tag, " y1=\"").expect("trunk top"),
+                attribute(tag, " y2=\"").expect("trunk bottom"),
+            )
+        })
+        .collect();
+    assert!(!trunks.is_empty(), "the topology paints vertical trunks");
+
+    let mut taps: BTreeMap<(String, i64), (f64, f64)> = BTreeMap::new();
+    for tag in tags_with(&page.content, r#"data-net=""#) {
+        let Some(net) = tag_text(&tag, "data-net=\"")
+        else {
+            continue;
+        };
+        if tag.starts_with("<line ") {
+            let (Some(x1), Some(y1), Some(x2), Some(y2)) =
+                (attribute(&tag, " x1=\""), attribute(&tag, " y1=\""), attribute(&tag, " x2=\""), attribute(&tag, " y2=\""))
+            else {
+                continue;
+            };
+            if (y1 - y2).abs() > 0.01 {
+                continue;
+            }
+            let entry = taps.entry((net.to_string(), (y1 * 100.0).round() as i64)).or_insert((x1.min(x2), x1.max(x2)));
+            entry.0 = entry.0.min(x1).min(x2);
+            entry.1 = entry.1.max(x1).max(x2);
+        }
+        else if tag.starts_with("<path ") {
+            let at = tag_text(&tag, "data-hop-at=\"").expect("hop point");
+            let mut numbers = at.split_whitespace().map(|number| number.parse::<f64>().expect("hop number"));
+            let x = numbers.next().expect("hop x");
+            let y = numbers.next().expect("hop y");
+            let entry = taps.entry((net.to_string(), (y * 100.0).round() as i64)).or_insert((x - 0.9, x + 0.9));
+            entry.0 = entry.0.min(x - 0.9);
+            entry.1 = entry.1.max(x + 0.9);
+        }
+    }
+
+    let mut junctions: BTreeMap<(String, i64), f64> = BTreeMap::new();
+    for tag in tags_with(&page.content, r#"data-junction="true""#) {
+        let net = tag_text(&tag, "data-net=\"").expect("junction net");
+        let x = attribute(&tag, " cx=\"").expect("junction x");
+        let y = attribute(&tag, " cy=\"").expect("junction y");
+        junctions.insert((net.to_string(), (y * 100.0).round() as i64), x);
+    }
+
+    let mut hops: Vec<(f64, f64)> = Vec::new();
+    for tag in tags_with(&page.content, "data-hop-at=\"") {
+        let at = tag_text(&tag, "data-hop-at=\"").expect("hop");
+        let mut numbers = at.split_whitespace().map(|number| number.parse::<f64>().expect("hop number"));
+        hops.push((numbers.next().expect("hop x"), numbers.next().expect("hop y")));
+    }
+
+    let mut crossings = 0;
+    for ((net, y_key), (min_x, max_x)) in &taps {
+        let y = *y_key as f64 / 100.0;
+        let destination = junctions
+            .get(&(net.clone(), *y_key))
+            .unwrap_or_else(|| panic!("net {net} at y={y:.2} has no junction at its trunk"));
+        assert!(
+            trunks.iter().any(|(x, top, bottom)| (x - destination).abs() < 0.05 && *top <= y && y <= *bottom),
+            "junction for {net} at y={y:.2} is not on a trunk"
+        );
+        for (x, top, bottom) in &trunks {
+            if (x - destination).abs() < 0.05 || *x <= min_x + 0.05 || *x >= max_x - 0.05 || y < *top || y > *bottom {
+                continue;
+            }
+            crossings += 1;
+            assert!(
+                hops.iter().any(|(hop_x, hop_y)| (*hop_x - x).abs() < 0.05 && (*hop_y - y).abs() < 0.05),
+                "net {net} crosses trunk x={x:.2} at y={y:.2} without a hop"
+            );
+        }
+    }
+    assert!(crossings > 0, "the sample topology has crossings");
+    assert!(!hops.is_empty(), "crossings paint hop arcs");
+}
+
+#[test]
+fn symbol_library_keeps_every_pin_name_without_truncation() {
+    let design = sample_design();
+    let page = page(&render_symbol_library(&design).svg);
+    assert!(!page.content.contains("..."), "pin lists are wrapped, never elided");
+    for pin in ["IO1", "IO2", "VCC", "GND"] {
+        assert!(page.content.contains(pin), "the complete pin list still contains {pin}");
+    }
+    assert_eq!(occurrences(&page.content, "PINS:"), 6, "one complete pin list per distinct symbol");
+    let cells = group_rects(&page.content, "data-symbol=\"");
+    assert_eq!(cells.len(), 6);
+    assert_no_overlap(&cells, "symbol cards");
+    assert!(
+        page.content_size.0 * page.scale >= drawable().0 * 0.95 && page.content_size.1 * page.scale >= drawable().1 * 0.95,
+        "the symbol cards fill the drawable area"
+    );
+}
+
+#[test]
+fn schematic_svg_is_one_fixed_a4_page_and_fills_it() {
+    let design = crowded_design();
+    let sheets: Vec<&Sheet> = design.sheets.iter().collect();
+    let svg = crate::render_svg_for(&design, &sheets);
+    assert_eq!(view_box(&svg), [0.0, 0.0, 297.0, 210.0]);
+    assert_eq!(occurrences(&svg, r#"data-drawing=""#), 1);
+    assert_eq!(occurrences(&svg, r#"data-title-block="true""#), 1);
+    assert_eq!(rects_with(&svg, r#"data-page-frame="true""#).len(), 1, "the schematic has an inner frame");
+    assert!(!svg.contains("..."), "the schematic never truncates text");
+
+    let page = page(&svg);
+    let used_height = page.content_size.1 * page.scale;
+    assert!(
+        used_height >= drawable().1 * 0.9,
+        "the stacked sheets fill only {:.0}% of the page height",
+        used_height / drawable().1 * 100.0
+    );
+    let frame = rects_with(&svg, r#"data-page-frame="true""#)[0];
+    let texts: Vec<PlacedText> = placed_texts(&svg).into_iter().filter(|run| run.bounds[3] <= frame[3] + 1.0).collect();
+    assert_texts_apart(&texts, "schematic content");
+}
