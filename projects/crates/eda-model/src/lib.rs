@@ -18,6 +18,7 @@
 mod connectivity;
 mod dangling;
 mod diff;
+mod drawings;
 mod kicad;
 mod net_audit;
 mod png;
@@ -101,6 +102,10 @@ const EXPORT_TARGETS: &[&str] = &[
     "pdf",
     "svg",
     "png",
+    "block_diagram",
+    "sheet_overview",
+    "pinout_chart",
+    "symbol_library",
     "bom",
     "bom_json",
     "bom_html",
@@ -123,6 +128,10 @@ const SUPPORTED_EXPORTS: &[&str] = &[
     "svg",
     "pdf",
     "png",
+    "block_diagram",
+    "sheet_overview",
+    "pinout_chart",
+    "symbol_library",
     "bom",
     "bom_json",
     "bom_html",
@@ -207,13 +216,13 @@ const SUPPORTED_RENDERERS: &[&str] = &["svg"];
 const HISTORY_LIMIT: usize = 32;
 
 /// Component box half width, in design units, used by the SVG projection.
-const COMPONENT_HALF_WIDTH: f64 = 12.7;
+pub(crate) const COMPONENT_HALF_WIDTH: f64 = 12.7;
 /// Component box half height, in design units, used by the SVG projection.
 const COMPONENT_HALF_HEIGHT: f64 = 7.62;
 /// Vertical pitch between adjacent symbol pins, in design units.
 const PIN_PITCH: f64 = 2.54;
 /// Length of the pin stub drawn outside the symbol body, in design units.
-const PIN_LENGTH: f64 = 2.54;
+pub(crate) const PIN_LENGTH: f64 = 2.54;
 /// Font size of the pin names printed inside the symbol body.
 const PIN_NAME_SIZE: f64 = 2.0;
 
@@ -5222,6 +5231,44 @@ pub fn export_with_options(
             });
             (contents, artifact)
         }
+        "block_diagram" => {
+            let drawing = drawings::render_block_diagram(&design);
+            let artifact = json!({
+                "kind": "block_diagram",
+                "nodes": drawing.nodes,
+                "edges": drawing.edges,
+                "nets": drawing.nets,
+            });
+            (drawing.svg, artifact)
+        }
+        "sheet_overview" => {
+            let drawing = drawings::render_sheet_overview(&design);
+            let artifact = json!({
+                "kind": "sheet_overview",
+                "sheets": drawing.sheets,
+                "columns": drawing.columns,
+                "rows": drawing.rows,
+            });
+            (drawing.svg, artifact)
+        }
+        "pinout_chart" => {
+            let drawing = drawings::render_pinout_chart(&design);
+            let artifact = json!({
+                "kind": "pinout_chart",
+                "components": drawing.components,
+                "rows": drawing.rows,
+            });
+            (drawing.svg, artifact)
+        }
+        "symbol_library" => {
+            let drawing = drawings::render_symbol_library(&design);
+            let artifact = json!({
+                "kind": "symbol_library",
+                "symbols": drawing.symbols,
+                "components": drawing.components,
+            });
+            (drawing.svg, artifact)
+        }
         "report" => {
             let (contents, sections, issue_count) = render_report(&design);
             let artifact = json!({
@@ -8454,7 +8501,7 @@ fn render_svg_for(design: &Design, sheets: &[&Sheet]) -> String {
 ///
 /// Returns `(min_x, min_y, max_x, max_y)` in design units. An empty sheet set
 /// keeps the placeholder extent so a renderer still has a finite viewport.
-fn drawing_bounds<'a>(sheets: impl IntoIterator<Item = &'a Sheet>) -> (f64, f64, f64, f64) {
+pub(crate) fn drawing_bounds<'a>(sheets: impl IntoIterator<Item = &'a Sheet>) -> (f64, f64, f64, f64) {
     let mut min_x = f64::INFINITY;
     let mut min_y = f64::INFINITY;
     let mut max_x = f64::NEG_INFINITY;
@@ -8524,7 +8571,7 @@ fn drawing_bounds<'a>(sheets: impl IntoIterator<Item = &'a Sheet>) -> (f64, f64,
 /// Height of the title-block strip reserved below the schematic content, in
 /// design units. The strip carries the sheet name, design title, revision and
 /// counts instead of a bare border.
-const TITLE_BLOCK_HEIGHT: f64 = 14.0;
+pub(crate) const TITLE_BLOCK_HEIGHT: f64 = 14.0;
 
 /// Projects the given sheets onto one SVG document.
 ///
@@ -8570,7 +8617,7 @@ fn svg_projection(design: &Design, sheets: &[&Sheet]) -> SvgProjection {
 ///
 /// Shared by the sheet projection and the multi-sheet overview drawing so both
 /// paint byte-identical primitives; the caller owns the surrounding group.
-fn push_svg_sheet_contents(svg: &mut String, sheet: &Sheet) {
+pub(crate) fn push_svg_sheet_contents(svg: &mut String, sheet: &Sheet) {
     for wire in &sheet.wires {
         svg.push_str(&format!(
             "    <line x1=\"{:.2}\" y1=\"{:.2}\" x2=\"{:.2}\" y2=\"{:.2}\" stroke=\"#0f766e\" stroke-width=\"0.5\"/>\n",
@@ -8680,7 +8727,7 @@ fn push_svg_sheet_contents(svg: &mut String, sheet: &Sheet) {
 /// Shared by the sheet projection and the symbol-library drawing; the library
 /// places a component clone at a cell centre, so the caller owns the
 /// surrounding group.
-fn push_svg_component(svg: &mut String, component: &Component) {
+pub(crate) fn push_svg_component(svg: &mut String, component: &Component) {
     let (artwork, keeps_box) = symbol_artwork(component);
     let inside_box = keeps_box || artwork.is_empty();
     svg.push_str(&format!(
@@ -8803,7 +8850,7 @@ fn net_name_point(sheet: &Sheet, from: [f64; 2], to: [f64; 2], net: &str) -> [f6
 /// The strip is split into four cells: design title (with company below),
 /// sheet identity, revision block and content counts. Every value comes from
 /// the document itself, so the projection stays byte-deterministic.
-fn push_svg_title_block(
+pub(crate) fn push_svg_title_block(
     svg: &mut String,
     design: &Design,
     sheets: &[&Sheet],
@@ -8906,7 +8953,7 @@ fn push_svg_title_block(
     svg.push_str("  </g>\n");
 }
 
-fn escape_xml(text: &str) -> String {
+pub(crate) fn escape_xml(text: &str) -> String {
     text.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;").replace('\'', "&apos;")
 }
 
@@ -8947,7 +8994,7 @@ fn bom_rows(design: &Design, variant: Option<&Variant>) -> Vec<BomRow> {
 /// numeric value instead of text, so `R2` precedes `R10` and adjacent numbers
 /// stay together for [`designator_ranges`]. Equal numeric runs fall back to the
 /// run length, keeping the order total and deterministic.
-fn natural_compare(left: &str, right: &str) -> std::cmp::Ordering {
+pub(crate) fn natural_compare(left: &str, right: &str) -> std::cmp::Ordering {
     use std::cmp::Ordering;
     let mut left = left;
     let mut right = right;

@@ -81,6 +81,10 @@ fn capability_matrix_reports_only_the_implemented_entries() {
     assert_eq!(matrix["exportTargets"]["kicad_net"], "supported");
     assert_eq!(matrix["exportTargets"]["png"], "supported");
     assert_eq!(matrix["formats"]["png"]["export"], "supported");
+    assert_eq!(matrix["exportTargets"]["block_diagram"], "supported");
+    assert_eq!(matrix["exportTargets"]["sheet_overview"], "supported");
+    assert_eq!(matrix["exportTargets"]["pinout_chart"], "supported");
+    assert_eq!(matrix["exportTargets"]["symbol_library"], "supported");
     assert_eq!(matrix["exportTargets"]["kicad_pcb"], "unsupported");
     assert_eq!(matrix["exportTargets"]["gbr"], "unsupported");
     assert_eq!(matrix["edits"]["components"], "supported");
@@ -6474,6 +6478,41 @@ fn empty_design_exports_every_supported_format_without_panic() {
         let bytes = report["bytes"].as_u64().expect("the report counts bytes");
         assert!(bytes > 0, "`{format}` wrote an empty file for an empty design");
     }
+    close(handle).expect("close");
+}
+
+#[test]
+fn drawing_exports_write_svg_documents_and_reject_sheet_selection() {
+    let dir = TempDir::new("drawings");
+    let created = create(CreateRequest::default()).expect("create");
+    let handle = created["handle"].as_u64().expect("handle");
+    add_component(
+        handle,
+        AddComponentRequest {
+            sheet: None,
+            reference: "R1".into(),
+            value: "10k".into(),
+            x: 40.0,
+            y: 30.0,
+            rotation: 0.0,
+            pins: vec!["1".into(), "2".into()],
+        },
+    )
+    .expect("add R1");
+    connect_net(handle, ConnectNetRequest { sheet: None, net: "VCC".into(), nodes: vec!["R1.1".into()] }).expect("connect VCC");
+    for format in ["block_diagram", "sheet_overview", "pinout_chart", "symbol_library"] {
+        let path = dir.join(&format!("drawing.{format}"));
+        let report = export(handle, format, &path).unwrap_or_else(|error| panic!("`{format}` failed: {}", error.message));
+        assert_eq!(report["format"], format);
+        let contents = fs::read_to_string(&path).expect("read drawing");
+        assert!(contents.starts_with("<?xml"), "`{format}` writes an SVG document");
+        assert!(contents.contains("</svg>"), "`{format}` closes the document");
+    }
+    assert_eq!(
+        export_with_options(handle, "block_diagram", &dir.join("x.svg"), None, Some("sheet-1")).unwrap_err().code,
+        "session/argument-invalid",
+        "a design-wide drawing rejects a sheet selection",
+    );
     close(handle).expect("close");
 }
 
