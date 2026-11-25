@@ -114,6 +114,8 @@ const EXPORT_TARGETS: &[&str] = &[
     "bom_drawing_pdf",
     "net_xref",
     "net_xref_pdf",
+    "hierarchy",
+    "erc",
     "bom",
     "bom_json",
     "bom_html",
@@ -146,6 +148,8 @@ const SUPPORTED_EXPORTS: &[&str] = &[
     "bom_drawing_pdf",
     "net_xref",
     "net_xref_pdf",
+    "hierarchy",
+    "erc",
     "bom",
     "bom_json",
     "bom_html",
@@ -5470,6 +5474,25 @@ pub fn export_with_options(
                 "nets": drawing.nets,
                 "nodes": drawing.nodes,
                 "pages": drawing.pages,
+            });
+            (drawing.svg, artifact)
+        }
+        "hierarchy" => {
+            let drawing = drawings::render_hierarchy(&design);
+            let artifact = json!({
+                "kind": "hierarchy",
+                "nodes": drawing.nodes,
+                "sheets": drawing.sheets,
+            });
+            (drawing.svg, artifact)
+        }
+        "erc" => {
+            let drawing = drawings::render_erc(&design);
+            let artifact = json!({
+                "kind": "erc",
+                "findings": drawing.findings,
+                "errors": drawing.errors,
+                "warnings": drawing.warnings,
             });
             (drawing.svg, artifact)
         }

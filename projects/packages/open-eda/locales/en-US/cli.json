@@ -129,7 +129,7 @@
             "prefix": "Expected reference designator prefix, one to eight uppercase letters, for example R or TP",
             "severity": "Comma-separated finding overrides in code=level form, level error, warning, info or off",
             "waive": "Comma-separated accepted findings: code, code@objectId or code@sheetId/objectId",
-            "format": "Export target: net, net_csv, net_hier, net_class, net_length, spice, spice_subckt, svg, pdf, bom, bom_json, bom_html, report, json, kicad_sch or kicad_sym (kicad_pcb and gbr are unsupported)",
+            "format": "Export target: net, net_csv, net_hier, net_class, net_length, spice, spice_subckt, svg, pdf, bom, bom_json, bom_html, report, json, kicad_sch, kicad_sym or a drawing (block_diagram, sheet_overview, pinout_chart, symbol_library, net_topology, power_distribution, bom_drawing, bom_drawing_pdf, net_xref, net_xref_pdf, hierarchy, erc); kicad_pcb and gbr are unsupported",
             "ref": "Reference designator, for example R1",
             "as": "Reference designator of the copy, for example R2",
             "value": "Component value, for example 10k",

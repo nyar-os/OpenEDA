@@ -92,6 +92,8 @@ fn capability_matrix_reports_only_the_implemented_entries() {
     assert_eq!(matrix["exportTargets"]["bom_drawing_pdf"], "supported");
     assert_eq!(matrix["exportTargets"]["net_xref"], "supported");
     assert_eq!(matrix["exportTargets"]["net_xref_pdf"], "supported");
+    assert_eq!(matrix["exportTargets"]["hierarchy"], "supported");
+    assert_eq!(matrix["exportTargets"]["erc"], "supported");
     assert_eq!(matrix["exportTargets"]["kicad_pcb"], "unsupported");
     assert_eq!(matrix["exportTargets"]["gbr"], "unsupported");
     assert_eq!(matrix["edits"]["components"], "supported");
@@ -6532,6 +6534,8 @@ fn drawing_exports_write_svg_documents_and_reject_sheet_selection() {
         "power_distribution",
         "bom_drawing",
         "net_xref",
+        "hierarchy",
+        "erc",
     ] {
         let path = dir.join(&format!("drawing.{format}"));
         let report = export(handle, format, &path).unwrap_or_else(|error| panic!("`{format}` failed: {}", error.message));

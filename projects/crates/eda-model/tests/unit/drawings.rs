@@ -1,8 +1,8 @@
 use crate::{
     Component, Design, DesignRules, Net, Node, Sheet,
     drawings::{
-        render_block_diagram, render_bom_drawing, render_net_topology, render_net_xref, render_pinout_chart,
-        render_power_distribution, render_sheet_overview, render_symbol_library,
+        render_block_diagram, render_bom_drawing, render_erc, render_hierarchy, render_net_topology, render_net_xref,
+        render_pinout_chart, render_power_distribution, render_sheet_overview, render_symbol_library,
     },
 };
 use std::collections::BTreeMap;
@@ -448,6 +448,8 @@ fn every_drawing_uses_one_a4_landscape_page() {
         render_power_distribution(&design).svg,
         render_bom_drawing(&design).svg,
         render_net_xref(&design).svg,
+        render_hierarchy(&design).svg,
+        render_erc(&design).svg,
     ];
     for svg in &drawings {
         assert_eq!(view_box(svg), [0.0, 0.0, 297.0, 210.0], "every drawing is A4 landscape");
@@ -469,6 +471,8 @@ fn fitted_content_covers_at_least_sixty_percent_of_the_drawable_area() {
         ("power", render_power_distribution(&design).svg),
         ("bom", render_bom_drawing(&design).svg),
         ("net xref", render_net_xref(&design).svg),
+        ("hierarchy", render_hierarchy(&design).svg),
+        ("erc", render_erc(&design).svg),
     ];
     for (name, svg) in &drawings {
         let page = page(svg);
@@ -499,6 +503,8 @@ fn every_text_box_stays_inside_the_page() {
         render_power_distribution(&design).svg,
         render_bom_drawing(&design).svg,
         render_net_xref(&design).svg,
+        render_hierarchy(&design).svg,
+        render_erc(&design).svg,
     ];
     for svg in &drawings {
         let page = page(svg);
@@ -525,16 +531,14 @@ fn painted_text_keeps_the_readable_size_floor() {
         ("power", render_power_distribution(&design).svg),
         ("bom", render_bom_drawing(&design).svg),
         ("net xref", render_net_xref(&design).svg),
+        ("hierarchy", render_hierarchy(&design).svg),
+        ("erc", render_erc(&design).svg),
     ];
     for (name, svg) in &drawings {
         let page = page(svg);
         for run in text_runs(&page.content) {
             let painted = run.size * page.scale;
-            assert!(
-                painted >= 2.35,
-                "{name} paints `{}` at {painted:.2} mm, below the 6.5 pt floor",
-                run.text
-            );
+            assert!(painted >= 2.35, "{name} paints `{}` at {painted:.2} mm, below the 6.5 pt floor", run.text);
         }
     }
 }
@@ -837,6 +841,64 @@ fn net_xref_wraps_long_member_lists_into_aligned_lines() {
 }
 
 #[test]
+fn hierarchy_tree_places_nodes_without_overlap_and_connects_them() {
+    let design = sample_design();
+    let drawing = render_hierarchy(&design);
+    let page = page(&drawing.svg);
+    assert_eq!(drawing.nodes, 2, "two flat sheets when no hierarchy symbols exist");
+    let nodes = rects_with(&page.content, "data-tree-node=\"true\"");
+    assert_eq!(nodes.len(), 3, "one root plus two children");
+    assert_no_overlap(&nodes, "tree nodes");
+    let connectors = segments(&page.content);
+    assert!(!connectors.is_empty(), "the tree routes connectors");
+    for segment in &connectors {
+        for node in &nodes {
+            assert!(!crosses(*segment, node), "a tree connector crosses a node: {segment:?} vs {node:?}");
+        }
+    }
+    let texts: Vec<[f64; 4]> = text_runs(&page.content).iter().map(|run| text_box(run, (0.0, 0.0), 1.0)).collect();
+    assert_no_overlap(&texts, "tree text");
+    assert_eq!(drawing.svg, render_hierarchy(&design).svg);
+}
+
+#[test]
+fn erc_table_reports_findings_or_prints_no_findings() {
+    // A duplicated reference is an `erc` finding without coordinates.
+    let mut broken = sample_design();
+    broken.sheets.truncate(1);
+    broken.sheets[0].components.push(component("U1", "DUPLICATE", 10.0, 10.0, &["1"]));
+    let drawing = render_erc(&broken);
+    let findings_page = page(&drawing.svg);
+    assert!(drawing.findings > 0, "a duplicate reference is reported");
+    assert!(findings_page.content.contains(r#"data-erc="true""#));
+    assert!(
+        findings_page.content.contains("SEVERITY")
+            && findings_page.content.contains("OBJECT")
+            && findings_page.content.contains("DESCRIPTION")
+    );
+    assert!(!findings_page.content.contains("POSITION"), "a column with no values is not drawn");
+
+    let clean = {
+        let mut design = sample_design();
+        design.sheets.clear();
+        design
+    };
+    let clean = render_erc(&clean);
+    assert_eq!(clean.findings, 0);
+    assert!(clean.svg.contains(">No findings<"), "an empty report says so");
+    assert!(!clean.svg.contains("SEVERITY"), "no empty table is drawn");
+
+    // A long finding list stays on one page at a readable size and summarises
+    // the remainder instead of shrinking every row.
+    let full = render_erc(&sample_design());
+    let full_page = page(&full.svg);
+    assert!(full_page.scale > 0.95, "the findings page is not shrunk into unreadability");
+    if full.findings > 20 {
+        assert!(full_page.content.contains("more finding(s) not shown"), "the remainder is counted");
+    }
+}
+
+#[test]
 fn empty_designs_still_paint_complete_documents() {
     let mut design = sample_design();
     for sheet in &mut design.sheets {
@@ -851,6 +913,8 @@ fn empty_designs_still_paint_complete_documents() {
         render_power_distribution(&design).svg,
         render_bom_drawing(&design).svg,
         render_net_xref(&design).svg,
+        render_hierarchy(&design).svg,
+        render_erc(&design).svg,
         render_symbol_library(&design).svg,
         render_sheet_overview(&design).svg,
     ] {

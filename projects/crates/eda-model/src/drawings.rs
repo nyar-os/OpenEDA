@@ -312,7 +312,8 @@ fn paint_table(sections: &[TableSection], columns: &[TableColumn], size: f64, ca
         ));
         let mut x = 0.0;
         for column in columns {
-            let (label, painted) = fit_text_in_box(&column.header, column.width - 2.0, (size * 0.85).max(MIN_FONT_SIZE), MIN_FONT_SIZE);
+            let (label, painted) =
+                fit_text_in_box(&column.header, column.width - 2.0, (size * 0.85).max(MIN_FONT_SIZE), MIN_FONT_SIZE);
             let text_x = if column.align_right { x + column.width - 1.5 } else { x + 1.5 };
             let anchor = if column.align_right { "end" } else { "start" };
             content.push_str(&format!(
@@ -1777,3 +1778,242 @@ pub(crate) fn render_net_xref(design: &Design) -> NetXref {
     NetXref { svg, nets: rows.len(), nodes: node_count, pages }
 }
 
+/// The hierarchy tree drawing and the nodes it painted.
+pub(crate) struct HierarchyDrawing {
+    /// The complete SVG document.
+    pub(crate) svg: String,
+    /// Child nodes painted (hierarchical sheets or flat sheets).
+    pub(crate) nodes: usize,
+    /// Sheets described by the tree.
+    pub(crate) sheets: usize,
+}
+
+/// One hierarchy tree node before placement.
+struct TreeNode {
+    title: String,
+    detail: String,
+    footer: String,
+}
+
+/// Paints the sheet hierarchy as a two-level tree: the design at the top and its
+/// hierarchical sheet symbols (or, when none are declared, its flat sheets)
+/// below. Every connector runs in the free margin between nodes.
+pub(crate) fn render_hierarchy(design: &Design) -> HierarchyDrawing {
+    let mut children: Vec<TreeNode> = Vec::new();
+    if design.hierarchy.is_empty() {
+        for sheet in &design.sheets {
+            children.push(TreeNode {
+                title: sheet.name.clone(),
+                detail: sheet.id.clone(),
+                footer: format!("{} parts | {} nets", sheet.components.len(), sheet.nets.len()),
+            });
+        }
+    }
+    else {
+        for entry in &design.hierarchy {
+            children.push(TreeNode {
+                title: entry.name.clone(),
+                detail: entry.file.clone(),
+                footer: format!("{} ports", entry.ports.len()),
+            });
+        }
+    }
+    let root = TreeNode {
+        title: design.title.as_deref().map(str::trim).filter(|text| !text.is_empty()).unwrap_or(design.id.as_str()).to_string(),
+        detail: format!("{} sheets", design.sheets.len()),
+        footer: format!(
+            "{} parts | {} nets | {} hierarchy",
+            design.sheets.iter().map(|sheet| sheet.components.len()).sum::<usize>(),
+            design.sheets.iter().map(|sheet| sheet.nets.len()).sum::<usize>(),
+            design.hierarchy.len()
+        ),
+    };
+    let node_width = children
+        .iter()
+        .chain(std::iter::once(&root))
+        .map(|node| measure_text(&node.title, 3.4).max(measure_text(&node.detail, 2.8)).max(measure_text(&node.footer, 2.6)))
+        .fold(40.0, f64::max)
+        + 8.0;
+    let node_height = 18.0;
+    let per_row = children.len().clamp(1, 4);
+    let rows = children.len().div_ceil(per_row).max(1);
+    let gap_x = 10.0;
+    let gap_y = 16.0;
+    let side = 8.0;
+    let content_width = per_row as f64 * node_width + per_row.saturating_sub(1) as f64 * gap_x + 2.0 * side;
+    let row_top = |row: usize| node_height + 2.0 * gap_y + row as f64 * (node_height + gap_y + 6.0);
+    let content_height = row_top(rows - 1) + node_height + gap_y;
+    let root_x = (content_width - node_width) / 2.0;
+    let spine_x = 2.0;
+    let last_bus = row_top(rows - 1) - gap_y * 0.6;
+
+    let mut content = String::from("  <g data-hierarchy=\"true\">\n");
+    push_tree_node(&mut content, &root, root_x, 0.0, node_width, node_height, "#eef4ff");
+    let root_centre = root_x + node_width / 2.0;
+    let join_y = node_height + gap_y * 0.6;
+    content.push_str(&format!(
+        "    <polyline points=\"{root_centre:.2},{node_height:.2} {root_centre:.2},{join_y:.2} {spine_x:.2},{join_y:.2} {spine_x:.2},{last_bus:.2}\" fill=\"none\" stroke=\"#64748b\" stroke-width=\"0.5\"/>\n"
+    ));
+    for row in 0..rows {
+        let start = row * per_row;
+        let end = (start + per_row).min(children.len());
+        if start >= end {
+            break;
+        }
+        let row_columns = end - start;
+        let row_width = row_columns as f64 * node_width + row_columns.saturating_sub(1) as f64 * gap_x;
+        let row_left = side + (content_width - 2.0 * side - row_width) / 2.0;
+        let bus_y = row_top(row) - gap_y * 0.6;
+        let last_centre = row_left + (row_columns - 1) as f64 * (node_width + gap_x) + node_width / 2.0;
+        content.push_str(&format!(
+            "    <line x1=\"{spine_x:.2}\" y1=\"{bus_y:.2}\" x2=\"{last_centre:.2}\" y2=\"{bus_y:.2}\" stroke=\"#64748b\" stroke-width=\"0.5\"/>\n"
+        ));
+        for column in 0..row_columns {
+            let x = row_left + column as f64 * (node_width + gap_x);
+            let y = row_top(row);
+            content.push_str(&format!(
+                "    <line x1=\"{:.2}\" y1=\"{bus_y:.2}\" x2=\"{:.2}\" y2=\"{y:.2}\" stroke=\"#64748b\" stroke-width=\"0.5\"/>\n",
+                x + node_width / 2.0,
+                x + node_width / 2.0
+            ));
+            push_tree_node(&mut content, &children[start + column], x, y, node_width, node_height, "#ffffff");
+        }
+    }
+    if children.is_empty() {
+        content.push_str(&format!(
+            "    <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"{FONT_FAMILY}\" font-size=\"4.0\" text-anchor=\"middle\" fill=\"#64748b\">no sheets</text>\n",
+            content_width / 2.0,
+            node_height + gap_y + 10.0
+        ));
+    }
+    content.push_str("  </g>\n");
+    let svg = paint_page(&content, content_width, content_height, design, "HIERARCHY", "HY", 1, 1);
+    HierarchyDrawing { svg, nodes: children.len(), sheets: design.sheets.len() }
+}
+
+/// Paints one rounded tree node with its title, detail and footer lines.
+fn push_tree_node(svg: &mut String, node: &TreeNode, x: f64, y: f64, width: f64, height: f64, fill: &str) {
+    svg.push_str(&format!(
+        "    <rect x=\"{x:.2}\" y=\"{y:.2}\" width=\"{width:.2}\" height=\"{height:.2}\" rx=\"1.8\" fill=\"{fill}\" stroke=\"#1f6feb\" stroke-width=\"0.5\" data-tree-node=\"true\"/>\n"
+    ));
+    for (line, size, colour, offset) in
+        [(&node.title, 3.4, "#1f2933", 6.0), (&node.detail, 2.8, "#475569", 11.0), (&node.footer, 2.6, "#64748b", 15.5)]
+    {
+        svg.push_str(&format!(
+            "    <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"{FONT_FAMILY}\" font-size=\"{size:.1}\" text-anchor=\"middle\" fill=\"{colour}\">{}</text>\n",
+            x + width / 2.0,
+            y + offset,
+            escape_xml(&fit_text(line, width - 3.0, size))
+        ));
+    }
+}
+
+/// The rule-check drawing and the findings it painted.
+pub(crate) struct ErcDrawing {
+    /// The complete SVG document.
+    pub(crate) svg: String,
+    /// Findings painted.
+    pub(crate) findings: usize,
+    /// Error findings.
+    pub(crate) errors: usize,
+    /// Warning findings.
+    pub(crate) warnings: usize,
+}
+
+/// Most findings one readable findings page prints. Further findings are
+/// summarised in one closing row instead of shrinking every row below the
+/// readable floor.
+const MAX_ERC_FINDINGS: usize = 18;
+
+/// Paints the existing rule-check results as a findings table.
+///
+/// Columns are severity, object, position and description; a column whose every
+/// value is blank is removed, so an issue set without coordinates does not leave
+/// an empty `POSITION` column behind. Errors sort first. A clean design prints
+/// `No findings` instead of an empty table, and a long list keeps a readable row
+/// height by summarising the remainder in one row.
+pub(crate) fn render_erc(design: &Design) -> ErcDrawing {
+    let checks: Vec<String> = crate::SUPPORTED_CHECKS.iter().map(|name| (*name).to_string()).collect();
+    let mut issues = crate::inspect_design(design, &checks);
+    let severity_rank = |value: &str| match value {
+        "error" => 0,
+        "warning" => 1,
+        _ => 2,
+    };
+    issues.sort_by(|left, right| {
+        let left_severity = severity_rank(left["severity"].as_str().unwrap_or("info"));
+        let right_severity = severity_rank(right["severity"].as_str().unwrap_or("info"));
+        left_severity
+            .cmp(&right_severity)
+            .then_with(|| left["sheetId"].as_str().unwrap_or("").cmp(right["sheetId"].as_str().unwrap_or("")))
+            .then_with(|| left["objectId"].as_str().unwrap_or("").cmp(right["objectId"].as_str().unwrap_or("")))
+            .then_with(|| left["code"].as_str().unwrap_or("").cmp(right["code"].as_str().unwrap_or("")))
+    });
+    let errors = issues.iter().filter(|issue| issue["severity"] == "error").count();
+    let warnings = issues.iter().filter(|issue| issue["severity"] == "warning").count();
+    let total = issues.len();
+    let omitted = total.saturating_sub(MAX_ERC_FINDINGS);
+    issues.truncate(MAX_ERC_FINDINGS);
+    let named = |issue: &serde_json::Value| -> String {
+        let object = issue["objectId"].as_str().unwrap_or("").trim();
+        let sheet = issue["sheetId"].as_str().unwrap_or("").trim();
+        if object.is_empty() { sheet.to_string() } else { object.to_string() }
+    };
+    let mut table_rows: Vec<Vec<String>> = issues
+        .iter()
+        .map(|issue| {
+            let position =
+                match (issue.get("x").and_then(|value| value.as_f64()), issue.get("y").and_then(|value| value.as_f64())) {
+                    (Some(x), Some(y)) => format!("{x:.1}, {y:.1}"),
+                    _ => String::new(),
+                };
+            vec![
+                issue["severity"].as_str().unwrap_or("info").to_uppercase(),
+                named(issue),
+                position,
+                issue["message"].as_str().unwrap_or("").to_string(),
+            ]
+        })
+        .collect();
+    if omitted > 0 {
+        table_rows.push(vec![
+            "INFO".to_string(),
+            String::new(),
+            String::new(),
+            format!("{omitted} more finding(s) not shown; run inspect for the full list"),
+        ]);
+    }
+    if table_rows.is_empty() {
+        let (draw_width, draw_height) = drawable_size();
+        let mut content = String::from("  <g data-erc=\"true\">\n");
+        content.push_str(&format!(
+            "    <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"{FONT_FAMILY}\" font-size=\"8.0\" text-anchor=\"middle\" fill=\"#166534\">No findings</text>\n",
+            draw_width / 2.0,
+            draw_height / 2.0 - 4.0
+        ));
+        content.push_str(&format!(
+            "    <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"{FONT_FAMILY}\" font-size=\"3.4\" text-anchor=\"middle\" fill=\"#64748b\">every supported rule check passed for revision {}</text>\n",
+            draw_width / 2.0,
+            draw_height / 2.0 + 4.0,
+            design.revision
+        ));
+        content.push_str("  </g>\n");
+        let svg = paint_page(&content, draw_width, draw_height, design, "RULE CHECK REPORT", "ERC", 1, 1);
+        return ErcDrawing { svg, findings: 0, errors: 0, warnings: 0 };
+    }
+    let mut spec = table_spec(
+        vec!["SEVERITY", "OBJECT", "POSITION", "DESCRIPTION"],
+        table_rows,
+        vec![false, false, false, false],
+        vec![false, false, false, true],
+        &format!("RULE CHECK REPORT | {total} FINDINGS"),
+        Some("data-erc-cell=\"true\""),
+    );
+    // A slightly smaller body keeps every selected finding and the summary row on
+    // one readable page instead of splitting the table or shrinking the title.
+    spec.font = 2.7;
+    let (table, width, height, _) = render_table(&spec);
+    let content = format!("  <g data-erc=\"true\">\n{table}  </g>\n");
+    let svg = paint_page(&content, width, height, design, "RULE CHECK REPORT", "ERC", 1, 1);
+    ErcDrawing { svg, findings: total, errors, warnings }
+}
