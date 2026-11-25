@@ -9450,7 +9450,7 @@ fn pdf_page(design: &Design, sheet: Option<&Sheet>, index: usize, total: usize, 
         literal
     };
     let mut content = String::new();
-    content.push_str(&format!("0.4 w 0 0 {PDF_PAGE_WIDTH:.2} {PDF_PAGE_HEIGHT:.2} re S\n"));
+    content.push_str(&format!("0.12 0.16 0.2 RG 0.4 w 0 0 {PDF_PAGE_WIDTH:.2} {PDF_PAGE_HEIGHT:.2} re S\n"));
     let header = match sheet {
         Some(sheet) => format!(
             "OpenEDA {} revision {} | sheet {}: {} ({}/{})",
@@ -9464,7 +9464,7 @@ fn pdf_page(design: &Design, sheet: Option<&Sheet>, index: usize, total: usize, 
         None => format!("OpenEDA {} revision {}", design.id, design.revision),
     };
     content.push_str(&format!(
-        "BT /F1 9 Tf {:.2} {:.2} Td {} Tj ET\n",
+        "0 0 0 rg BT /F1 9 Tf {:.2} {:.2} Td {} Tj ET\n",
         PDF_MARGIN,
         PDF_PAGE_HEIGHT - 16.0,
         pdf_literal(&header)
@@ -9472,7 +9472,7 @@ fn pdf_page(design: &Design, sheet: Option<&Sheet>, index: usize, total: usize, 
     for sheet in sheet.iter() {
         for wire in &sheet.wires {
             content.push_str(&format!(
-                "0.6 w {:.2} {:.2} m {:.2} {:.2} l S\n",
+                "0.06 0.46 0.43 RG 0.6 w {:.2} {:.2} m {:.2} {:.2} l S\n",
                 map_x(wire.from[0]),
                 map_y(wire.from[1]),
                 map_x(wire.to[0]),
@@ -9524,17 +9524,18 @@ fn pdf_page(design: &Design, sheet: Option<&Sheet>, index: usize, total: usize, 
                     ));
                     content.push_str(&format!(
                         "0.06 0.46 0.43 RG 0.3 w {text_x:.2} {:.2} m {:.2} {:.2} l S\n",
-                        text_y - 0.6 * scale,
+                        text_y - size * 0.214,
                         text_x + text_w,
-                        text_y - 0.6 * scale,
+                        text_y - size * 0.214,
                     ));
                 }
                 LabelScope::Global => {
                     content.push_str(&format!(
-                        "0.72 0.11 0.11 RG 0.35 w {:.2} {:.2} {text_w:.2} {:.2} re S\n",
-                        text_x - 0.6 * scale,
-                        text_y - 0.8 * scale,
-                        4.2 * scale,
+                        "0.72 0.11 0.11 RG 0.35 w {:.2} {:.2} {:.2} {:.2} re S\n",
+                        text_x - size * 0.214,
+                        text_y - size * 0.286,
+                        text_w + size * 0.429,
+                        size * 1.5,
                     ));
                     content.push_str(&format!(
                         "0.72 0.11 0.11 rg BT /F1 {size:.2} Tf {text_x:.2} {text_y:.2} Td {} Tj ET\n",
@@ -9544,19 +9545,19 @@ fn pdf_page(design: &Design, sheet: Option<&Sheet>, index: usize, total: usize, 
                 LabelScope::Hierarchical => {
                     content.push_str(&format!(
                         "0.08 0.5 0.24 RG 0.35 w {text_x:.2} {:.2} m {:.2} {:.2} l {:.2} {:.2} l {:.2} {:.2} l {:.2} {:.2} l h S\n",
-                        text_y - 0.8 * scale,
-                        text_x + 1.6 * scale,
-                        text_y + 1.3 * scale,
+                        text_y - size * 0.286,
+                        text_x + size * 0.571,
+                        text_y + size * 0.464,
                         text_x,
-                        text_y + 3.4 * scale,
-                        text_x + text_w + 1.2 * scale,
-                        text_y + 3.4 * scale,
-                        text_x + text_w + 1.2 * scale,
-                        text_y - 0.8 * scale,
+                        text_y + size * 1.214,
+                        text_x + text_w + size * 0.429,
+                        text_y + size * 1.214,
+                        text_x + text_w + size * 0.429,
+                        text_y - size * 0.286,
                     ));
                     content.push_str(&format!(
                         "0.08 0.5 0.24 rg BT /F1 {size:.2} Tf {:.2} {text_y:.2} Td {} Tj ET\n",
-                        text_x + 1.8 * scale,
+                        text_x + size * 0.643,
                         pdf_literal(&label.text)
                     ));
                 }
@@ -9592,7 +9593,7 @@ fn pdf_page(design: &Design, sheet: Option<&Sheet>, index: usize, total: usize, 
                         path.push_str(&format!(" {:.2} {:.2} l", map_x(point[0]), map_y(point[1])));
                     }
                 }
-                content.push_str(&format!("0.7 w {path} h S\n"));
+                content.push_str(&format!("0.12 0.44 0.92 RG 0.7 w {path} h S\n"));
             }
             for primitive in &artwork {
                 let (points, closed) = match primitive {
@@ -9609,18 +9610,27 @@ fn pdf_page(design: &Design, sheet: Option<&Sheet>, index: usize, total: usize, 
                         path.push_str(&format!(" {:.2} {:.2} l", map_x(rotated[0]), map_y(rotated[1])));
                     }
                 }
-                let operator = if closed { "h B" } else { "S" };
-                content.push_str(&format!("0.6 w {path} {operator}\n"));
+                if closed {
+                    content.push_str(&format!("0.12 0.44 0.92 RG 0.12 0.44 0.92 rg 0.6 w {path} h B\n"));
+                }
+                else {
+                    content.push_str(&format!("0.12 0.44 0.92 RG 0.6 w {path} S\n"));
+                }
             }
             for pin in component_pins(component) {
                 let root = rotate_about(component, pin.root);
                 let end = rotate_about(component, pin.end);
                 content.push_str(&format!(
-                    "0.5 w {:.2} {:.2} m {:.2} {:.2} l S\n",
+                    "0.12 0.44 0.92 RG 0.5 w {:.2} {:.2} m {:.2} {:.2} l S\n",
                     map_x(root[0]),
                     map_y(root[1]),
                     map_x(end[0]),
                     map_y(end[1])
+                ));
+                content.push_str(&format!(
+                    "0.12 0.44 0.92 rg {:.2} {:.2} 1.6 1.6 re f\n",
+                    map_x(end[0]) - 0.8,
+                    map_y(end[1]) - 0.8,
                 ));
                 let name_at = rotate_about(
                     component,
@@ -9632,21 +9642,21 @@ fn pdf_page(design: &Design, sheet: Option<&Sheet>, index: usize, total: usize, 
                 let x =
                     if pin.left { map_x(name_at[0]) } else { map_x(name_at[0]) - pdf_text_width(&pin.name, label_size * 0.7) };
                 content.push_str(&format!(
-                    "BT /F1 {:.2} Tf {x:.2} {:.2} Td {} Tj ET\n",
+                    "0.2 0.25 0.33 rg BT /F1 {:.2} Tf {x:.2} {:.2} Td {} Tj ET\n",
                     label_size * 0.7,
                     map_y(name_at[1]),
                     pdf_literal(&pin.name)
                 ));
             }
             content.push_str(&format!(
-                "BT /F1 {label_size:.2} Tf {:.2} {:.2} Td {} Tj ET\n",
+                "0 0 0 rg BT /F1 {label_size:.2} Tf {:.2} {:.2} Td {} Tj ET\n",
                 map_x(component.x),
                 map_y(component.y) + if inside_box { 2.0 } else { 4.5 * scale },
                 pdf_literal(&component.reference)
             ));
             if !component.value.is_empty() {
                 content.push_str(&format!(
-                    "BT /F1 {:.2} Tf {:.2} {:.2} Td {} Tj ET\n",
+                    "0 0 0 rg BT /F1 {:.2} Tf {:.2} {:.2} Td {} Tj ET\n",
                     label_size * 0.85,
                     map_x(component.x),
                     map_y(component.y) - if inside_box { label_size + 1.0 } else { 4.5 * scale + label_size * 0.85 + 1.0 },

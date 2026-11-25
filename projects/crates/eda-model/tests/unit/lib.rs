@@ -6283,6 +6283,138 @@ fn pdf_replaces_the_resistor_box_with_the_zigzag_and_keeps_stub_endpoints() {
 }
 
 #[test]
+fn pdf_paints_every_component_path_with_an_explicit_colour() {
+    let dir = TempDir::new("pdf-colour-state");
+    let path = dir.join("colours.pdf");
+    let created = create(CreateRequest::default()).expect("create");
+    let handle = created["handle"].as_u64().expect("handle");
+    add_component(
+        handle,
+        AddComponentRequest {
+            sheet: None,
+            reference: "R1".to_string(),
+            value: "10k".to_string(),
+            x: 50.0,
+            y: 30.0,
+            rotation: 0.0,
+            pins: vec!["1".to_string(), "2".to_string()],
+        },
+    )
+    .expect("add R1");
+    add_component(
+        handle,
+        AddComponentRequest {
+            sheet: None,
+            reference: "U1".to_string(),
+            value: "MCU".to_string(),
+            x: 50.0,
+            y: 60.0,
+            rotation: 0.0,
+            pins: vec!["VCC".to_string(), "GND".to_string(), "IO1".to_string(), "IO2".to_string()],
+        },
+    )
+    .expect("add U1");
+    add_wire(handle, AddWireRequest { sheet: None, net: Some("NET_A".to_string()), from: [0.0, 0.0], to: [10.0, 0.0] })
+        .expect("add wire");
+    add_label(
+        handle,
+        AddLabelRequest {
+            sheet: None,
+            text: "DATA0".to_string(),
+            x: 80.0,
+            y: 20.0,
+            scope: Some(LabelScope::Hierarchical),
+            rotation: None,
+            justify: None,
+        },
+    )
+    .expect("add hierarchical label");
+
+    export(handle, "pdf", &path).expect("export pdf");
+    let text = fs::read_to_string(&path).expect("read pdf");
+    // Wires, bodies, artwork and pin stubs each carry their own colour, so a
+    // label painted earlier in the stream cannot leak its stroke onto them.
+    assert!(text.contains("0.06 0.46 0.43 RG 0.6 w"), "wires are teal: {text}");
+    assert!(text.contains("0.12 0.44 0.92 RG 0.7 w"), "component bodies are symbol blue: {text}");
+    assert!(text.contains("0.12 0.44 0.92 RG 0.6 w"), "symbol artwork is symbol blue: {text}");
+    assert!(text.contains("0.12 0.44 0.92 RG 0.5 w"), "pin stubs are symbol blue: {text}");
+    assert!(text.contains("0.12 0.44 0.92 rg"), "pin dots are painted blue: {text}");
+    for line in text.lines() {
+        assert!(
+            !(line.starts_with("0.5 w ") || line.starts_with("0.6 w ") || line.starts_with("0.7 w ")),
+            "path drawn without an explicit colour: {line}"
+        );
+    }
+    close(handle).expect("close");
+}
+
+#[test]
+fn pdf_label_decorations_follow_the_font_size_not_the_drawing_scale() {
+    let dir = TempDir::new("pdf-label-decoration");
+    let path = dir.join("labels.pdf");
+    let created = create(CreateRequest::default()).expect("create");
+    let handle = created["handle"].as_u64().expect("handle");
+    add_component(
+        handle,
+        AddComponentRequest {
+            sheet: None,
+            reference: "R1".to_string(),
+            value: "10k".to_string(),
+            x: 50.0,
+            y: 30.0,
+            rotation: 0.0,
+            pins: vec!["1".to_string(), "2".to_string()],
+        },
+    )
+    .expect("add R1");
+    add_label(
+        handle,
+        AddLabelRequest {
+            sheet: None,
+            text: "NET_A".to_string(),
+            x: 50.0,
+            y: 20.0,
+            scope: Some(LabelScope::Local),
+            rotation: None,
+            justify: None,
+        },
+    )
+    .expect("add local label");
+    add_label(
+        handle,
+        AddLabelRequest {
+            sheet: None,
+            text: "VCC".to_string(),
+            x: 50.0,
+            y: 42.0,
+            scope: Some(LabelScope::Global),
+            rotation: None,
+            justify: None,
+        },
+    )
+    .expect("add global label");
+
+    export(handle, "pdf", &path).expect("export pdf");
+    let text = fs::read_to_string(&path).expect("read pdf");
+    // A tiny drawing is scaled up a lot; the underline and the global box must
+    // stay attached to the clamped 5-8 pt text, not to the drawing scale.
+    let underline = text.lines().find(|line| line.starts_with("0.06 0.46 0.43 RG 0.3 w ")).expect("local label underline");
+    let label_text = text.lines().find(|line| line.starts_with("0.06 0.46 0.43 rg BT ")).expect("local label text");
+    let size: f64 = label_text.split_whitespace().nth(6).expect("font size").parse().expect("font size");
+    let baseline: f64 = label_text.split_whitespace().nth(9).expect("baseline y").parse().expect("baseline");
+    let underline_y: f64 = underline.split_whitespace().nth(7).expect("underline y").parse().expect("underline");
+    assert!(
+        baseline - underline_y <= size,
+        "underline {underline_y} drifted {}pt below a {size}pt label",
+        baseline - underline_y
+    );
+    let box_line = text.lines().find(|line| line.starts_with("0.72 0.11 0.11 RG 0.35 w ")).expect("global label box");
+    let box_height: f64 = box_line.split_whitespace().nth(9).expect("box height").parse().expect("box height");
+    assert!((box_height - 1.5 * size).abs() < 0.1, "global box {box_height}pt tall around a {size}pt label");
+    close(handle).expect("close");
+}
+
+#[test]
 fn empty_design_exports_every_supported_format_without_panic() {
     let dir = TempDir::new("empty-export");
     let created =
