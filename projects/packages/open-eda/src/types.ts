@@ -124,6 +124,7 @@ export interface DesignCapabilities {
         readonly noConnects: SupportLevel;
         readonly pins: SupportLevel;
         readonly annotate: SupportLevel;
+        readonly duplicate: SupportLevel;
     };
     /** Read-only queries that are not rule checks, such as the pin trace. */
     readonly queries: { readonly trace: SupportLevel; readonly netAudit: SupportLevel };
@@ -798,6 +799,27 @@ export interface CopyComponentInput {
     readonly reference: string;
     /** Reference designator of the copy; unique across every sheet. */
     readonly newReference: string;
+    /** Offset added to the source X coordinate; defaults to zero. */
+    readonly dx?: number;
+    /** Offset added to the source Y coordinate; defaults to zero. */
+    readonly dy?: number;
+}
+
+/**
+ * Input of `design.duplicateComponent()`.
+ *
+ * The duplicate stays on the source sheet, keeps the source value, footprint,
+ * rotation, pins, pin roles, custom properties and component class, and moves
+ * by `dx`/`dy` (zero when omitted). Its reference is chosen automatically: the
+ * leading letters of the source reference form the prefix and the smallest
+ * positive number no sheet already uses with that prefix is taken. Net nodes,
+ * wires and no-connect flags are never copied. A source reference without
+ * leading letters is refused with `session/argument-invalid`.
+ */
+export interface DuplicateComponentInput {
+    readonly sheet?: SheetId;
+    /** Reference designator of the placed component to duplicate. */
+    readonly reference: string;
     /** Offset added to the source X coordinate; defaults to zero. */
     readonly dx?: number;
     /** Offset added to the source Y coordinate; defaults to zero. */
@@ -1908,6 +1930,8 @@ export interface Design {
     addComponent(input: ComponentInput): Promise<Component>;
     /** Copies one placed component under a new reference; net nodes and wires are not copied. */
     copyComponent(input: CopyComponentInput): Promise<Component>;
+    /** Duplicates one placed component under the next free reference; net nodes and wires are not copied. */
+    duplicateComponent(input: DuplicateComponentInput): Promise<Component>;
     /** Deletes one component; its net nodes are removed and detached wires stay valid. */
     deleteComponent(reference: string, options?: { readonly sheet?: SheetId }): Promise<void>;
     /** Connects `REF.PIN` nodes to a net, creating it when needed. */

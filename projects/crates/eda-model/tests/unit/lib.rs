@@ -85,6 +85,7 @@ fn capability_matrix_reports_only_the_implemented_entries() {
     assert_eq!(matrix["edits"]["annotate"], "supported");
     assert_eq!(matrix["edits"]["netRename"], "supported");
     assert_eq!(matrix["edits"]["wireSplit"], "supported");
+    assert_eq!(matrix["edits"]["duplicate"], "supported");
     assert_eq!(matrix["queries"]["component"], "supported");
     assert_eq!(matrix["queries"]["net"], "supported");
     assert_eq!(matrix["queries"]["trace"], "supported");

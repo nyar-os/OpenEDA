@@ -40,6 +40,7 @@ import type {
     DesignSummary,
     DeriveNetsResult,
     DisconnectNetInput,
+    DuplicateComponentInput,
     ExportReport,
     ExportTarget,
     HistoryResult,
@@ -748,6 +749,21 @@ export function copyComponent(handle: number, input: CopyComponentInput): Compon
                 sheet: input.sheet,
                 reference: input.reference,
                 newReference: input.newReference,
+                dx: input.dx ?? 0,
+                dy: input.dy ?? 0,
+            }),
+        ),
+    );
+}
+
+/** Duplicates one placed component on the same sheet under the next free reference. */
+export function duplicateComponent(handle: number, input: DuplicateComponentInput): ComponentResult {
+    return decode<ComponentResult>(() =>
+        binding('design.duplicateComponent').design_duplicate_component(
+            handle,
+            JSON.stringify({
+                sheet: input.sheet,
+                reference: input.reference,
                 dx: input.dx ?? 0,
                 dy: input.dy ?? 0,
             }),

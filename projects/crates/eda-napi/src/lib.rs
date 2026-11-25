@@ -24,11 +24,11 @@ use std::{
 use open_eda_model::{
     AddBusRequest, AddComponentRequest, AddHierarchyPortRequest, AddHierarchyRequest, AddJunctionRequest, AddLabelRequest,
     AddNoConnectRequest, AddPinRequest, AddTextRequest, AddWireRequest, ComponentClassRequest, ConnectNetRequest,
-    CopyComponentRequest, CreateRequest, DeleteNetRequest, DisconnectNetRequest, InspectOptions, MergeNetsRequest,
-    MoveComponentRequest, NetClassRequest, ReferencePrefixRequest, RemoveComponentPropertyRequest, RemoveHierarchyPortRequest,
-    RemovePinRequest, RenameNetRequest, RenamePinRequest, ServiceError, SetComponentPropertyRequest, SetFootprintRequest,
-    SetPinTypeRequest, SplitWireRequest, SwapPinsRequest, TranslateRequest, UpdateComponentRequest, UpdateDesignRequest,
-    UpdateLabelRequest, UpdateTextRequest, UpdateWireRequest,
+    CopyComponentRequest, CreateRequest, DeleteNetRequest, DisconnectNetRequest, DuplicateComponentRequest, InspectOptions,
+    MergeNetsRequest, MoveComponentRequest, NetClassRequest, ReferencePrefixRequest, RemoveComponentPropertyRequest,
+    RemoveHierarchyPortRequest, RemovePinRequest, RenameNetRequest, RenamePinRequest, ServiceError,
+    SetComponentPropertyRequest, SetFootprintRequest, SetPinTypeRequest, SplitWireRequest, SwapPinsRequest, TranslateRequest,
+    UpdateComponentRequest, UpdateDesignRequest, UpdateLabelRequest, UpdateTextRequest, UpdateWireRequest,
 };
 use serde_json::{Value, json};
 use wae::{
@@ -1002,6 +1002,15 @@ fn design_copy_component(ctx: CallContext) -> Result<JsValue> {
     let report = open_eda_model::copy_component(handle, request).map_err(fail)?;
     respond(&ctx, &report)
 }
+
+/// Duplicates one placed component on the same sheet under the next free reference.
+#[function]
+fn design_duplicate_component(ctx: CallContext) -> Result<JsValue> {
+    let handle = handle(&ctx, 0)?;
+    let request: DuplicateComponentRequest = decode(serde_json::from_str(&text(&ctx, 1)?))?;
+    let report = open_eda_model::duplicate_component(handle, request).map_err(fail)?;
+    respond(&ctx, &report)
+}
 fn decode<T>(result: std::result::Result<T, serde_json::Error>) -> Result<T> {
     result.map_err(|error| Error::new(format!("session/argument-invalid: {error}")))
 }
@@ -1873,6 +1882,7 @@ register_module![
     design_list_sheets,
     design_stats,
     design_copy_component,
+    design_duplicate_component,
     open_gui,
     pump_events,
     close_gui,

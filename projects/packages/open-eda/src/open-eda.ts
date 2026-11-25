@@ -46,6 +46,7 @@ import type {
     DesignSummary,
     DeriveNetsResult,
     DisconnectNetInput,
+    DuplicateComponentInput,
     ExportOptions,
     ExportReport,
     HistoryResult,
@@ -552,6 +553,12 @@ function attach(opened: service.DesignHandle, options: AttachOptions): Design {
             current = result.design;
             return result.component;
         },
+        async duplicateComponent(input: DuplicateComponentInput): Promise<Component> {
+            assertDuplicateComponentInput(input);
+            const result = await mutate(() => service.duplicateComponent(handle, input));
+            current = result.design;
+            return result.component;
+        },
         async deleteComponent(reference: string, deleteOptions?: { readonly sheet?: string }): Promise<void> {
             const result = await mutate(() => service.deleteComponent(handle, reference, deleteOptions?.sheet));
             current = result.design;
@@ -925,6 +932,19 @@ function assertCopyComponentInput(input: CopyComponentInput): void {
         if (typeof value !== 'string' || value.trim().length === 0) {
             throw new OpenEDAError('session/argument-invalid', `\`${key}\` must be a non-empty reference designator`);
         }
+    }
+    for (const key of ['dx', 'dy'] as const) {
+        const value = input[key];
+        if (value !== undefined && (typeof value !== 'number' || !Number.isFinite(value))) {
+            throw new OpenEDAError('session/argument-invalid', `\`${key}\` must be a finite number`);
+        }
+    }
+}
+
+function assertDuplicateComponentInput(input: DuplicateComponentInput): void {
+    const reference = input?.reference;
+    if (typeof reference !== 'string' || reference.trim().length === 0) {
+        throw new OpenEDAError('session/argument-invalid', '`reference` must be a non-empty reference designator');
     }
     for (const key of ['dx', 'dy'] as const) {
         const value = input[key];

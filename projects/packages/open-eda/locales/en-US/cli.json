@@ -30,6 +30,7 @@
             "component-show": "Show one placed component with its placement, custom properties and per-pin nets",
             "component-add": "Add a component to a design document in place",
             "component-copy": "Copy a placed component under a new reference in place",
+            "component-duplicate": "Duplicate a placed component under the next free reference in place",
             "component-move": "Move a placed component in place",
             "component-update": "Update the value, footprint or placement of a placed component in place",
             "component-footprint": "Assign or clear the footprint of a placed component in place",

@@ -1024,6 +1024,28 @@ pub struct CopyComponentRequest {
     pub dy: f64,
 }
 
+/// Request of [`duplicate_component`].
+///
+/// The duplicate stays on the source sheet, keeps the source value, footprint,
+/// rotation, pins, pin roles, custom properties and component class, and moves
+/// by `dx`/`dy`. The reference is chosen automatically as the next free number
+/// of the source reference prefix.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DuplicateComponentRequest {
+    /// Target sheet id or name; the first sheet is used when omitted.
+    #[serde(default)]
+    pub sheet: Option<String>,
+    /// Reference designator of the placed component to duplicate.
+    pub reference: String,
+    /// Offset added to the source X coordinate; defaults to zero.
+    #[serde(default)]
+    pub dx: f64,
+    /// Offset added to the source Y coordinate; defaults to zero.
+    #[serde(default)]
+    pub dy: f64,
+}
+
 /// Request of [`set_component_footprint`].
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1478,6 +1500,7 @@ pub fn capabilities() -> Value {
         "annotate": level("edit.annotate".to_string()),
         "netRename": level("edit.net-rename".to_string()),
         "wireSplit": level("edit.wire-split".to_string()),
+        "duplicate": level("edit.component-duplicate".to_string()),
     });
 
     let mut queries = Map::new();
@@ -1530,6 +1553,7 @@ fn capability_matrix() -> CapabilityMatrix {
     matrix.insert(Capability::new("edit.annotate", "edit", Support::Supported));
     matrix.insert(Capability::new("edit.net-rename", "edit", Support::Supported));
     matrix.insert(Capability::new("edit.wire-split", "edit", Support::Supported));
+    matrix.insert(Capability::new("edit.component-duplicate", "edit", Support::Supported));
     matrix.insert(Capability::new("query.component", "query", Support::Supported));
     matrix.insert(Capability::new("query.net", "query", Support::Supported));
     matrix.insert(Capability::new("query.trace", "query", Support::Supported));
@@ -2636,6 +2660,81 @@ pub fn copy_component(handle: u64, request: CopyComponentRequest) -> Result<Valu
         }
         design.revision += 1;
         let mut payload = Map::new();
+        payload.insert("component".to_string(), json!(component));
+        Ok(payload)
+    })
+}
+
+/// Duplicates one placed component on the same sheet under the next free reference.
+///
+/// The duplicate keeps the source value, footprint, rotation, pins, pin roles,
+/// custom properties and component class, and is placed at the source position
+/// plus `dx`/`dy`. Its reference is derived from the leading ASCII letters of
+/// the source reference and takes the smallest positive number that no sheet
+/// already uses with that prefix, so `R1` in a design holding `R1` and `R3`
+/// duplicates to `R2`. Net nodes, wires and no-connect flags are never copied,
+/// so the duplicate starts electrically unconnected. A source reference without
+/// leading letters is refused (`session/argument-invalid`) because no prefix
+/// can be derived, and a reference the sheet does not place is
+/// `object/not-found`. One successful call adds exactly one revision.
+pub fn duplicate_component(handle: u64, request: DuplicateComponentRequest) -> Result<Value, ServiceError> {
+    if !request.dx.is_finite() || !request.dy.is_finite() {
+        return Err(ServiceError::new("session/argument-invalid", "component offsets must be finite numbers"));
+    }
+    mutate(handle, |design| {
+        let index = sheet_index(design, request.sheet.as_deref())?;
+        let source = design.sheets[index]
+            .components
+            .iter()
+            .find(|component| component.reference == request.reference)
+            .cloned()
+            .ok_or_else(|| not_found(format!("no component with reference `{}` is placed on this sheet", request.reference)))?;
+        let prefix: String = source.reference.chars().take_while(char::is_ascii_alphabetic).collect();
+        if prefix.is_empty() {
+            return Err(ServiceError::new(
+                "session/argument-invalid",
+                format!("cannot derive a reference prefix from `{}`", source.reference),
+            ));
+        }
+        let used: HashSet<String> =
+            design.sheets.iter().flat_map(|sheet| &sheet.components).map(|component| component.reference.clone()).collect();
+        let mut number = 1u64;
+        let reference = loop {
+            let candidate = format!("{prefix}{number}");
+            if !used.contains(&candidate) {
+                break candidate;
+            }
+            number += 1;
+        };
+        let x = source.x + request.dx;
+        let y = source.y + request.dy;
+        if !x.is_finite() || !y.is_finite() {
+            return Err(ServiceError::new("session/argument-invalid", "component coordinates must be finite numbers"));
+        }
+        let class = design.rules.component_classes.get(&source.id).cloned();
+        let sheet = &mut design.sheets[index];
+        let mut ids: HashSet<String> = sheet.components.iter().map(|component| component.id.clone()).collect();
+        let id = next_id(&mut design.next_component, "component", &mut ids);
+        let component = Component {
+            id: id.clone(),
+            reference: reference.clone(),
+            value: source.value,
+            footprint: source.footprint,
+            x,
+            y,
+            rotation: source.rotation,
+            pins: source.pins,
+            pin_types: source.pin_types,
+            properties: source.properties,
+        };
+        sheet.components.push(component.clone());
+        if let Some(class) = class {
+            design.rules.component_classes.insert(id, class);
+        }
+        design.revision += 1;
+        let mut payload = Map::new();
+        payload.insert("source".to_string(), json!(request.reference));
+        payload.insert("reference".to_string(), json!(reference));
         payload.insert("component".to_string(), json!(component));
         Ok(payload)
     })
@@ -9704,3 +9803,7 @@ mod net_audit_tests;
 #[cfg(test)]
 #[path = "../tests/unit/dangling.rs"]
 mod dangling_tests;
+
+#[cfg(test)]
+#[path = "../tests/unit/duplicate.rs"]
+mod duplicate_tests;

@@ -844,6 +844,43 @@ componentCommand
     });
 
 componentCommand
+    .command('duplicate', 'cli.cmd.component-duplicate')
+    .option('--ref <ref>', 'cli.opt.ref')
+    .option('--dx <number>', 'cli.opt.dx')
+    .option('--dy <number>', 'cli.opt.dy')
+    .option('--sheet <sheet>', 'cli.opt.sheet')
+    .actionCtx(async (options, _args, ctx) => {
+        const file = input(options);
+        if (file === undefined) {
+            ctx.fail('open-eda.cli.file-required', { message: 'a design document is required' });
+            return 2;
+        }
+        const reference = text(options, 'ref');
+        const dx = number(options, 'dx') ?? 0;
+        const dy = number(options, 'dy') ?? 0;
+        if (reference === undefined || reference.trim().length === 0 || Number.isNaN(dx) || Number.isNaN(dy)) {
+            ctx.fail('open-eda.cli.arguments-invalid', {
+                message: '`--ref` is required; `--dx` and `--dy` must be finite numbers',
+            });
+            return 2;
+        }
+        const { component, saved } = await withDesign(file, async (design) => {
+            const component = await design.duplicateComponent({
+                sheet: text(options, 'sheet'),
+                reference,
+                dx,
+                dy,
+            });
+            return { component, saved: await savedReport(design) };
+        });
+        ctx.emitResult(
+            { ...saved, revision: saved.revision, component },
+            `duplicated ${reference} to ${component.ref} in ${file} revision=${saved.revision}`,
+        );
+        return 0;
+    });
+
+componentCommand
     .command('move', 'cli.cmd.component-move')
     .option('--ref <ref>', 'cli.opt.ref')
     .option('--x <number>', 'cli.opt.x')
