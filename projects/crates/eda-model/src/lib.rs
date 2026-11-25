@@ -87,6 +87,7 @@ const RENDER_FORMATS: &[&str] = &["svg", "png", "pdf"];
 const EXPORT_TARGETS: &[&str] = &[
     "kicad_sch",
     "kicad_sym",
+    "kicad_net",
     "kicad_pcb",
     "net",
     "net_csv",
@@ -109,6 +110,7 @@ const EXPORT_TARGETS: &[&str] = &[
 const SUPPORTED_EXPORTS: &[&str] = &[
     "kicad_sch",
     "kicad_sym",
+    "kicad_net",
     "net",
     "net_csv",
     "net_hier",
@@ -5151,6 +5153,20 @@ pub fn export_with_options(
                 "components": design.sheets.iter().map(|sheet| sheet.components.len()).sum::<usize>(),
             });
             (kicad::render_symbol_library(&design), artifact)
+        }
+        "kicad_net" => {
+            let artifact = json!({
+                "kind": "kicad_net",
+                "components": design.sheets.iter().map(|sheet| sheet.components.len()).sum::<usize>(),
+                "nets": design.sheets.iter().map(|sheet| sheet.nets.len()).sum::<usize>(),
+                "nodes": design
+                    .sheets
+                    .iter()
+                    .flat_map(|sheet| &sheet.nets)
+                    .map(|net| net.nodes.len())
+                    .sum::<usize>(),
+            });
+            (kicad::render_netlist(&design), artifact)
         }
         _ => return Err(not_implemented(&format!("export `{format}`"))),
     };

@@ -106,6 +106,7 @@ async function withDesign<T>(file: string, run: (design: Design) => Promise<T>):
 const exportTargets: readonly ExportTarget[] = [
     'kicad_sch',
     'kicad_sym',
+    'kicad_net',
     'kicad_pcb',
     'net',
     'net_csv',
@@ -3076,7 +3077,8 @@ cli
         const format = asExportTarget(text(options, 'format'));
         if (format === undefined) {
             ctx.fail('open-eda.cli.format-required', {
-                message: '`--format` must be one of kicad_sch, kicad_sym, kicad_pcb, net, net_csv, net_hier, net_class, net_length, spice, spice_subckt, gbr, pdf, svg, bom, bom_json, bom_html, report, json',
+                message:
+                    '`--format` must be one of kicad_sch, kicad_sym, kicad_net, kicad_pcb, net, net_csv, net_hier, net_class, net_length, spice, spice_subckt, gbr, pdf, svg, bom, bom_json, bom_html, report, json',
             });
             return 2;
         }

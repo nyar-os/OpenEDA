@@ -1185,6 +1185,46 @@ pub(crate) fn render_symbol_library(design: &Design) -> String {
     out
 }
 
+/// Renders the components and nets of one design as a KiCad 6/7 netlist.
+///
+/// The projection is read-only and deterministic: components follow sheet and
+/// declaration order, nets follow document order with ascending `code`, and
+/// every node keeps its declaration order. Only the fields the model carries
+/// are written — reference, value, footprint, derived library id and the
+/// `REF.PIN` nodes. A net without nodes is still listed, and bus declarations
+/// are not expanded because the netlist grammar carries no bus section. The
+/// result re-reads through [`import_net`], so the projection round-trips.
+pub(crate) fn render_netlist(design: &Design) -> String {
+    let mut out = String::new();
+    out.push_str("(export (version \"D\")\n");
+    out.push_str(&format!("  (design (source {}))\n", quote(&format!("{}.kicad_net", design.id))));
+    out.push_str("  (components\n");
+    for sheet in &design.sheets {
+        for component in &sheet.components {
+            out.push_str(&format!("    (comp (ref {})\n", quote(&component.reference)));
+            out.push_str(&format!("      (value {})\n", quote(&component.value)));
+            out.push_str(&format!("      (footprint {})\n", quote(&component.footprint)));
+            out.push_str(&format!("      (lib_id {})\n", quote(&lib_id_for(component))));
+            out.push_str("    )\n");
+        }
+    }
+    out.push_str("  )\n");
+    out.push_str("  (nets\n");
+    let mut code = 1u64;
+    for sheet in &design.sheets {
+        for net in &sheet.nets {
+            out.push_str(&format!("    (net (code \"{code}\") (name {})\n", quote(&net.name)));
+            for node in &net.nodes {
+                out.push_str(&format!("      (node (ref {}) (pin {}))\n", quote(&node.reference), quote(&node.pin)));
+            }
+            out.push_str("    )\n");
+            code += 1;
+        }
+    }
+    out.push_str("  )\n)\n");
+    out
+}
+
 /// Tag written into the deterministic symbol library check report.
 pub(crate) const LIBRARY_CHECK_FORMAT: &str = "open-eda-library-check";
 /// Version written into the symbol library check report.

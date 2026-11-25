@@ -79,6 +79,7 @@ export type RenderFormat = 'svg' | 'png' | 'pdf';
 export type ExportTarget =
     | 'kicad_sch'
     | 'kicad_sym'
+    | 'kicad_net'
     | 'kicad_pcb'
     | 'net'
     | 'net_csv'

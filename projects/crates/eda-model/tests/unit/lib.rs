@@ -74,6 +74,7 @@ fn capability_matrix_reports_only_the_implemented_entries() {
     assert_eq!(matrix["exportTargets"]["json"], "supported");
     assert_eq!(matrix["exportTargets"]["kicad_sch"], "supported");
     assert_eq!(matrix["exportTargets"]["kicad_sym"], "supported");
+    assert_eq!(matrix["exportTargets"]["kicad_net"], "supported");
     assert_eq!(matrix["exportTargets"]["kicad_pcb"], "unsupported");
     assert_eq!(matrix["exportTargets"]["gbr"], "unsupported");
     assert_eq!(matrix["edits"]["components"], "supported");
@@ -6287,5 +6288,70 @@ fn empty_design_exports_every_supported_format_without_panic() {
         let bytes = report["bytes"].as_u64().expect("the report counts bytes");
         assert!(bytes > 0, "`{format}` wrote an empty file for an empty design");
     }
+    close(handle).expect("close");
+}
+
+#[test]
+fn kicad_net_export_projects_components_and_nets_and_round_trips() {
+    let dir = TempDir::new("kicad-net");
+    let path = dir.join("blinker.kicad_net");
+    let created = create(CreateRequest::default()).expect("create");
+    let handle = created["handle"].as_u64().expect("handle");
+    for (reference, value) in [("R1", "10k"), ("C1", "100n")] {
+        add_component(
+            handle,
+            AddComponentRequest {
+                sheet: None,
+                reference: reference.to_string(),
+                value: value.to_string(),
+                x: 0.0,
+                y: 0.0,
+                rotation: 0.0,
+                pins: vec!["1".to_string(), "2".to_string()],
+            },
+        )
+        .expect("add component");
+    }
+    set_component_footprint(
+        handle,
+        SetFootprintRequest { sheet: None, reference: "R1".to_string(), footprint: "Resistor_SMD:R_0805".to_string() },
+    )
+    .expect("set footprint");
+    connect_net(
+        handle,
+        ConnectNetRequest { sheet: None, net: "VCC".to_string(), nodes: vec!["R1.1".to_string(), "C1.1".to_string()] },
+    )
+    .expect("connect VCC");
+    connect_net(handle, ConnectNetRequest { sheet: None, net: "GND".to_string(), nodes: vec!["R1.2".to_string()] })
+        .expect("connect GND");
+
+    let report = export(handle, "kicad_net", &path).expect("export kicad_net");
+    assert_eq!(report["format"], "kicad_net");
+    assert_eq!(report["artifact"]["components"], 2);
+    assert_eq!(report["artifact"]["nets"], 2);
+    assert_eq!(report["artifact"]["nodes"], 3);
+
+    let text = fs::read_to_string(&path).expect("read netlist");
+    assert!(text.starts_with("(export (version \"D\")\n"), "{text}");
+    assert!(
+        text.contains("(comp (ref \"R1\")\n      (value \"10k\")\n      (footprint \"Resistor_SMD:R_0805\")\n      (lib_id \"open-eda:2pin\")\n    )"),
+        "{text}"
+    );
+    assert!(text.contains("(comp (ref \"C1\")\n      (value \"100n\")\n      (footprint \"\")"), "{text}");
+    assert!(
+        text.contains("(net (code \"1\") (name \"VCC\")\n      (node (ref \"R1\") (pin \"1\"))\n      (node (ref \"C1\") (pin \"1\"))\n    )"),
+        "{text}"
+    );
+    assert!(text.contains("(net (code \"2\") (name \"GND\")\n      (node (ref \"R1\") (pin \"2\"))\n    )"), "{text}");
+
+    let again = dir.join("again.kicad_net");
+    export(handle, "kicad_net", &again).expect("re-export");
+    assert_eq!(fs::read_to_string(&again).expect("read again"), text, "the projection is byte-stable");
+
+    let imported = import_kicad_net(&text).expect("import netlist");
+    assert_eq!(imported["losses"], json!([]), "{:?}", imported["losses"]);
+    assert_eq!(imported["totals"], json!({ "components": 2, "nets": 2, "pins": 3 }));
+    let diff = compare_kicad_net(handle, &text).expect("compare netlist");
+    assert_eq!(diff["equal"], true, "{diff}");
     close(handle).expect("close");
 }
