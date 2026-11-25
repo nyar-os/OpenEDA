@@ -389,11 +389,13 @@ an error, so the reader's losses never fail the check on their own.
   `Q`/`J` parts gain an enclosing transistor ring; pin connection points never
   move and every other part keeps the generic box. `pdf` paints the same
   geometry.
-- `svg` projects every sheet into one viewport by default. Sheets share a
-  drawing origin, so a multi-sheet design overlaps them; pass
+- `svg` projects every sheet into one viewport. A multi-sheet design is stacked
+  into separate labelled bands — one separator frame, sheet-name header and
+  fitted view per sheet — so sheets that share design coordinates never
+  overlap; the shared title block counts the whole document. Pass
   `--sheet <id|name>` to paint exactly one sheet. The default keeps every sheet
   instead of dropping any, and a selected export reports only that sheet's
-  component and wire counts. SVG has no pagination.
+  component and wire counts.
 - `bom` groups by value and footprint and emits
   `Comment,Footprint,Designator,Quantity` with compressed designator ranges
   (`R5-R7` for three or more consecutive numbers). Designators sort numerically
@@ -421,13 +423,59 @@ an error, so the reader's losses never fail the check on their own.
   rotation — standard resistor, capacitor, inductor and diode artwork, the
   enclosing ring for `Q`/`J` parts and the generic box otherwise), pin stubs
   with connection dots and label outlines, using the same colours as the SVG
-  projection. Text is not rasterized because the model carries no font engine,
-  so label outlines mark where labels sit. The view fits the painted sheets and
-  centres them; `--sheet <id|name>` selects one sheet like `svg`. The encoder
-  writes a valid PNG from uncompressed deflate blocks with hand-computed CRC-32
-  and Adler-32, so one revision rasterizes byte-identically.
+  projection. Text is rasterized with a built-in 5×7 bitmap font covering
+  printable ASCII — component references and values, net names, net labels,
+  sheet texts and the title block — so no external font engine is required;
+  characters outside ASCII rasterize as `?`, mirroring the PDF base-14
+  fallback. A multi-sheet design stacks into separate labelled bands, exactly
+  like the paged SVG and PDF exports; `--sheet <id|name>` selects one sheet.
+  The encoder writes a valid PNG from uncompressed deflate blocks with
+  hand-computed CRC-32 and Adler-32, so one revision rasterizes
+  byte-identically.
 - `json` writes a read-only `open-eda-projection` of the design header and every
   sheet's objects.
+
+### Drawings
+
+Standalone SVG documents projected from the design rather than from one sheet's
+geometry. Each rejects `--sheet`, carries the shared title block and is
+byte-deterministic for one revision.
+
+- `block_diagram` lays components out as layered boxes left-to-right and chains
+  every multi-member net through its members as one routed polyline per
+  segment. Same-column segments run below the boxes, nodes that share a centre
+  line take a single straight segment, and a net name that would collide with
+  an already-painted name is pushed down until it has its own spot.
+- `sheet_overview` fits every sheet into one grid cell with its own separator
+  frame and sheet-name header, under a single shared title block.
+- `pinout_chart` prints one pin-to-net table block per component, listing each
+  pin with the nets it joins.
+- `symbol_library` places every distinct symbol (reference prefix plus pin
+  list) once on a grid, represented by its first designator in natural order.
+- `net_topology` paints the component/net incidence graph: component boxes in a
+  left column, one net node per net in a right column, and one elbow edge from
+  each member component to its net node, so single-member nets stay visible.
+- `power_distribution` classifies nets into power rails (`VCC`, `VDD`, compact
+  voltages such as `3V3`/`5V`, or nets carrying `PowerIn`/`PowerOut` pins) and
+  ground rails (`GND`, `VSS`, `VEE`, `0V`) and paints each as a full-width bar:
+  power rails above the component field, ground rails below, with a straight
+  drop line from every member component to its rail. A design without any rail
+  net paints its components plus an explanatory note.
+- `bom_drawing` renders the grouped bill of materials — one row per value and
+  footprint, designators compressed into ranges — as a ruled five-column table
+  (`#`, `COMMENT`, `FOOTPRINT`, `DESIGNATORS`, `QTY`) with the shared title
+  block. Cell text is clipped to its column.
+- `bom_drawing_pdf` writes the same table as a paginated A4 landscape PDF with
+  ruled header, row separators and a footer title line, using the base-14
+  Helvetica encoding and the same `pdf/text-encoding` loss reporting as `pdf`.
+- `net_xref` lists every declared net as one table row: the `REFERENCE.PIN`
+  members under that net name in natural order and the one-based sheet numbers
+  that name it. A long member list wraps inside its column and the row grows in
+  height instead of overlapping its neighbour.
+- `net_xref_pdf` writes the same cross-reference as a paginated A4 landscape
+  PDF; rows are grouped by accumulated line height, so a wrapped member list
+  cannot overflow the printable area, and text uses the base-14 Helvetica
+  encoding with the same `pdf/text-encoding` loss reporting as `pdf`.
 
 Every file is written through a temporary file and a rename.
 

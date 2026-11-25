@@ -210,7 +210,11 @@ Port directions: `input`, `output`, `bidirectional`, `tri_state`, `passive`.
 
 Export formats: `net`, `net_csv`, `net_hier`, `net_class`, `net_length`, `spice`,
 `spice_subckt`, `svg`, `png`, `bom`, `bom_json`, `bom_html`, `pdf`, `report`,
-`json`, `kicad_sch`, `kicad_sym`, `kicad_net`. `net_class` groups pin rows by
+`json`, `kicad_sch`, `kicad_sym`, `kicad_net`, and the standalone drawings
+`block_diagram`, `sheet_overview`, `pinout_chart`, `symbol_library`,
+`net_topology`, `power_distribution`, `bom_drawing`, `bom_drawing_pdf`,
+`net_xref` and `net_xref_pdf`.
+`net_class` groups pin rows by
 declared net class and adds the pin electrical role. `net_length` writes
 `Sheet,Net,Length,Wires,Unrouted` rows for the declared nets: `Length` sums the
 drawn wire segments the net names, and `Unrouted` is `yes` when no wire names
@@ -222,10 +226,21 @@ again. A variant is accepted by `bom`, `bom_json` and
 `--sheet <id|name>` limits the drawing projections `svg`, `pdf` and `png` to one
 sheet; every other target rejects it. `pdf` writes one page per sheet by default,
 and `--sheet` writes a single page for that sheet; each page is centred between
-the margins and the title block. `svg` and `png` have a single viewport, so by
-default they paint every sheet and a multi-sheet design overlaps them; use
-`--sheet` to isolate a sheet without losing the rest of the document. `png`
-rasterizes the geometry onto a fixed 1024×768 canvas without text.
+the margins and the title block. `svg` and `png` stack a multi-sheet design into
+separate labelled bands — one fitted, framed and named band per sheet — so sheets
+that share design coordinates never overlap; use `--sheet` to isolate a sheet
+without losing the rest of the document. `png` rasterizes the geometry and the
+text onto a fixed 1024×768 canvas with a built-in bitmap font.
+
+The standalone drawings paint one SVG document each (plus `bom_drawing_pdf` and
+`net_xref_pdf`, which write a paginated PDF): `block_diagram` chains components
+through their nets left-to-right, `sheet_overview` grids every sheet into one
+framed overview, `pinout_chart` tables each component's pins against their nets,
+`symbol_library` deduplicates the placed symbols, `net_topology` draws the
+component/net incidence graph, `power_distribution` maps power and ground rails
+to their member components, `bom_drawing` renders the grouped bill of materials
+as a ruled table, and `net_xref` lists every net with its members and the sheets
+that name it. They reject `--sheet` and carry the shared title block.
 
 ## Worked example
 
@@ -247,4 +262,10 @@ open-eda export blinker.oeda --format pdf --out blinker.pdf
 open-eda export blinker.oeda --format png --out blinker.png
 open-eda export blinker.oeda --format kicad_sch --out blinker.kicad_sch
 open-eda export blinker.oeda --format kicad_net --out blinker.kicad_net
+open-eda export blinker.oeda --format net_topology --out blinker-topology.svg
+open-eda export blinker.oeda --format power_distribution --out blinker-power.svg
+open-eda export blinker.oeda --format bom_drawing --out blinker-bom.svg
+open-eda export blinker.oeda --format bom_drawing_pdf --out blinker-bom.pdf
+open-eda export blinker.oeda --format net_xref --out blinker-xref.svg
+open-eda export blinker.oeda --format net_xref_pdf --out blinker-xref.pdf
 ```
