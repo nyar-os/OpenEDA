@@ -162,6 +162,9 @@ fn paint_page(
     let offset_y = PAGE_MARGIN_Y + (draw_height - used_height) / 2.0;
     let mut svg = start_document();
     svg.push_str(&format!(
+        "  <rect data-page-frame=\"true\" x=\"{PAGE_MARGIN_X:.2}\" y=\"{PAGE_MARGIN_Y:.2}\" width=\"{draw_width:.2}\" height=\"{draw_height:.2}\" fill=\"none\" stroke=\"#1f2933\" stroke-width=\"0.4\"/>\n"
+    ));
+    svg.push_str(&format!(
         "  <g data-drawing=\"{}\" data-content=\"{width:.2} {height:.2}\" data-scale=\"{scale:.4}\" transform=\"translate({offset_x:.2} {offset_y:.2}) scale({scale:.4})\">\n",
         escape_xml(code)
     ));
@@ -317,8 +320,9 @@ fn paint_table(sections: &[TableSection], columns: &[TableColumn], size: f64, ca
             let text_x = if column.align_right { x + column.width - 1.5 } else { x + 1.5 };
             let anchor = if column.align_right { "end" } else { "start" };
             content.push_str(&format!(
-                "    <text x=\"{text_x:.2}\" y=\"{:.2}\" font-family=\"{FONT_FAMILY}\" font-size=\"{painted:.1}\" text-anchor=\"{anchor}\" fill=\"#1f2933\">{}</text>\n",
+                "    <text x=\"{text_x:.2}\" y=\"{:.2}\" font-family=\"{FONT_FAMILY}\" font-size=\"{painted:.1}\" text-anchor=\"{anchor}\" fill=\"#1f2933\" data-table-header=\"true\" data-cell-left=\"{x:.2}\" data-cell-width=\"{:.2}\">{}</text>\n",
                 y + header_height * 0.7,
+                column.width,
                 escape_xml(&label)
             ));
             x += column.width;
@@ -333,8 +337,9 @@ fn paint_table(sections: &[TableSection], columns: &[TableColumn], size: f64, ca
                 let anchor = if column.align_right { "end" } else { "start" };
                 for (line, text) in cell.split('\n').enumerate() {
                     content.push_str(&format!(
-                        "    <text x=\"{text_x:.2}\" y=\"{:.2}\" font-family=\"{FONT_FAMILY}\" font-size=\"{size:.1}\" text-anchor=\"{anchor}\" fill=\"#334155\" data-table-cell=\"true\">{}</text>\n",
+                        "    <text x=\"{text_x:.2}\" y=\"{:.2}\" font-family=\"{FONT_FAMILY}\" font-size=\"{size:.1}\" text-anchor=\"{anchor}\" fill=\"#334155\" data-table-cell=\"true\" data-cell-left=\"{x:.2}\" data-cell-width=\"{:.2}\">{}</text>\n",
                         y + size + 0.2 + line as f64 * line_height,
+                        column.width,
                         escape_xml(text)
                     ));
                 }
@@ -431,7 +436,10 @@ fn render_table(spec: &TableSpec) -> (String, f64, f64, usize) {
         .collect();
     let caption_height = font * 2.7;
     let header_height = (font * 2.0).max(5.0);
-    let budget = draw_height * 0.88 - caption_height - header_height;
+    // Use the whole drawable height so the table fills the page instead of
+    // leaving a visible band of white below the last row. The small reserve
+    // keeps the closing rule off the inner frame.
+    let budget = draw_height - caption_height - header_height - 2.0;
     let rows_per_page = rows_per_page(&heights, budget).max(1);
     let mut sections = Vec::new();
     let mut cursor = 0usize;
@@ -1164,47 +1172,80 @@ pub(crate) fn render_symbol_library(design: &Design) -> SymbolLibrary {
     }
 
     let (draw_width, draw_height) = drawable_size();
-    let gap = 5.0;
+    let gap = 4.0;
     let count = symbols.len().max(1);
-    let exact = exact_grid(count, draw_width, draw_height, gap);
-    let (columns, rows) = exact.unwrap_or_else(|| {
-        let columns = (count as f64).sqrt().ceil() as usize;
-        (columns, count.div_ceil(columns.max(1)))
-    });
-    let cell_width = (draw_width - (columns.saturating_sub(1)) as f64 * gap) / columns.max(1) as f64;
-    let cell_height = (draw_height - (rows.saturating_sub(1)) as f64 * gap) / rows.max(1) as f64;
-    let header_height = 7.0;
+    let entries: Vec<(&String, &Component)> = symbols.iter().map(|(key, component)| (key, *component)).collect();
+    let natural: Vec<(f64, f64)> = entries
+        .iter()
+        .map(|(_, component)| {
+            let mut placed = (**component).clone();
+            placed.rotation = 0.0;
+            placed.mirror = None;
+            placed.x = 0.0;
+            placed.y = 0.0;
+            let (min, max) = crate::component_visual_extents(&placed);
+            ((max[0] - min[0]).max(1.0), (max[1] - min[1]).max(1.0))
+        })
+        .collect();
+    // Cards put the symbol on the left and the name plus the complete pin list
+    // on the right. Choosing the column count that leaves the least empty cell
+    // area keeps a small symbol set from floating in oversized boxes.
+    let (columns, _rows, cell_width, cell_height) = (1..=count)
+        .filter_map(|columns| {
+            let rows = count.div_ceil(columns);
+            let cell_width = (draw_width - (columns.saturating_sub(1)) as f64 * gap) / columns as f64;
+            let cell_height = (draw_height - (rows.saturating_sub(1)) as f64 * gap) / rows as f64;
+            if cell_width < 24.0 || cell_height < 24.0 {
+                return None;
+            }
+            let symbol_width = (cell_width * 0.58 - 4.0).max(4.0);
+            let symbol_height = (cell_height - 4.0).max(4.0);
+            let waste: f64 = natural
+                .iter()
+                .map(|(width, height)| {
+                    let scale = (symbol_width / width).min(symbol_height / height).min(6.0);
+                    symbol_width * symbol_height - width * scale * height * scale
+                })
+                .sum::<f64>()
+                + (columns * rows - count) as f64 * cell_width * cell_height * 0.5;
+            Some((columns, rows, cell_width, cell_height, waste))
+        })
+        .min_by(|left, right| left.4.total_cmp(&right.4))
+        .map(|(columns, rows, width, height, _)| (columns, rows, width, height))
+        .unwrap_or((1, count, draw_width, draw_height / count as f64));
     let no_dots = BTreeSet::new();
 
     let mut content = String::from("  <g data-symbol-library=\"true\">\n");
-    for (index, (key, component)) in symbols.iter().enumerate() {
+    for (index, (key, component)) in entries.iter().enumerate() {
         let column = index % columns.max(1);
         let row = index / columns.max(1);
         let cell_x = column as f64 * (cell_width + gap);
         let cell_y = row as f64 * (cell_height + gap);
+        let symbol_width = (cell_width * 0.58 - 4.0).max(4.0);
+        let symbol_height = (cell_height - 4.0).max(4.0);
+        let text_x = cell_x + cell_width * 0.60;
+        let text_width = (cell_width * 0.40 - 4.0).max(6.0);
         content.push_str(&format!("    <g data-symbol=\"{}\">\n", escape_xml(key)));
         content.push_str(&format!(
             "      <rect x=\"{cell_x:.2}\" y=\"{cell_y:.2}\" width=\"{cell_width:.2}\" height=\"{cell_height:.2}\" fill=\"#ffffff\" stroke=\"#cbd5e1\" stroke-width=\"0.35\"/>\n"
         ));
-        content.push_str(&format!(
-            "      <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"{FONT_FAMILY}\" font-size=\"3.2\" fill=\"#1f2933\">{}</text>\n",
-            cell_x + 2.5,
-            cell_y + 4.8,
-            escape_xml(&fit_text(&format!("{} {}", component.reference, component.value), cell_width - 5.0, 3.2))
-        ));
-        let mut placed = (*component).clone();
+        let header = format!("{} {}", component.reference, component.value);
+        for (line, text) in wrap_text(&header, text_width, 3.2).iter().enumerate() {
+            content.push_str(&format!(
+                "      <text x=\"{text_x:.2}\" y=\"{:.2}\" font-family=\"{FONT_FAMILY}\" font-size=\"3.2\" fill=\"#1f2933\">{}</text>\n",
+                cell_y + 5.0 + line as f64 * 3.8,
+                escape_xml(text)
+            ));
+        }
+        let mut placed = (**component).clone();
         placed.rotation = 0.0;
         placed.mirror = None;
         placed.x = 0.0;
         placed.y = 0.0;
-        let (min, max) = crate::component_extents(&placed);
-        let natural_width = (max[0] - min[0]).max(1.0);
-        let natural_height = (max[1] - min[1]).max(1.0);
-        let inner_width = cell_width - 8.0;
-        let inner_height = cell_height - header_height - 12.0;
-        let scale = (inner_width / natural_width).min(inner_height / natural_height).clamp(0.1, 3.0);
-        let centre_x = cell_x + cell_width / 2.0;
-        let centre_y = cell_y + header_height + inner_height / 2.0;
+        let (width, height) = natural[index];
+        let scale = (symbol_width / width).min(symbol_height / height).clamp(0.1, 6.0);
+        let centre_x = cell_x + 2.0 + symbol_width / 2.0;
+        let centre_y = cell_y + cell_height / 2.0;
         placed.x = centre_x;
         placed.y = centre_y;
         content.push_str(&format!(
@@ -1213,12 +1254,13 @@ pub(crate) fn render_symbol_library(design: &Design) -> SymbolLibrary {
         ));
         push_svg_component_marked(&mut content, &placed, Some(&no_dots), None);
         content.push_str("      </g>\n");
-        content.push_str(&format!(
-            "      <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"{FONT_FAMILY}\" font-size=\"2.8\" text-anchor=\"middle\" fill=\"#64748b\">{}</text>\n",
-            centre_x,
-            cell_y + cell_height - 3.0,
-            escape_xml(&fit_text(&format!("PINS: {}", component.pins.join(", ")), cell_width - 5.0, 2.8))
-        ));
+        for (line, text) in wrap_text(&format!("PINS: {}", component.pins.join(", ")), text_width, 2.6).iter().enumerate() {
+            content.push_str(&format!(
+                "      <text x=\"{text_x:.2}\" y=\"{:.2}\" font-family=\"{FONT_FAMILY}\" font-size=\"2.6\" fill=\"#64748b\">{}</text>\n",
+                cell_y + 15.0 + line as f64 * 3.2,
+                escape_xml(text)
+            ));
+        }
         content.push_str("    </g>\n");
     }
     content.push_str("  </g>\n");
@@ -1231,25 +1273,6 @@ pub(crate) fn render_symbol_library(design: &Design) -> SymbolLibrary {
     }
     let svg = paint_page(&content, draw_width, draw_height, design, "SYMBOL LIBRARY", "SL", 1, 1);
     SymbolLibrary { svg, symbols: symbols.len(), components: components.len() }
-}
-
-/// Returns an exact column/row factorization of `count` whose cell aspect is
-/// closest to the page aspect.
-fn exact_grid(count: usize, draw_width: f64, draw_height: f64, gap: f64) -> Option<(usize, usize)> {
-    if count == 0 {
-        return None;
-    }
-    let target = draw_width / draw_height;
-    (1..=count)
-        .filter(|columns| count.is_multiple_of(*columns))
-        .map(|columns| {
-            let rows = count / columns;
-            let cell_width = (draw_width - columns.saturating_sub(1) as f64 * gap) / columns as f64;
-            let cell_height = (draw_height - rows.saturating_sub(1) as f64 * gap) / rows as f64;
-            (columns, rows, (cell_width / cell_height - target).abs())
-        })
-        .min_by(|left, right| left.2.total_cmp(&right.2))
-        .map(|(columns, rows, _)| (columns, rows))
 }
 
 /// The net topology drawing and the counts it painted.
@@ -1328,7 +1351,10 @@ pub(crate) fn render_net_topology(design: &Design) -> NetTopology {
         ));
         content.push_str("    </g>\n");
     }
+    // Work out every tap before painting: a horizontal run has to know how far
+    // each unrelated trunk extends before it can break around a real crossing.
     let mut trunk_bottoms = vec![0.0f64; net_names.len()];
+    let mut taps: Vec<(usize, f64, f64, f64)> = Vec::new();
     for (index, component) in components.iter().enumerate() {
         let left = index < left_count;
         let column_x = if left { 0.0 } else { right_x };
@@ -1346,15 +1372,49 @@ pub(crate) fn render_net_topology(design: &Design) -> NetTopology {
             let tap_y = y + comp_height * 0.5 + (net as f64 - midpoint) * step;
             let from_x = if left { column_x + comp_width } else { column_x };
             let trunk_x = channel_x + band_widths[..net].iter().sum::<f64>() + band_widths[net] / 2.0;
-            let colour = NET_PALETTE[net % NET_PALETTE.len()];
+            trunk_bottoms[net] = trunk_bottoms[net].max(tap_y);
+            taps.push((net, from_x, trunk_x, tap_y));
+        }
+    }
+    let trunk_centre = |net: usize| channel_x + band_widths[..net].iter().sum::<f64>() + band_widths[net] / 2.0;
+    for (net, from_x, to_x, tap_y) in &taps {
+        let colour = NET_PALETTE[net % NET_PALETTE.len()];
+        let name = net_names[*net];
+        let step = if *to_x >= *from_x { 1.0 } else { -1.0 };
+        let mut crossings: Vec<f64> = (0..net_names.len())
+            .filter(|other| *other != *net && trunk_bottoms[*other] >= *tap_y - 0.05)
+            .map(trunk_centre)
+            .filter(|x| *x > from_x.min(*to_x) + 0.1 && *x < from_x.max(*to_x) - 0.1)
+            .collect();
+        crossings.sort_by(|left, right| (left - from_x).abs().total_cmp(&(right - from_x).abs()));
+        let mut cursor = *from_x;
+        for x in &crossings {
+            let stop = x - 0.9 * step;
+            if (stop - cursor).abs() > 0.01 {
+                content.push_str(&format!(
+                    "    <line x1=\"{cursor:.2}\" y1=\"{tap_y:.2}\" x2=\"{stop:.2}\" y2=\"{tap_y:.2}\" stroke=\"{colour}\" stroke-width=\"0.5\" data-net=\"{}\"/>\n",
+                    escape_xml(name)
+                ));
+            }
+            let resume = x + 0.9 * step;
             content.push_str(&format!(
-                "    <line x1=\"{from_x:.2}\" y1=\"{tap_y:.2}\" x2=\"{trunk_x:.2}\" y2=\"{tap_y:.2}\" stroke=\"{colour}\" stroke-width=\"0.5\" data-net=\"{}\"/>\n",
+                "    <path d=\"M {stop:.2} {tap_y:.2} Q {x:.2} {:.2} {resume:.2} {tap_y:.2}\" fill=\"none\" stroke=\"{colour}\" stroke-width=\"0.5\" data-hop-at=\"{x:.2} {tap_y:.2}\" data-net=\"{}\"/>\n",
+                tap_y - 1.6,
                 escape_xml(name)
             ));
-            content.push_str(&format!("    <circle cx=\"{trunk_x:.2}\" cy=\"{tap_y:.2}\" r=\"0.4\" fill=\"{colour}\"/>\n"));
-            trunk_bottoms[net] = trunk_bottoms[net].max(tap_y);
-            edges += 1;
+            cursor = resume;
         }
+        if (to_x - cursor).abs() > 0.01 {
+            content.push_str(&format!(
+                "    <line x1=\"{cursor:.2}\" y1=\"{tap_y:.2}\" x2=\"{to_x:.2}\" y2=\"{tap_y:.2}\" stroke=\"{colour}\" stroke-width=\"0.5\" data-net=\"{}\"/>\n",
+                escape_xml(name)
+            ));
+        }
+        content.push_str(&format!(
+            "    <circle cx=\"{to_x:.2}\" cy=\"{tap_y:.2}\" r=\"0.7\" fill=\"{colour}\" data-junction=\"true\" data-net=\"{}\"/>\n",
+            escape_xml(name)
+        ));
+        edges += 1;
     }
     for (net, name) in net_names.iter().enumerate() {
         let band_x = channel_x + band_widths[..net].iter().sum::<f64>();
@@ -1842,7 +1902,7 @@ pub(crate) fn render_hierarchy(design: &Design) -> HierarchyDrawing {
     let side = 8.0;
     let content_width = per_row as f64 * node_width + per_row.saturating_sub(1) as f64 * gap_x + 2.0 * side;
     let row_top = |row: usize| node_height + 2.0 * gap_y + row as f64 * (node_height + gap_y + 6.0);
-    let content_height = row_top(rows - 1) + node_height + gap_y;
+    let content_height = row_top(rows - 1) + node_height;
     let root_x = (content_width - node_width) / 2.0;
     let spine_x = 2.0;
     let last_bus = row_top(rows - 1) - gap_y * 0.6;
@@ -2001,18 +2061,43 @@ pub(crate) fn render_erc(design: &Design) -> ErcDrawing {
         let svg = paint_page(&content, draw_width, draw_height, design, "RULE CHECK REPORT", "ERC", 1, 1);
         return ErcDrawing { svg, findings: 0, errors: 0, warnings: 0 };
     }
-    let mut spec = table_spec(
-        vec!["SEVERITY", "OBJECT", "POSITION", "DESCRIPTION"],
-        table_rows,
-        vec![false, false, false, false],
-        vec![false, false, false, true],
-        &format!("RULE CHECK REPORT | {total} FINDINGS"),
-        Some("data-erc-cell=\"true\""),
-    );
-    // A slightly smaller body keeps every selected finding and the summary row on
-    // one readable page instead of splitting the table or shrinking the title.
-    spec.font = 2.7;
-    let (table, width, height, _) = render_table(&spec);
+    // Most rule findings carry no coordinate. A POSITION column that stays
+    // blank for nearly every row only wastes width and makes the table look
+    // unfinished, so it is dropped unless at least a third of the rows use it.
+    let position_rows = table_rows.iter().filter(|row| row.get(2).is_some_and(|cell| !cell.trim().is_empty())).count();
+    let mut spec = if position_rows * 3 >= table_rows.len() {
+        table_spec(
+            vec!["SEVERITY", "OBJECT", "POSITION", "DESCRIPTION"],
+            table_rows,
+            vec![false, false, false, false],
+            vec![false, false, false, true],
+            &format!("RULE CHECK REPORT | {total} FINDINGS"),
+            Some("data-erc-cell=\"true\""),
+        )
+    }
+    else {
+        let rows = table_rows.into_iter().map(|row| vec![row[0].clone(), row[1].clone(), row[3].clone()]).collect();
+        table_spec(
+            vec!["SEVERITY", "OBJECT", "DESCRIPTION"],
+            rows,
+            vec![false, false, false],
+            vec![false, false, true],
+            &format!("RULE CHECK REPORT | {total} FINDINGS"),
+            Some("data-erc-cell=\"true\""),
+        )
+    };
+    // Keep the report on one readable page. Only when the selected findings
+    // still overflow at the default size does the body step down, so a normal
+    // report stays at the large 3.4 mm size.
+    let mut rendered = render_table(&spec);
+    for font in [3.4, 3.2, 3.0, 2.8, 2.7, 2.5, 2.4] {
+        spec.font = font;
+        rendered = render_table(&spec);
+        if rendered.3 <= 1 {
+            break;
+        }
+    }
+    let (table, width, height, _) = rendered;
     let content = format!("  <g data-erc=\"true\">\n{table}  </g>\n");
     let svg = paint_page(&content, width, height, design, "RULE CHECK REPORT", "ERC", 1, 1);
     ErcDrawing { svg, findings: total, errors, warnings }

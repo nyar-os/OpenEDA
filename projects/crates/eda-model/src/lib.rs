@@ -8858,6 +8858,15 @@ fn sheet_obstacles(sheet: &Sheet) -> Vec<[f64; 4]> {
         let width = label.text.chars().count() as f64 * 2.8 * 0.6;
         obstacles.push([label.x - 0.6, label.y - 3.4, label.x + width + 1.2, label.y + 0.8]);
     }
+    // A net name is painted with a white backing. When it lands on a junction or
+    // a no-connect cross it erases half the marker, which reads as a broken
+    // symbol, so both stay in the obstacle set and the name moves clear.
+    for junction in &sheet.junctions {
+        obstacles.push([junction.x - 2.0, junction.y - 2.0, junction.x + 2.0, junction.y + 2.0]);
+    }
+    for flag in &sheet.no_connects {
+        obstacles.push([flag.x - 1.4, flag.y - 1.4, flag.x + 1.4, flag.y + 1.4]);
+    }
     obstacles
 }
 
@@ -8876,7 +8885,10 @@ fn component_label_candidates(component: &Component) -> Vec<PlannedLabels> {
     let value_size = 2.6;
     let label = |x: f64, y: f64, anchor: &'static str, size: f64| ComponentLabel { x, y, anchor, size };
     let mut candidates = Vec::new();
-    for extra in [0.0, 3.0, 6.0, 9.0, 12.0, 18.0, 24.0, 32.0, 42.0, 54.0, 68.0] {
+    // Nearby placements come first. Only after every side of the symbol has
+    // been tried do the offsets grow, so a label never flies half a page away
+    // just because a neighbouring body blocks its favourite edge.
+    for extra in [0.0, 3.0, 6.0] {
         candidates.push(PlannedLabels {
             reference: label(center_x, min[1] - 1.96 - extra, "middle", reference_size),
             value: label(center_x, max[1] + 1.96 + extra, "middle", value_size),
@@ -8886,7 +8898,7 @@ fn component_label_candidates(component: &Component) -> Vec<PlannedLabels> {
             value: label(center_x, min[1] - 1.96 - extra, "middle", value_size),
         });
     }
-    for extra in [0.0, 3.0, 6.0, 9.0] {
+    for extra in [0.0, 3.0, 6.0] {
         candidates.push(PlannedLabels {
             reference: label(max[0] + 1.2 + extra, center_y - 0.6, "start", reference_size),
             value: label(max[0] + 1.2 + extra, center_y + 3.0, "start", value_size),
@@ -8896,7 +8908,7 @@ fn component_label_candidates(component: &Component) -> Vec<PlannedLabels> {
             value: label(min[0] - 1.2 - extra, center_y + 3.0, "end", value_size),
         });
     }
-    for extra in [0.0, 3.0, 6.0, 9.0] {
+    for extra in [0.0, 3.0, 6.0] {
         candidates.push(PlannedLabels {
             reference: label(center_x, min[1] - 1.96 - extra, "middle", reference_size),
             value: label(max[0] + 1.2 + extra, center_y + 3.0, "start", value_size),
@@ -8914,7 +8926,7 @@ fn component_label_candidates(component: &Component) -> Vec<PlannedLabels> {
             value: label(center_x, max[1] + 1.96 + extra, "middle", value_size),
         });
     }
-    for extra in [0.0, 3.0, 6.0, 9.0] {
+    for extra in [0.0, 3.0, 6.0] {
         candidates.push(PlannedLabels {
             reference: label(center_x, min[1] - 1.96 - extra - reference_size - 1.2, "middle", reference_size),
             value: label(center_x, min[1] - 1.96 - extra, "middle", value_size),
@@ -8922,6 +8934,22 @@ fn component_label_candidates(component: &Component) -> Vec<PlannedLabels> {
         candidates.push(PlannedLabels {
             reference: label(center_x, max[1] + 1.96 + extra, "middle", reference_size),
             value: label(center_x, max[1] + 1.96 + extra + reference_size + 1.2, "middle", value_size),
+        });
+    }
+    // Crowded sheets may need a wider vertical lane; these remain bounded so
+    // the drawing bounds stay close to the schematic itself.
+    for extra in [9.0, 12.0, 18.0, 24.0, 32.0] {
+        candidates.push(PlannedLabels {
+            reference: label(center_x, min[1] - 1.96 - extra, "middle", reference_size),
+            value: label(center_x, max[1] + 1.96 + extra, "middle", value_size),
+        });
+        candidates.push(PlannedLabels {
+            reference: label(max[0] + 1.2 + extra, center_y - 0.6, "start", reference_size),
+            value: label(max[0] + 1.2 + extra, center_y + 3.0, "start", value_size),
+        });
+        candidates.push(PlannedLabels {
+            reference: label(min[0] - 1.2 - extra, center_y - 0.6, "end", reference_size),
+            value: label(min[0] - 1.2 - extra, center_y + 3.0, "end", value_size),
         });
     }
     candidates
@@ -9330,122 +9358,115 @@ pub(crate) fn drawing_bounds<'a>(sheets: impl IntoIterator<Item = &'a Sheet>) ->
 /// Height of the title-block strip reserved below the schematic content, in
 /// design units. The strip carries the sheet name, design title, revision and
 /// counts instead of a bare border.
-pub(crate) const TITLE_BLOCK_HEIGHT: f64 = 14.0;
+pub(crate) const TITLE_BLOCK_HEIGHT: f64 = 22.0;
 
-/// Narrowest sheet frame, in design units. A small design keeps this width so
-/// the fixed title-block cells still hold their labels instead of clipping and
-/// spilling into the neighbouring cell.
-const MIN_VIEW_WIDTH: f64 = 150.0;
+/// Standard A4 landscape page width in design units (millimetres).
+const A4_WIDTH: f64 = 297.0;
+/// Standard A4 landscape page height in design units (millimetres).
+const A4_HEIGHT: f64 = 210.0;
+/// Page margin as a fraction of each page dimension, matching every drawing.
+const PAGE_MARGIN_FRACTION: f64 = 0.08;
+/// Breathing room between the inner frame and the fitted schematic content.
+const PAGE_CONTENT_INSET: f64 = 2.0;
+/// Height of the sheet-name header at the top of one stacked sheet band.
+const SHEET_BAND_HEADER: f64 = 6.0;
 
-/// Projects the given sheets onto one SVG document.
+/// Projects the given sheets onto one fixed A4 landscape page.
 ///
-/// The export writer passes every sheet unless a sheet is selected; the preview
-/// passes exactly one, so the viewport and the painted geometry always describe
-/// the same sheet set. The design supplies the title-block text; only the
-/// listed sheets are painted. More than one sheet is stacked into separate
-/// page regions instead of sharing one coordinate space.
+/// The export writer passes every sheet unless a sheet is selected. The page is
+/// always A4 regardless of how tiny or wide the design is: an outer border, an
+/// inner frame and the fixed title block stay put while the drawing is scaled
+/// uniformly into the frame and centred. Several sheets are stacked into
+/// labelled bands inside that one frame instead of sharing design coordinates.
 fn svg_projection(design: &Design, sheets: &[&Sheet]) -> SvgProjection {
-    if sheets.len() > 1 {
-        return svg_paged_projection(design, sheets);
-    }
-    let (min_x, min_y, max_x, max_y) = drawing_bounds(sheets.iter().copied());
-    // Reserve at least 8% of the final page width on every side. Solving
-    // content + 2 * (0.08 * page) = page keeps the frame margin honest for
-    // wide and narrow designs alike.
-    let content_width = (max_x - min_x).max(1.0);
-    let padding = content_width * 0.08 / 0.84;
-    let view_width = (content_width + 2.0 * padding).max(MIN_VIEW_WIDTH);
-    let view_x = (min_x + max_x) / 2.0 - view_width / 2.0;
-    let view_y = min_y - padding;
-    let view_height = (max_y - min_y).max(1.0) + 2.0 * padding + TITLE_BLOCK_HEIGHT;
-    // The SVG viewBox counts millimetres. A standalone file opens at eight
-    // pixels per millimetre so pin labels and references stay legible instead
-    // of rendering as a postage stamp.
-    let width = (view_width * 8.0).round();
-    let height = (view_height * 8.0).round();
+    let (content, content_width, content_height) = schematic_content(sheets);
+    let margin_x = A4_WIDTH * PAGE_MARGIN_FRACTION;
+    let margin_y = A4_HEIGHT * PAGE_MARGIN_FRACTION;
+    let frame_width = A4_WIDTH - 2.0 * margin_x;
+    let frame_height = A4_HEIGHT - 2.0 * margin_y - TITLE_BLOCK_HEIGHT;
+    let available_width = (frame_width - 2.0 * PAGE_CONTENT_INSET).max(1.0);
+    let available_height = (frame_height - 2.0 * PAGE_CONTENT_INSET).max(1.0);
+    let natural_width = content_width.max(1.0);
+    let natural_height = content_height.max(1.0);
+    let scale = (available_width / natural_width).min(available_height / natural_height).min(12.0);
+    let used_width = natural_width * scale;
+    let used_height = natural_height * scale;
+    let offset_x = margin_x + (frame_width - used_width) / 2.0;
+    let offset_y = margin_y + (frame_height - used_height) / 2.0;
+    let width = (A4_WIDTH * 8.0).round();
+    let height = (A4_HEIGHT * 8.0).round();
 
     let mut svg = String::new();
     svg.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
     svg.push_str(&format!(
-        "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"{:.2} {:.2} {:.2} {:.2}\" width=\"{:.0}\" height=\"{:.0}\">\n",
-        view_x, view_y, view_width, view_height, width, height
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 {A4_WIDTH:.2} {A4_HEIGHT:.2}\" width=\"{width:.0}\" height=\"{height:.0}\">\n"
     ));
     svg.push_str(&format!(
-        "  <rect x=\"{:.2}\" y=\"{:.2}\" width=\"{:.2}\" height=\"{:.2}\" fill=\"#ffffff\" stroke=\"#1f2933\" stroke-width=\"0.4\"/>\n",
-        view_x, view_y, view_width, view_height
+        "  <rect x=\"0.00\" y=\"0.00\" width=\"{A4_WIDTH:.2}\" height=\"{A4_HEIGHT:.2}\" fill=\"#ffffff\" stroke=\"#1f2933\" stroke-width=\"0.4\"/>\n"
     ));
-    for sheet in sheets {
-        svg.push_str(&format!("  <g data-sheet=\"{}\">\n", escape_xml(&sheet.id)));
-        push_svg_sheet_contents(&mut svg, sheet);
-        svg.push_str("  </g>\n");
-    }
-    push_svg_title_block(&mut svg, design, sheets, view_x, view_y, view_width, view_height);
+    svg.push_str(&format!(
+        "  <rect data-page-frame=\"true\" x=\"{margin_x:.2}\" y=\"{margin_y:.2}\" width=\"{frame_width:.2}\" height=\"{frame_height:.2}\" fill=\"none\" stroke=\"#1f2933\" stroke-width=\"0.4\"/>\n"
+    ));
+    svg.push_str(&format!(
+        "  <g data-drawing=\"SCH\" data-content=\"{content_width:.2} {content_height:.2}\" data-scale=\"{scale:.4}\" transform=\"translate({offset_x:.2} {offset_y:.2}) scale({scale:.4})\">\n"
+    ));
+    svg.push_str(&content);
+    svg.push_str("  </g>\n");
+    push_svg_title_block(&mut svg, design, sheets, 0.0, margin_y, A4_WIDTH, A4_HEIGHT - margin_y);
     svg.push_str("</svg>\n");
     SvgProjection { document: svg, width, height }
 }
 
-/// Projects several sheets onto one SVG document as stacked page regions.
+/// Builds the natural-size content of one schematic page.
 ///
-/// Sheets routinely place parts at the same design coordinates, so painting
-/// them into one shared space overlaps them. Instead every sheet is translated
-/// into its own vertical band — separator frame, sheet-name header and the
-/// shared sheet painter at unit scale — mirroring the one-page-per-sheet PDF
-/// behaviour while staying a single vector document.
-fn svg_paged_projection(design: &Design, sheets: &[&Sheet]) -> SvgProjection {
+/// Every sheet is painted into its own dashed band with its name above it; the
+/// sheet geometry is translated by its own bounds so sheets that share design
+/// coordinates never overlap. The width also covers the longest sheet name, so
+/// no header has to be truncated to fit the frame.
+fn schematic_content(sheets: &[&Sheet]) -> (String, f64, f64) {
+    let side = 3.0;
+    let gap = 8.0;
+    let text_width =
+        |text: &str, size: f64| text.chars().map(|character| if character.is_ascii() { 0.6 } else { 1.0 }).sum::<f64>() * size;
     let bounds: Vec<(f64, f64, f64, f64)> = sheets.iter().map(|sheet| drawing_bounds(std::iter::once(*sheet))).collect();
-    let header = 6.0;
-    let gap = 10.0;
-    let content_width = bounds.iter().map(|bound| bound.2 - bound.0).fold(1.0, f64::max);
-    let padding = content_width * 0.08 / 0.84;
-    let view_width = (content_width + 2.0 * padding).max(MIN_VIEW_WIDTH);
-    let view_x = -(view_width - content_width) / 2.0;
-    // One full padding above the first band and one below the last, so every
-    // sheet keeps the same eight-percent margin from the page border.
-    let mut view_height = 2.0 * padding + TITLE_BLOCK_HEIGHT;
-    for bound in &bounds {
-        // Two extra units keep text descenders off the band frame.
-        view_height += header + (bound.3 - bound.1).max(1.0) + 2.0 + gap;
+    let widest_header = sheets.iter().map(|sheet| text_width(&sheet.name, 3.4) + 2.0 * side).fold(1.0, f64::max);
+    let widest_sheet = bounds.iter().map(|bound| (bound.2 - bound.0).max(1.0) + 2.0 * side).fold(1.0, f64::max);
+    let content_width = widest_header.max(widest_sheet);
+    let mut content = String::from("  <g data-schematic=\"true\">\n");
+    if sheets.is_empty() {
+        content.push_str(&format!(
+            "    <text x=\"{:.2}\" y=\"6.00\" font-family=\"monospace\" font-size=\"4.0\" text-anchor=\"middle\" fill=\"#64748b\">no sheets</text>\n",
+            content_width / 2.0
+        ));
+        content.push_str("  </g>\n");
+        return (content, content_width, 10.0);
     }
-    let width = (view_width * 8.0).round();
-    let height = (view_height * 8.0).round();
-
-    let mut svg = String::new();
-    svg.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
-    svg.push_str(&format!(
-        "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"{view_x:.2} {view_y:.2} {view_width:.2} {view_height:.2}\" width=\"{width:.0}\" height=\"{height:.0}\">\n",
-        view_y = -padding,
-    ));
-    svg.push_str(&format!(
-        "  <rect x=\"{view_x:.2}\" y=\"{:.2}\" width=\"{view_width:.2}\" height=\"{view_height:.2}\" fill=\"#ffffff\" stroke=\"#1f2933\" stroke-width=\"0.4\"/>\n",
-        -padding,
-    ));
-    let mut region_top = -padding;
+    let mut top = 0.0;
     for (sheet, bound) in sheets.iter().zip(&bounds) {
         let (min_x, min_y, _, max_y) = *bound;
         let span_y = (max_y - min_y).max(1.0) + 2.0;
-        svg.push_str(&format!(
-            "  <rect x=\"{view_x:.2}\" y=\"{region_top:.2}\" width=\"{view_width:.2}\" height=\"{:.2}\" fill=\"none\" stroke=\"#64748b\" stroke-width=\"0.4\" stroke-dasharray=\"2.4 1.6\"/>\n",
-            header + span_y,
+        let band_height = SHEET_BAND_HEADER + span_y;
+        content.push_str(&format!(
+            "    <rect x=\"0.50\" y=\"{top:.2}\" width=\"{:.2}\" height=\"{band_height:.2}\" fill=\"none\" stroke=\"#64748b\" stroke-width=\"0.4\" stroke-dasharray=\"2.4 1.6\" data-sheet-frame=\"true\"/>\n",
+            (content_width - 1.0).max(1.0)
         ));
-        svg.push_str(&format!(
-            "  <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"3.2\" fill=\"#1f2933\">{}</text>\n",
-            view_x + 2.0,
-            region_top + 4.4,
-            escape_xml(&drawings::fit_text(&sheet.name, view_width - 4.0, 3.2)),
+        content.push_str(&format!(
+            "    <text x=\"{side:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"3.4\" fill=\"#1f2933\">{}</text>\n",
+            top + 4.4,
+            escape_xml(&sheet.name)
         ));
-        svg.push_str(&format!(
-            "  <g data-sheet=\"{}\" transform=\"translate({:.2} {:.2})\">\n",
+        content.push_str(&format!(
+            "    <g data-sheet=\"{}\" transform=\"translate({:.2} {:.2})\">\n",
             escape_xml(&sheet.id),
-            -min_x,
-            region_top + header - min_y,
+            side - min_x,
+            top + SHEET_BAND_HEADER - min_y
         ));
-        push_svg_sheet_contents(&mut svg, sheet);
-        svg.push_str("  </g>\n");
-        region_top += header + span_y + gap;
+        push_svg_sheet_contents(&mut content, sheet);
+        content.push_str("    </g>\n");
+        top += band_height + gap;
     }
-    push_svg_title_block(&mut svg, design, sheets, view_x, -padding, view_width, view_height);
-    svg.push_str("</svg>\n");
-    SvgProjection { document: svg, width, height }
+    content.push_str("  </g>\n");
+    (content, content_width, (top - gap).max(1.0))
 }
 
 /// Paints one sheet's wires, junctions, no-connect flags, net annotations,
@@ -9747,7 +9768,7 @@ pub(crate) fn push_svg_title_block(
     ));
     let columns = [0.42, 0.24, 0.14, 0.20];
     let mut cursor = view_x;
-    for fraction in &columns[1..] {
+    for fraction in &columns[..3] {
         cursor += view_width * fraction;
         svg.push_str(&format!(
             "    <line x1=\"{:.2}\" y1=\"{:.2}\" x2=\"{:.2}\" y2=\"{:.2}\" stroke=\"#1f2933\" stroke-width=\"0.4\"/>\n",
@@ -9760,10 +9781,10 @@ pub(crate) fn push_svg_title_block(
     let cell_x = |index: usize| view_x + view_width * columns[..index].iter().sum::<f64>() + 1.5;
     let cell_width = |index: usize| (view_width * columns[index] - 3.0).max(4.0);
     svg.push_str(&format!(
-        "    <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"3.2\" text-anchor=\"start\" fill=\"#1f2933\">{}</text>\n",
+        "    <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"4.0\" text-anchor=\"start\" fill=\"#1f2933\">{}</text>\n",
         cell_x(0),
-        strip_y + 5.0,
-        escape_xml(&drawings::fit_text(title, cell_width(0), 3.2))
+        strip_y + 9.0,
+        escape_xml(&drawings::fit_text(title, cell_width(0), 4.0))
     ));
     let subtitle = if design.company.trim().is_empty() && design.date.trim().is_empty() {
         None
@@ -9780,50 +9801,50 @@ pub(crate) fn push_svg_title_block(
     };
     if let Some(subtitle) = subtitle {
         svg.push_str(&format!(
-            "    <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"2.2\" text-anchor=\"start\" fill=\"#64748b\">{}</text>\n",
+            "    <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"2.8\" text-anchor=\"start\" fill=\"#64748b\">{}</text>\n",
             cell_x(0),
-            strip_y + 9.5,
-            escape_xml(&drawings::fit_text(&subtitle, cell_width(0), 2.2))
+            strip_y + 17.0,
+            escape_xml(&drawings::fit_text(&subtitle, cell_width(0), 2.8))
         ));
     }
     svg.push_str(&format!(
-        "    <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"2.4\" text-anchor=\"start\" fill=\"#1f2933\">{}</text>\n",
+        "    <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"3.2\" text-anchor=\"start\" fill=\"#1f2933\">{}</text>\n",
         cell_x(1),
-        strip_y + 5.0,
-        escape_xml(&drawings::fit_text(&sheet_names, cell_width(1), 2.4))
+        strip_y + 9.0,
+        escape_xml(&drawings::fit_text(&sheet_names, cell_width(1), 3.2))
     ));
     let identity = format!("{sheet_count} | {drawing_number}");
     svg.push_str(&format!(
-        "    <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"2.2\" text-anchor=\"start\" fill=\"#64748b\">{}</text>\n",
+        "    <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"2.4\" text-anchor=\"start\" fill=\"#64748b\">{}</text>\n",
         cell_x(1),
-        strip_y + 9.5,
-        escape_xml(&drawings::fit_text(&identity, cell_width(1), 2.2))
+        strip_y + 17.0,
+        escape_xml(&drawings::fit_text(&identity, cell_width(1), 2.4))
     ));
     svg.push_str(&format!(
-        "    <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"2.6\" text-anchor=\"start\" fill=\"#1f2933\">{}</text>\n",
+        "    <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"3.0\" text-anchor=\"start\" fill=\"#1f2933\">{}</text>\n",
         cell_x(2),
-        strip_y + 5.0,
-        escape_xml(&drawings::fit_text(&format!("REV {rev}"), cell_width(2), 2.6))
+        strip_y + 9.0,
+        escape_xml(&drawings::fit_text(&format!("REV {rev}"), cell_width(2), 3.0))
     ));
     let scale = format!("1:1 | {}", design.units);
     svg.push_str(&format!(
-        "    <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"2.2\" text-anchor=\"start\" fill=\"#64748b\">{}</text>\n",
+        "    <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"2.4\" text-anchor=\"start\" fill=\"#64748b\">{}</text>\n",
         cell_x(2),
-        strip_y + 9.5,
-        escape_xml(&drawings::fit_text(&scale, cell_width(2), 2.2))
+        strip_y + 17.0,
+        escape_xml(&drawings::fit_text(&scale, cell_width(2), 2.4))
     ));
     let counts = format!("{components} parts / {wires} wires");
     svg.push_str(&format!(
-        "    <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"2.2\" text-anchor=\"start\" fill=\"#64748b\">{}</text>\n",
+        "    <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"2.6\" text-anchor=\"start\" fill=\"#64748b\">{}</text>\n",
         cell_x(3),
-        strip_y + 5.0,
-        escape_xml(&drawings::fit_text(&counts, cell_width(3), 2.2))
+        strip_y + 9.0,
+        escape_xml(&drawings::fit_text(&counts, cell_width(3), 2.6))
     ));
     svg.push_str(&format!(
-        "    <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"2.2\" text-anchor=\"start\" fill=\"#64748b\">{}</text>\n",
+        "    <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"monospace\" font-size=\"2.4\" text-anchor=\"start\" fill=\"#64748b\">{}</text>\n",
         cell_x(3),
-        strip_y + 9.5,
-        escape_xml(&drawings::fit_text(&format!("OpenEDA rev {}", design.revision), cell_width(3), 2.2))
+        strip_y + 17.0,
+        escape_xml(&drawings::fit_text(&format!("OpenEDA rev {}", design.revision), cell_width(3), 2.4))
     ));
     svg.push_str("  </g>\n");
 }
