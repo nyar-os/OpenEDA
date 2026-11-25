@@ -166,6 +166,22 @@ fn text_width(text: &str) -> i32 {
     text.chars().count() as i32 * 6 - 1
 }
 
+/// Truncates one text run so its bitmap width fits `max_width` pixels, marking a
+/// cut with an ASCII ellipsis. Without this a long design title or sheet name
+/// would run past the canvas edge and be silently clipped.
+fn truncate_text(text: &str, max_width: i32) -> String {
+    if text_width(text) <= max_width {
+        return text.to_string();
+    }
+    let max_chars = ((max_width + 1) / 6).max(0) as usize;
+    if max_chars <= 3 {
+        return text.chars().take(max_chars).collect();
+    }
+    let mut cut: String = text.chars().take(max_chars - 3).collect();
+    cut.push_str("...");
+    cut
+}
+
 /// Maps design millimetres onto canvas pixels with one uniform scale.
 struct View {
     origin_x: f64,
@@ -461,6 +477,8 @@ fn paint_sheet(canvas: &mut Canvas, view: &View, sheet: &Sheet) {
 /// labelled bands so their geometry never overlaps, matching the paged PDF.
 pub(crate) fn render_png(design: &Design, sheets: &[&Sheet]) -> Vec<u8> {
     let mut canvas = Canvas::new();
+    // The buffer starts white and stays opaque RGB, so a viewer never shows a
+    // transparent (black) background behind the drawing.
     if sheets.len() > 1 {
         let band_height =
             (i32::try_from(HEIGHT).expect("canvas height") - 2 * MARGIN as i32 - BAND_GAP * (sheets.len() - 1) as i32)
@@ -476,7 +494,10 @@ pub(crate) fn render_png(design: &Design, sheets: &[&Sheet]) -> Vec<u8> {
             canvas.text(
                 MARGIN as i32 + 3,
                 top + 3,
-                &format!("SHEET {} OF {} - {}", index + 1, sheets.len(), sheet.name),
+                &truncate_text(
+                    &format!("SHEET {} OF {} - {}", index + 1, sheets.len(), sheet.name),
+                    WIDTH as i32 - 2 * MARGIN as i32 - 6,
+                ),
                 FRAME,
             );
             paint_sheet(&mut canvas, &view, sheet);
@@ -516,10 +537,18 @@ fn paint_title_block(canvas: &mut Canvas, design: &Design, sheets: &[&Sheet]) {
     let rev = if design.rev.trim().is_empty() { "-" } else { design.rev.as_str() };
     let components: usize = sheets.iter().map(|sheet| sheet.components.len()).sum();
     let wires: usize = sheets.iter().map(|sheet| sheet.wires.len()).sum();
-    canvas.text(MARGIN as i32 + 3, strip_top + 4, title, FRAME);
-    canvas.text(MARGIN as i32 + 3, strip_top + 15, &format!("{names} | {} sheet(s)", sheets.len()), TEXT);
+    let available = WIDTH as i32 - 2 * MARGIN as i32 - 6;
+    canvas.text(MARGIN as i32 + 3, strip_top + 4, &truncate_text(title, available), FRAME);
+    canvas.text(
+        MARGIN as i32 + 3,
+        strip_top + 15,
+        &truncate_text(&format!("{names} | {} sheet(s)", sheets.len()), available),
+        TEXT,
+    );
     let right_line_1 = format!("REV {rev} | units: {}", design.units);
     let right_line_2 = format!("{components} parts / {wires} wires | OpenEDA rev {}", design.revision);
+    let right_line_1 = truncate_text(&right_line_1, available);
+    let right_line_2 = truncate_text(&right_line_2, available);
     canvas.text(WIDTH as i32 - MARGIN as i32 - 3 - text_width(&right_line_1), strip_top + 4, &right_line_1, TEXT);
     canvas.text(WIDTH as i32 - MARGIN as i32 - 3 - text_width(&right_line_2), strip_top + 15, &right_line_2, TEXT);
 }

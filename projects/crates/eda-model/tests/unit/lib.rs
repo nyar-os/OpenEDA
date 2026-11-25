@@ -90,6 +90,8 @@ fn capability_matrix_reports_only_the_implemented_entries() {
     assert_eq!(matrix["exportTargets"]["power_distribution"], "supported");
     assert_eq!(matrix["exportTargets"]["bom_drawing"], "supported");
     assert_eq!(matrix["exportTargets"]["bom_drawing_pdf"], "supported");
+    assert_eq!(matrix["exportTargets"]["net_xref"], "supported");
+    assert_eq!(matrix["exportTargets"]["net_xref_pdf"], "supported");
     assert_eq!(matrix["exportTargets"]["kicad_pcb"], "unsupported");
     assert_eq!(matrix["exportTargets"]["gbr"], "unsupported");
     assert_eq!(matrix["edits"]["components"], "supported");
@@ -6521,7 +6523,16 @@ fn drawing_exports_write_svg_documents_and_reject_sheet_selection() {
     )
     .expect("add R1");
     connect_net(handle, ConnectNetRequest { sheet: None, net: "VCC".into(), nodes: vec!["R1.1".into()] }).expect("connect VCC");
-    for format in ["block_diagram", "sheet_overview", "pinout_chart", "symbol_library"] {
+    for format in [
+        "block_diagram",
+        "sheet_overview",
+        "pinout_chart",
+        "symbol_library",
+        "net_topology",
+        "power_distribution",
+        "bom_drawing",
+        "net_xref",
+    ] {
         let path = dir.join(&format!("drawing.{format}"));
         let report = export(handle, format, &path).unwrap_or_else(|error| panic!("`{format}` failed: {}", error.message));
         assert_eq!(report["format"], format);

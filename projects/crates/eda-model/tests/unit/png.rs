@@ -106,6 +106,28 @@ fn encoder_writes_a_valid_rgb_png() {
 }
 
 #[test]
+fn raster_background_is_opaque_white() {
+    let design = sample_design();
+    let sheets = design.sheets.iter().collect::<Vec<_>>();
+    let raw = raw_pixels(&render_png(&design, &sheets));
+    let stride = (WIDTH as usize) * 3 + 1;
+    // The top-left and bottom-right pixels sit outside every painted element, so
+    // they must be the opaque white background rather than a transparent black.
+    assert_eq!(&raw[1..4], &BACKGROUND, "the canvas starts on a white pixel");
+    let last = (HEIGHT as usize - 1) * stride + 1 + (WIDTH as usize - 1) * 3;
+    assert_eq!(&raw[last..last + 3], &BACKGROUND, "the canvas ends on a white pixel");
+}
+
+#[test]
+fn long_title_text_is_truncated_to_the_canvas() {
+    let run = "A TITLE THAT IS MUCH TOO LONG FOR THE TITLE BLOCK";
+    let cut = truncate_text(run, 60);
+    assert!(text_width(&cut) <= 60, "the run fits its pixel budget");
+    assert!(cut.ends_with("..."), "a cut is marked: {cut}");
+    assert_eq!(truncate_text("short", 60), "short", "short runs are untouched");
+}
+
+#[test]
 fn raster_is_fixed_size_deterministic_and_paints_the_geometry() {
     let design = sample_design();
     let sheets = design.sheets.iter().collect::<Vec<_>>();
