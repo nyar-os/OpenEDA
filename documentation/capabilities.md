@@ -29,7 +29,7 @@ answer about the document, such as a pin-to-pin path.
 | checks `erc`, `electrical`, `drivers`, `pin_types`, `bus`, `nets`, `connectivity`, `dangling`, `footprints`, `power`, `references`, `clearance` | supported | `drc` is unsupported; `bus` validates design-level bus declarations; `clearance` compares schematic component bodies; `dangling` reports `wire/dangling-endpoint` for a wire endpoint nothing anchors; `erc` reports one `erc/duplicate-reference` per reference shared by more than one component; `drivers` reports `erc/undriven-input` and `erc/unconnected-power-pin`; `pin_types` reports the role conflicts the other checks leave open; `hierarchy` is a separate read-only entry, not an `inspect --checks` value |
 | design `stats` | supported | deterministic per-sheet and design-wide counts; tagged `open-eda-stats` |
 | pin trace `trace` | supported | read-only shortest hop path between two `REF.PIN` pins; tagged `open-eda-trace`; reported as `queries.trace`, not as an `inspect --checks` check |
-| component detail `component show` | supported | read-only detail of one component by reference: placement, value, footprint, custom properties and per-pin nets; tagged `open-eda-component`; pins keep declaration order and net names keep document order |
+| component detail `component show` | supported | read-only detail of one component by reference: placement, rotation, mirror, value, footprint, custom properties and per-pin nets; tagged `open-eda-component`; pins keep declaration order and net names keep document order |
 | net detail `net show` | supported | read-only detail of one declared net by name across every sheet, or one with `--sheet`: per-sheet net id and nodes, wires and labels that reference the name, aggregated node count, and the matching declared bus and net class; tagged `open-eda-net`; an unknown name is `net/not-found` |
 | net audit `net audit` | supported | read-only per-net health report of every declared net in document order: node count, placed-pin count, same-sheet wire and label counts, wire length and the claiming net class; reports `net/empty`, `net/single-pin` and `net/no-wire` as warnings; tagged `open-eda-net-audit` and reported as `queries.netAudit`; never writes the document, opens a child sheet or bumps the revision |
 | component update `component update` | supported | partial edit of one placed component by reference: only the fields the request names change; one revision per call; `capabilities()` reports `edits.components` |
@@ -39,7 +39,9 @@ answer about the document, such as a pin-to-pin path.
 | junction and no-connect editing | supported | add a junction by coordinate and remove it by 0-based index; add a no-connect flag with or without a `REF.PIN` node and remove it by index; a duplicate junction coordinate is refused (`junction/duplicate`) and so is a second flag on one pin (`no-connect/duplicate`); `capabilities()` reports `edits.junctions` and `edits.noConnects` |
 | component pin editing | supported | add, remove and rename pins after placement; an empty or `REF.PIN`-breaking name is `session/argument-invalid`, a repeated name `pin/duplicate`, a missing pin `pin/not-found` and a removal that a net node or no-connect flag still uses `pin/in-use`; a rename follows every net node, no-connect node and electrical role; `capabilities()` reports `edits.pins` |
 | component pin swapping | supported | swap the net connections of two pins of one placed component; each pin takes the other pin's connection, an unconnected pin receives the transferred one, no-connect flags follow the swap, a self-swap or empty name is `session/argument-invalid`, a missing component `object/not-found` and an undeclared pin `pin/not-found`; an unconnected pair adds no revision; `capabilities()` reports `edits.pinSwap` |
-| component duplicate `component duplicate` | supported | duplicate one placed component on the same sheet under the next free reference: the leading letters of the source reference form the prefix and the smallest positive number no sheet already uses with that prefix is taken, so `R1` in a design holding `R1` and `R3` duplicates to `R2`; the copy keeps value, footprint, rotation, pins, pin roles, custom properties and component class and moves by `dx`/`dy` (zero by default); net nodes, wires and no-connect flags are never copied; a source reference without leading letters is `session/argument-invalid`, a missing component `object/not-found`; one call adds exactly one revision; `capabilities()` reports `edits.duplicate` |
+| component duplicate `component duplicate` | supported | duplicate one placed component on the same sheet under the next free reference: the leading letters of the source reference form the prefix and the smallest positive number no sheet already uses with that prefix is taken, so `R1` in a design holding `R1` and `R3` duplicates to `R2`; the copy keeps value, footprint, rotation, mirror, pins, pin roles, custom properties and component class and moves by `dx`/`dy` (zero by default); net nodes, wires and no-connect flags are never copied; a source reference without leading letters is `session/argument-invalid`, a missing component `object/not-found`; one call adds exactly one revision; `capabilities()` reports `edits.duplicate` |
+| component rotate `component rotate` | supported | relative rotation of one placed component by reference: the angle is added to the current rotation and the sum is stored exactly as computed, without wrapping (`450` stays `450`); a non-finite angle is `session/argument-invalid` and a component the sheet does not place `object/not-found`; a zero angle reports `changed: false` and adds no revision and no history step, one turn adds exactly one revision; `capabilities()` reports `edits.rotate` |
+| component mirror `component mirror` | supported | flip one placed component about an axis of its local frame, applied before the rotation: `x` flips left-right and `y` flips top-bottom; the body artwork and pin stubs follow the mirror while the reference, value and pin-name texts stay readable; requesting the axis the component already mirrors clears it and requesting the other axis replaces it and adds 180 degrees, the rotational equivalent of the second flip; an axis other than `x` or `y` is `session/argument-invalid`; every call adds exactly one revision; the field round-trips through `.oeda` and the KiCad `(mirror "x")` token and appears in `component show`, the JSON projection and `diff`; `capabilities()` reports `edits.mirror` |
 | export `net`, `net_csv`, `net_hier`, `net_class`, `net_length`, `spice`, `spice_subckt`, `svg`, `png`, `bom`, `bom_json`, `bom_html`, `pdf`, `report`, `json`, `kicad_sch`, `kicad_sym`, `kicad_net` | supported | read-only projections; `kicad_pcb` and `gbr` are unsupported |
 | import `kicad_sch` | supported | symbols, wires, junctions, no-connect flags, text, labels, hierarchical sheet symbols and ports; other constructs are reported as losses |
 | hierarchy editing | supported | add/list/remove parent symbol declarations and their ports; editing never reads the child files |
@@ -303,7 +305,9 @@ fail the report.
 The importer and writer cover symbols, wires, junctions, no-connect flags, text
 annotations and net labels with scope. The title-block `title`, `date`, `rev` and
 `company` fields round-trip; other title-block fields add a loss entry. Custom
-component properties round-trip as hidden KiCad symbol properties.
+component properties round-trip as hidden KiCad symbol properties. The
+component mirror round-trips as the KiCad `(mirror "x")` or `(mirror "y")`
+token; a combined axis such as `"x,y"` is outside the subset and adds a loss.
 
 Losses are explicit. Each occurrence adds an entry to `losses`:
 
@@ -484,6 +488,12 @@ Every file is written through a temporary file and a rename.
   untouched nets/wires/no-connects, the `object/not-found`,
   `session/argument-invalid` and prefixless refusals, one revision, undo and
   save/reopen persistence.
+- `projects/crates/eda-model/tests/unit/component_transform.rs` — `component
+  rotate` accumulation without wrapping, the zero-angle no-op and its missing
+  history step, `component mirror` axis toggling and the other-axis half turn,
+  mirrored pin and artwork geometry, the `object/not-found` and
+  `session/argument-invalid` refusals, KiCad mirror round-trip, validation of
+  the axis names and save/reopen persistence.
 - `projects/crates/eda-model/tests/unit/png.rs` — CRC-32 and Adler-32 known
   answers, a valid RGB PNG chunk stream, the fixed 1024×768 raster with painted
   geometry, byte-stable re-runs and the empty-design export.

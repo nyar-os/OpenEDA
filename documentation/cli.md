@@ -93,12 +93,14 @@ child sheet and never bumps the revision.
 | Command | Description |
 |---------|-------------|
 | `open-eda component list <file> [--sheet <id>]` | List components |
-| `open-eda component show <file> <ref>` | Report one component's placement, custom properties, pins and the nets that reach each pin |
+| `open-eda component show <file> <ref>` | Report one component's placement, rotation, mirror, custom properties, pins and the nets that reach each pin |
 | `open-eda component add <file> --ref <ref> [--value <text>] --x <n> --y <n> [--rotation <deg>] [--pins <list>] [--footprint <text>] [--sheet <id>]` | Place a component |
 | `open-eda component copy <file> --ref <ref> --as <new-ref> [--dx <n>] [--dy <n>] [--sheet <id>]` | Copy placement and metadata without net nodes |
 | `open-eda component duplicate <file> --ref <ref> [--dx <n>] [--dy <n>] [--sheet <id>]` | Copy placement and metadata under the next free reference without net nodes |
 | `open-eda component move <file> --ref <ref> --x <n> --y <n> [--rotation <deg>] [--sheet <id>]` | Move or rotate a component |
 | `open-eda component update <file> <ref> [--value <text>] [--footprint <text>] [--x <n>] [--y <n>] [--rotation <deg>] [--sheet <id>]` | Update only the given fields of a component |
+| `open-eda component rotate <file> <ref> --angle <deg> [--sheet <id>]` | Add a relative rotation; the sum is stored without wrapping and a zero angle adds no revision |
+| `open-eda component mirror <file> <ref> --axis <x|y> [--sheet <id>]` | Flip a component in its local frame before rotation; the current axis clears, the other axis adds 180 degrees |
 | `open-eda component footprint <file> --ref <ref> --footprint <text> [--sheet <id>]` | Assign or clear the footprint |
 | `open-eda component pin-type <file> <ref> <pin> <role>` | Type a pin role; add `--clear` to remove it |
 | `open-eda component pin add <file> --ref <ref> --pin <pin> [--sheet <id>]` | Add a pin to a placed component |
