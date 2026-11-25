@@ -52,6 +52,7 @@ fn capability_matrix_reports_only_the_implemented_entries() {
     assert_eq!(matrix["checks"]["drivers"], "supported");
     assert_eq!(matrix["checks"]["pin_types"], "supported");
     assert_eq!(matrix["checks"]["bus"], "supported");
+    assert_eq!(matrix["checks"]["net_classes"], "supported");
     assert_eq!(matrix["checks"]["nets"], "supported");
     assert_eq!(matrix["checks"]["connectivity"], "supported");
     assert_eq!(matrix["checks"]["footprints"], "supported");

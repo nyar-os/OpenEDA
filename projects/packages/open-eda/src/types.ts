@@ -63,6 +63,7 @@ export type InspectCheck =
     | 'drivers'
     | 'pin_types'
     | 'bus'
+    | 'net_classes'
     | 'drc'
     | 'nets'
     | 'connectivity'

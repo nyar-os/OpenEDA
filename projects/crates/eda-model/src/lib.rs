@@ -56,6 +56,7 @@ const INSPECT_CHECKS: &[&str] = &[
     "drivers",
     "pin_types",
     "bus",
+    "net_classes",
     "drc",
     "nets",
     "connectivity",
@@ -73,6 +74,7 @@ const SUPPORTED_CHECKS: &[&str] = &[
     "drivers",
     "pin_types",
     "bus",
+    "net_classes",
     "nets",
     "connectivity",
     "dangling",
@@ -1481,7 +1483,10 @@ pub struct Waiver {
 /// KiCad schematics are also imported, and every other exchange format and rule
 /// check is reported as unsupported. Design-level buses are edited through
 /// `add_bus`, `remove_bus` and `list_buses`; a bus carries a width and optional
-/// aliases that resolve to the same expansion. ERC reports the stable codes
+/// aliases that resolve to the same expansion. Net classes are declared through
+/// `add_net_class`, and the `net_classes` check reports an assignment to a net
+/// or bus the document does not declare, an empty class, and one net or bus
+/// claimed by two classes. ERC reports the stable codes
 /// `erc/duplicate-net-name`, `erc/duplicate-pin`, `erc/duplicate-reference`,
 /// `erc/single-node-net`, `erc/dangling-net`, `erc/unconnected-pin`,
 /// `erc/floating-wire`, `erc/reference-illegal`, `erc/pin-name-illegal`,
@@ -6874,6 +6879,124 @@ fn inspect_design(design: &Design, checks: &[String]) -> Vec<Value> {
             }
         }
     }
+    if checks.iter().any(|check| check == "net_classes") {
+        // Net classes live on the design, so most findings carry an empty
+        // `sheetId`; only `net_class/shared-net` names the sheet that declares
+        // the ambiguous net.
+        let declared_nets: HashSet<&str> =
+            design.sheets.iter().flat_map(|sheet| sheet.nets.iter()).map(|net| net.name.as_str()).collect();
+        for class in &design.rules.net_classes {
+            if class.nets.is_empty() && class.buses.is_empty() {
+                issues.push(issue(
+                    "net_class/empty",
+                    "warning",
+                    design.revision,
+                    "",
+                    &class.id,
+                    true,
+                    format!("net class `{}` assigns no nets and no buses", class.name),
+                ));
+            }
+            let missing_nets: Vec<&str> =
+                class.nets.iter().filter(|name| !declared_nets.contains(name.as_str())).map(String::as_str).collect();
+            if !missing_nets.is_empty() {
+                issues.push(issue(
+                    "net_class/unknown-net",
+                    "warning",
+                    design.revision,
+                    "",
+                    &class.id,
+                    true,
+                    format!(
+                        "net class `{}` assigns net(s) {} that no sheet declares",
+                        class.name,
+                        missing_nets.iter().map(|name| format!("`{name}`")).collect::<Vec<_>>().join(", ")
+                    ),
+                ));
+            }
+            let missing_buses: Vec<&str> = class
+                .buses
+                .iter()
+                .filter(|name| {
+                    !design.buses.iter().any(|bus| bus.name == **name || bus.aliases.iter().any(|alias| alias == *name))
+                })
+                .map(String::as_str)
+                .collect();
+            if !missing_buses.is_empty() {
+                issues.push(issue(
+                    "net_class/unknown-bus",
+                    "warning",
+                    design.revision,
+                    "",
+                    &class.id,
+                    true,
+                    format!(
+                        "net class `{}` assigns bus(es) {} that the document does not declare",
+                        class.name,
+                        missing_buses.iter().map(|name| format!("`{name}`")).collect::<Vec<_>>().join(", ")
+                    ),
+                ));
+            }
+        }
+        for bus in &design.buses {
+            let classes: Vec<&str> = design
+                .rules
+                .net_classes
+                .iter()
+                .filter(|class| class.buses.iter().any(|name| name == &bus.name))
+                .map(|class| class.name.as_str())
+                .collect();
+            if classes.len() > 1 {
+                issues.push(issue(
+                    "net_class/shared-bus",
+                    "error",
+                    design.revision,
+                    "",
+                    &bus.id,
+                    true,
+                    format!(
+                        "bus `{}` is assigned to net classes {}; one bus may belong to only one class",
+                        bus.name,
+                        classes.iter().map(|name| format!("`{name}`")).collect::<Vec<_>>().join(", ")
+                    ),
+                ));
+            }
+        }
+        for sheet in &design.sheets {
+            for net in &sheet.nets {
+                let claims: Vec<&NetClass> =
+                    design.rules.net_classes.iter().filter(|class| net_class_claims(design, class, &net.name)).collect();
+                if claims.len() < 2 {
+                    continue;
+                }
+                // A shared bus already reports every member it claims, so the
+                // per-net finding only adds information when a class also
+                // assigns the net directly.
+                let direct = claims.iter().any(|class| class.nets.iter().any(|name| name == &net.name));
+                let shared_bus = design.buses.iter().any(|bus| {
+                    bus_claims_net(bus, &net.name)
+                        && design.rules.net_classes.iter().filter(|class| class.buses.contains(&bus.name)).count() > 1
+                });
+                if !direct && shared_bus {
+                    continue;
+                }
+                let classes: Vec<&str> = claims.iter().map(|class| class.name.as_str()).collect();
+                issues.push(issue(
+                    "net_class/shared-net",
+                    "error",
+                    design.revision,
+                    &sheet.id,
+                    &net.id,
+                    true,
+                    format!(
+                        "net `{}` is claimed by net classes {}; one net may belong to only one class",
+                        net.name,
+                        classes.iter().map(|name| format!("`{name}`")).collect::<Vec<_>>().join(", ")
+                    ),
+                ));
+            }
+        }
+    }
     if checks.iter().any(|check| check == "footprints") {
         for sheet in &design.sheets {
             for component in &sheet.components {
@@ -8108,15 +8231,17 @@ fn render_net_length_csv(design: &Design) -> (String, usize, usize, usize, f64) 
 /// one of its members. Classes are visited in declaration order, so the first
 /// claim is stable.
 fn net_class_for_net<'a>(design: &'a Design, name: &str) -> Option<&'a NetClass> {
-    design.rules.net_classes.iter().find(|class| {
-        class.nets.iter().any(|net| net == name)
-            || design.buses.iter().any(|bus| {
-                class.buses.contains(&bus.name)
-                    && (bus.name == name
-                        || bus.aliases.iter().any(|alias| alias == name)
-                        || (0..bus.width).any(|index| format!("{}{index}", bus.name) == name))
-            })
-    })
+    design.rules.net_classes.iter().find(|class| net_class_claims(design, class, name))
+}
+
+/// Whether one net class claims a net name, directly or through an assigned
+/// bus.
+///
+/// Mirrors the resolution [`net_class_for_net`] uses, so the `net_classes`
+/// check and the `net_class` export agree on the class that owns a net.
+fn net_class_claims(design: &Design, class: &NetClass, name: &str) -> bool {
+    class.nets.iter().any(|net| net == name)
+        || design.buses.iter().any(|bus| class.buses.contains(&bus.name) && bus_claims_net(bus, name))
 }
 
 /// Projects one design to a hierarchical netlist whose net names carry the
@@ -10697,6 +10822,10 @@ mod net_rename_tests;
 #[cfg(test)]
 #[path = "../tests/unit/net_audit.rs"]
 mod net_audit_tests;
+
+#[cfg(test)]
+#[path = "../tests/unit/net_classes.rs"]
+mod net_classes_tests;
 
 #[cfg(test)]
 #[path = "../tests/unit/dangling.rs"]
