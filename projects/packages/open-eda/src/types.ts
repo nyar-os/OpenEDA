@@ -91,6 +91,7 @@ export type ExportTarget =
     | 'gbr'
     | 'pdf'
     | 'svg'
+    | 'png'
     | 'bom'
     | 'bom_json'
     | 'bom_html'
@@ -1475,10 +1476,10 @@ export interface ExportOptions {
     /** BOM variant to apply; only `bom`, `bom_json` and `bom_html` accept one. */
     readonly variant?: string;
     /**
-     * Drawing sheet id or name; only `svg` and `pdf` accept one.
+     * Drawing sheet id or name; only `svg`, `pdf` and `png` accept one.
      *
      * `pdf` writes one page per sheet by default; selecting a sheet writes one
-     * page. `svg` has a single view, so select a sheet to isolate it.
+     * page. `svg` and `png` have a single view, so select a sheet to isolate it.
      */
     readonly sheet?: string;
 }
@@ -1906,7 +1907,7 @@ export interface Design {
     inspect(options?: InspectOptions): Promise<InspectReport>;
     /** Writes the native `.oeda` document; defaults to the path it was opened from. */
     save(options?: SaveOptions): Promise<SaveReport>;
-    /** Projects the design to `net`, `net_csv`, `spice`, `svg`, `bom`, `bom_json`, `bom_html`, `pdf`, `report`, `json`, `kicad_sch` or `kicad_sym`; other targets report `capability/not-implemented`. */
+    /** Projects the design to `net`, `net_csv`, `spice`, `svg`, `png`, `bom`, `bom_json`, `bom_html`, `pdf`, `report`, `json`, `kicad_sch`, `kicad_sym` or `kicad_net`; other targets report `capability/not-implemented`. */
     export(options: ExportOptions): Promise<ExportReport>;
     /** Updates title, drawing revision, company and date; an empty string clears a field. */
     setProperties(properties: DesignPropertiesInput): Promise<DesignPropertiesResult>;

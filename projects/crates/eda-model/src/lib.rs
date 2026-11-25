@@ -20,6 +20,7 @@ mod dangling;
 mod diff;
 mod kicad;
 mod net_audit;
+mod png;
 
 pub use net_audit::net_audit;
 
@@ -99,6 +100,7 @@ const EXPORT_TARGETS: &[&str] = &[
     "gbr",
     "pdf",
     "svg",
+    "png",
     "bom",
     "bom_json",
     "bom_html",
@@ -120,6 +122,7 @@ const SUPPORTED_EXPORTS: &[&str] = &[
     "spice_subckt",
     "svg",
     "pdf",
+    "png",
     "bom",
     "bom_json",
     "bom_html",
@@ -5013,11 +5016,12 @@ pub fn export_with_variant(handle: u64, format: &str, path: &Path, variant: Opti
 /// Projects one open design to an exchange target, optionally through a BOM
 /// variant and optionally limited to one drawing sheet.
 ///
-/// A sheet selection applies to the drawing projections `svg` and `pdf`: a
-/// selected export paints only that sheet, while the default paints every
-/// sheet. PDF gives every sheet its own page; SVG has one view, so selecting a
-/// sheet is the way to isolate overlapping multi-sheet drawings. Formats that
-/// do not paint a drawing reject the sheet instead of silently ignoring it.
+/// A sheet selection applies to the drawing projections `svg`, `pdf` and `png`:
+/// a selected export paints only that sheet, while the default paints every
+/// sheet. PDF gives every sheet its own page; SVG and PNG have one view, so
+/// selecting a sheet is the way to isolate overlapping multi-sheet drawings.
+/// Formats that do not paint a drawing reject the sheet instead of silently
+/// ignoring it.
 pub fn export_with_options(
     handle: u64,
     format: &str,
@@ -5034,10 +5038,10 @@ pub fn export_with_options(
             format!("a BOM variant applies to `bom`, `bom_json` and `bom_html`, not `{format}`"),
         ));
     }
-    if sheet.is_some() && format != "svg" && format != "pdf" {
+    if sheet.is_some() && format != "svg" && format != "pdf" && format != "png" {
         return Err(ServiceError::new(
             "session/argument-invalid",
-            format!("a sheet selection applies to `svg` and `pdf`, not `{format}`"),
+            format!("a sheet selection applies to `svg`, `pdf` and `png`, not `{format}`"),
         ));
     }
     let design = with_session(handle, |session| Ok(session.design.clone()))?;
@@ -5045,6 +5049,24 @@ pub fn export_with_options(
         Some(needle) => vec![&design.sheets[sheet_index(&design, Some(needle))?]],
         None => design.sheets.iter().collect(),
     };
+    if format == "png" {
+        let bytes = png::render_png(&sheets);
+        let written = write_atomic_bytes(path, &bytes, true)?;
+        return Ok(json!({
+            "revision": design.revision,
+            "format": format,
+            "path": path.display().to_string(),
+            "bytes": written,
+            "editable": false,
+            "artifact": json!({
+                "kind": "png",
+                "width": png::WIDTH,
+                "height": png::HEIGHT,
+                "components": sheets.iter().map(|sheet| sheet.components.len()).sum::<usize>(),
+                "wires": sheets.iter().map(|sheet| sheet.wires.len()).sum::<usize>(),
+            }),
+        }));
+    }
     let selected = match variant {
         Some(name) => Some(
             design
@@ -9754,6 +9776,11 @@ fn pdf_text(text: &str) -> (String, usize) {
 }
 
 fn write_atomic(path: &Path, contents: &str, overwrite: bool) -> Result<usize, ServiceError> {
+    write_atomic_bytes(path, contents.as_bytes(), overwrite)
+}
+
+/// Writes bytes through a temporary file and a rename, returning the length.
+fn write_atomic_bytes(path: &Path, contents: &[u8], overwrite: bool) -> Result<usize, ServiceError> {
     if path.exists() && !overwrite {
         return Err(invalid(format!("`{}` already exists; pass overwrite to replace it", path.display())));
     }
@@ -9763,7 +9790,7 @@ fn write_atomic(path: &Path, contents: &str, overwrite: bool) -> Result<usize, S
     }
     let target =
         if path.parent().is_some_and(|parent| !parent.as_os_str().is_empty()) { path.to_path_buf() } else { parent.join(path) };
-    boost_session::save_atomic(&target, contents.as_bytes())
+    boost_session::save_atomic(&target, contents)
         .map_err(|error| invalid(format!("cannot write `{}`: {error}", target.display())))?;
     Ok(contents.len())
 }

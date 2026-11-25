@@ -118,6 +118,7 @@ const exportTargets: readonly ExportTarget[] = [
     'gbr',
     'pdf',
     'svg',
+    'png',
     'bom',
     'bom_json',
     'bom_html',

@@ -30,8 +30,12 @@ fn capability_matrix_reports_only_the_implemented_entries() {
     assert_eq!(matrix["project"]["edit"], "partial");
     assert_eq!(matrix["project"]["export"], "partial");
     for &format in DESIGN_FORMATS {
-        let expected_export =
-            if matches!(format, "net" | "spice" | "svg" | "pdf" | "bom" | "kicad_sch") { "supported" } else { "unsupported" };
+        let expected_export = if matches!(format, "net" | "spice" | "svg" | "pdf" | "png" | "bom" | "kicad_sch") {
+            "supported"
+        }
+        else {
+            "unsupported"
+        };
         let expected_import = if matches!(format, "kicad_sch" | "net") { "supported" } else { "unsupported" };
         let expected_losses = match format {
             "kicad_sch" => json!(KICAD_LOSS_CODES),
@@ -75,6 +79,8 @@ fn capability_matrix_reports_only_the_implemented_entries() {
     assert_eq!(matrix["exportTargets"]["kicad_sch"], "supported");
     assert_eq!(matrix["exportTargets"]["kicad_sym"], "supported");
     assert_eq!(matrix["exportTargets"]["kicad_net"], "supported");
+    assert_eq!(matrix["exportTargets"]["png"], "supported");
+    assert_eq!(matrix["formats"]["png"]["export"], "supported");
     assert_eq!(matrix["exportTargets"]["kicad_pcb"], "unsupported");
     assert_eq!(matrix["exportTargets"]["gbr"], "unsupported");
     assert_eq!(matrix["edits"]["components"], "supported");
@@ -6354,5 +6360,52 @@ fn kicad_net_export_projects_components_and_nets_and_round_trips() {
     assert_eq!(imported["totals"], json!({ "components": 2, "nets": 2, "pins": 3 }));
     let diff = compare_kicad_net(handle, &text).expect("compare netlist");
     assert_eq!(diff["equal"], true, "{diff}");
+    close(handle).expect("close");
+}
+
+#[test]
+fn png_export_writes_a_raster_preview_and_accepts_the_sheet_selection() {
+    let dir = TempDir::new("png-export");
+    let path = dir.join("preview.png");
+    let created = create(CreateRequest::default()).expect("create");
+    let handle = created["handle"].as_u64().expect("handle");
+    add_component(
+        handle,
+        AddComponentRequest {
+            sheet: None,
+            reference: "R1".to_string(),
+            value: "10k".to_string(),
+            x: 40.0,
+            y: 30.0,
+            rotation: 0.0,
+            pins: vec!["1".to_string(), "2".to_string()],
+        },
+    )
+    .expect("add component");
+    add_wire(handle, AddWireRequest { sheet: None, net: Some("VCC".to_string()), from: [10.0, 10.0], to: [90.0, 10.0] })
+        .expect("add wire");
+
+    let report = export(handle, "png", &path).expect("export png");
+    assert_eq!(report["format"], "png");
+    assert_eq!(report["artifact"]["kind"], "png");
+    assert_eq!(report["artifact"]["width"], 1024);
+    assert_eq!(report["artifact"]["height"], 768);
+    assert_eq!(report["artifact"]["components"], 1);
+    assert_eq!(report["artifact"]["wires"], 1);
+    let bytes = fs::read(&path).expect("read png");
+    assert_eq!(bytes.len(), report["bytes"].as_u64().expect("bytes") as usize);
+    assert_eq!(&bytes[..8], &[137, 80, 78, 71, 13, 10, 26, 10], "the file is a PNG");
+
+    let again = dir.join("again.png");
+    export(handle, "png", &again).expect("re-export");
+    assert_eq!(fs::read(&again).expect("read again"), bytes, "the raster is byte-stable");
+
+    let selected = dir.join("sheet.png");
+    let sheet_report = export_with_options(handle, "png", &selected, None, Some("Sheet 1")).expect("export sheet");
+    assert_eq!(sheet_report["artifact"]["components"], 1);
+    let unknown = export_with_options(handle, "png", &selected, None, Some("Nope")).expect_err("unknown sheet");
+    assert_eq!(unknown.code, "sheet/not-found");
+    let variant = export_with_variant(handle, "png", &selected, Some("missing")).expect_err("variant rejected");
+    assert_eq!(variant.code, "session/argument-invalid");
     close(handle).expect("close");
 }
