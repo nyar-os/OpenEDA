@@ -402,17 +402,21 @@ an error, so the reader's losses never fail the check on their own.
   Every page has its own header and title block naming only that page's sheet,
   and the drawing is scaled to fit and centred both horizontally and vertically
   between the page margins and the bottom title-block strip, so the content no
-  longer collects against the bottom edge. `--sheet <id|name>` writes a
-  single-page PDF for that sheet. Text uses the base-14 Helvetica encoding, so
-  characters outside printable ASCII are written as `?` and the export reports
-  one `pdf/text-encoding` loss with the dropped character count; `svg` keeps
-  full Unicode.
+  longer collects against the bottom edge. Strokes and fills carry the same
+  colours as the SVG projection, and label underlines, boxes and notches are
+  sized to the rendered text instead of the drawing scale. `--sheet <id|name>`
+  writes a single-page PDF for that sheet. Text uses the base-14 Helvetica
+  encoding, so characters outside printable ASCII are written as `?` and the
+  export reports one `pdf/text-encoding` loss with the dropped character count;
+  `svg` keeps full Unicode.
 - `report` writes deterministic Markdown with a design header, per-sheet object
   counts, per-sheet `Net | Nodes | Pins` tables and inspection findings by
   severity.
 - `png` rasterizes the drawing onto a fixed 1024×768 truecolour canvas: the
   sheet frame, wires, junctions, no-connect marks, component bodies (honouring
-  rotation), pin stubs and label outlines, using the same colours as the SVG
+  rotation — standard resistor, capacitor, inductor and diode artwork, the
+  enclosing ring for `Q`/`J` parts and the generic box otherwise), pin stubs
+  with connection dots and label outlines, using the same colours as the SVG
   projection. Text is not rasterized because the model carries no font engine,
   so label outlines mark where labels sit. The view fits the painted sheets and
   centres them; `--sheet <id|name>` selects one sheet like `svg`. The encoder
