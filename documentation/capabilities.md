@@ -22,11 +22,11 @@ answer about the document, such as a pin-to-pin path.
 | pin electrical types | supported | per-pin roles, the `electrical` check and the KiCad library pin types |
 | reference annotation `annotate` | supported | renumbers per leading-letter prefix by sheet, then `y` and `x`; a reference without a prefix is skipped and reported under `skipped`; net nodes, no-connect attachments and BOM variants follow; one revision, none when unchanged |
 | BOM variants and DNP | supported | named DNP designator lists and value overrides applied to `bom`, `bom_json` and `bom_html` |
-| net classes | supported | name, width, clearance, via and net/bus assignment lists |
+| net classes | supported | name, width, clearance, via and net/bus assignment lists; the `net_classes` check reports assignments to undeclared nets or buses, empty classes and one net or bus claimed by two classes |
 | bus update `bus update` | supported | partial edit of one declared bus by id, name or alias: rename, width change and whole alias-list replacement (an empty list clears aliases); a rename never rewrites nets, net nodes or net-class assignments, and a width change only changes derived member names; a request that leaves the declaration unchanged reports `changed: false` and adds no revision |
 | net rename `net rename` | supported | design-wide rename of one declared net by its old name: every declaration of that name follows and keeps its nodes, and wires, net labels, net-class `nets` and bus `aliases` that spelled the old name are rewritten in document order; a name another net already declares is refused (`object/duplicate`), a net absent from the identifying sheet is `net/not-found` and an empty name `session/argument-invalid`; a changed rename adds exactly one revision, an already-matching name reports `changed: false` and adds none; `capabilities()` reports `edits.netRename` |
 | component custom properties | supported | trimmed unique keys, verbatim values; stored in `.oeda`, the JSON projection and KiCad symbol properties |
-| checks `erc`, `electrical`, `drivers`, `pin_types`, `bus`, `nets`, `connectivity`, `dangling`, `footprints`, `power`, `references`, `clearance` | supported | `drc` is unsupported; `bus` validates design-level bus declarations; `clearance` compares schematic component bodies; `dangling` reports `wire/dangling-endpoint` for a wire endpoint nothing anchors; `erc` reports one `erc/duplicate-reference` per reference shared by more than one component; `drivers` reports `erc/undriven-input` and `erc/unconnected-power-pin`; `pin_types` reports the role conflicts the other checks leave open; `hierarchy` is a separate read-only entry, not an `inspect --checks` value |
+| checks `erc`, `electrical`, `drivers`, `pin_types`, `bus`, `net_classes`, `nets`, `connectivity`, `dangling`, `footprints`, `power`, `references`, `clearance` | supported | `drc` is unsupported; `bus` validates design-level bus declarations; `net_classes` validates design-level net-class assignments; `clearance` compares schematic component bodies; `dangling` reports `wire/dangling-endpoint` for a wire endpoint nothing anchors; `erc` reports one `erc/duplicate-reference` per reference shared by more than one component; `drivers` reports `erc/undriven-input` and `erc/unconnected-power-pin`; `pin_types` reports the role conflicts the other checks leave open; `hierarchy` is a separate read-only entry, not an `inspect --checks` value |
 | design `stats` | supported | deterministic per-sheet and design-wide counts; tagged `open-eda-stats` |
 | pin trace `trace` | supported | read-only shortest hop path between two `REF.PIN` pins; tagged `open-eda-trace`; reported as `queries.trace`, not as an `inspect --checks` check |
 | component detail `component show` | supported | read-only detail of one component by reference: placement, rotation, mirror, value, footprint, custom properties and per-pin nets; tagged `open-eda-component`; pins keep declaration order and net names keep document order |
@@ -49,7 +49,7 @@ answer about the document, such as a pin-to-pin path.
 | import `kicad_sym` | supported | read-only symbol declarations: unit count and each pin's number, name, role and unit |
 | export `kicad_sym` | supported | one library symbol per derived library id, with pins and roles; no symbol body is invented |
 | KiCad board, Gerber, drill, STEP | unsupported | declared in the capability matrix only |
-| interactive schematic/board renderer | unsupported | the preview is an SVG/PDF projection that draws component bodies, pin stubs on a 2.54 pitch, wires, junctions, labels and text; the `png` export rasterizes the same geometry without text on a fixed 1024×768 canvas, but there is no interactive renderer |
+| interactive schematic/board renderer | unsupported | the preview is an SVG/PDF projection that draws component bodies, pin stubs on a 2.54 pitch, wires, junctions, labels and text; the `png` export rasterizes the same geometry and bitmap text on a fixed 1024×768 canvas, but there is no interactive renderer |
 | DRC | unsupported | `capability/not-implemented` |
 | board layout, routing, simulation | unsupported | not modelled |
 
@@ -207,6 +207,19 @@ A net claimed by more than one bus — for example `DATA0` as member 0 of bus
 that net. Bus findings are design-level, so `sheetId` is empty and `objectId` is
 the bus id; `bus/shared-net` instead carries the net's sheet and id. The check is
 read-only and deterministic for one document state.
+
+`net_classes` validates the design-level net-class assignments. A class that
+assigns no net and no bus is `net_class/empty` (warning). An assigned net name
+that no sheet declares is `net_class/unknown-net` (warning) and an assigned bus
+name that no declaration matches by name or alias is `net_class/unknown-bus`
+(warning), both reported on the class. One net claimed by two classes —
+directly, or through a bus one of them assigns — is `net_class/shared-net`
+(error) on the net, naming every claiming class, and a bus assigned by two
+classes is `net_class/shared-bus` (error) on the bus. Claim resolution mirrors
+the `net_class` export, so a class that assigns a bus owns each member too; a
+shared bus already explains every claim on its members, so those per-net
+findings are not repeated. Most findings are design-level with an empty
+`sheetId`; `net_class/shared-net` names the sheet that declares the net.
 
 `clearance` treats each component body as the axis-aligned rectangle the SVG
 preview draws: centred on the placement, with `COMPONENT_HALF_WIDTH` and
@@ -521,6 +534,9 @@ Every file is written through a temporary file and a rename.
 - `projects/crates/eda-model/tests/unit/net_audit.rs` — per-net counts, placed
   pins, wire length, net class, all three warning codes in declaration order,
   deterministic re-runs, unchanged revisions and the `design/not-found` error.
+- `projects/crates/eda-model/tests/unit/net_classes.rs` — net-class assignments
+  to declared and undeclared nets and buses, alias resolution, a shared net, a
+  shared bus, the direct/bus overlap, an empty class and deterministic re-runs.
 - `projects/crates/eda-model/tests/unit/clearance.rs` — component-body overlap
   pairs, edge contact, rotation, sheets, severity and waivers.
 - `projects/crates/eda-model/tests/unit/dangling.rs` — one finding per

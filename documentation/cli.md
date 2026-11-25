@@ -28,7 +28,7 @@ to stderr.
 | `open-eda create --out <file.oeda> [--title <text>] [--rev <text>] [--company <text>] [--date <text>] [--template <name>] [--overwrite]` | Create a native design document |
 | `open-eda open <file>` | Validate and report that the document opens |
 | `open-eda design set <file> [--title <text>] [--rev <text>] [--company <text>] [--date <text>]` | Update title-block properties; an empty value clears a field |
-| `open-eda inspect <file> [--checks erc,electrical,drivers,pin_types,bus,nets,connectivity,dangling,footprints,power,references,clearance] [--severity <code>=<level>] [--waive <code>[@<object>]]` | Run the supported checks |
+| `open-eda inspect <file> [--checks erc,electrical,drivers,pin_types,bus,net_classes,nets,connectivity,dangling,footprints,power,references,clearance] [--severity <code>=<level>] [--waive <code>[@<object>]]` | Run the supported checks |
 | `open-eda list <file>` | List sheets, components, nets, wires and buses |
 | `open-eda symbols <file>` | Group placed components by derived library id with pin, footprint and missing-footprint counts |
 | `open-eda connectivity <file>` | Print the connectivity report |
@@ -52,6 +52,12 @@ joins a logic `output` pin and a `power_in` pin, and
 `erc/power-output-driver-conflict` when one net joins a `power_out` pin and a
 `bidirectional`, `tri_state`, `open_collector` or `open_emitter` pin. The
 conflicts `electrical` and `power` already report are not repeated.
+
+`inspect --checks net_classes` validates the design-level net-class
+assignments: an empty class and an assignment to a net or bus the document does
+not declare are warnings, while one net or bus claimed by two classes is an
+error. Claims follow the `net_class` export, so a class that assigns a bus owns
+each member, and a shared bus is reported once instead of once per member.
 
 `inspect --checks dangling` reports one `wire/dangling-endpoint` warning per
 wire endpoint that nothing anchors: no other wire endpoint or interior, no
