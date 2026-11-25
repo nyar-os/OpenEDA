@@ -1,14 +1,19 @@
 //! PNG raster projection of the schematic drawing.
 //!
 //! The rasterizer paints the same geometry as the SVG projection — the sheet
-//! frame, wires, junctions, no-connect marks, component bodies, pin stubs and
-//! label boxes — into a fixed 1024×768 RGB canvas that fits the drawing bounds
-//! with a uniform scale. Text is not rasterized because the model carries no
-//! font engine; the label outlines mark where labels sit. The encoder writes a
-//! valid PNG from uncompressed deflate blocks only, so the same document always
-//! produces byte-identical output.
+//! frame, wires, junctions, no-connect marks, label boxes and component
+//! bodies: standard resistor, capacitor, inductor and diode artwork for
+//! two-pin `R`/`C`/`L`/`D` parts, the enclosing ring for three-pin `Q`/`J`
+//! parts and the generic box for everything else, all honouring the component
+//! rotation, with pin stubs and connection dots. Text is not rasterized
+//! because the model carries no font engine; the label outlines mark where
+//! labels sit. The encoder writes a valid PNG from uncompressed deflate blocks
+//! only, so the same document always produces byte-identical output.
 
-use crate::{COMPONENT_HALF_WIDTH, Sheet, component_half_height, component_pins, drawing_bounds, rotate_about};
+use crate::{
+    COMPONENT_HALF_WIDTH, Sheet, SymbolPrimitive, component_half_height, component_pins, drawing_bounds, rotate_about,
+    symbol_artwork,
+};
 
 /// Width of the fixed raster canvas, in pixels.
 pub(crate) const WIDTH: u32 = 1024;
@@ -39,6 +44,11 @@ struct View {
     origin_x: f64,
     origin_y: f64,
     scale: f64,
+    /// Padded view rectangle: the sheet frame the SVG projection borders.
+    view_x: f64,
+    view_y: f64,
+    view_width: f64,
+    view_height: f64,
 }
 
 impl View {
@@ -53,6 +63,10 @@ impl View {
             origin_x: view_x - (f64::from(WIDTH) / scale - view_width) / 2.0,
             origin_y: view_y - (f64::from(HEIGHT) / scale - view_height) / 2.0,
             scale,
+            view_x,
+            view_y,
+            view_width,
+            view_height,
         }
     }
 
@@ -116,6 +130,13 @@ impl Canvas {
         self.stamp((x, y), radius, colour);
     }
 
+    /// Draws an open polyline between consecutive design points.
+    fn polyline(&mut self, view: &View, points: &[[f64; 2]], width: f64, colour: Rgb) {
+        for edge in points.windows(2) {
+            self.line(view, edge[0], edge[1], width, colour);
+        }
+    }
+
     /// Outlines a convex polygon given in design points.
     fn polygon(&mut self, view: &View, points: &[[f64; 2]], width: f64, colour: Rgb) {
         for edge in points.windows(2) {
@@ -167,10 +188,10 @@ pub(crate) fn render_png(sheets: &[&Sheet]) -> Vec<u8> {
     let mut canvas = Canvas::new();
     // Sheet frame: the padded view rectangle, matching the SVG border.
     let frame = [
-        [view.origin_x, view.origin_y],
-        [view.origin_x + (f64::from(WIDTH) / view.scale), view.origin_y],
-        [view.origin_x + (f64::from(WIDTH) / view.scale), view.origin_y + (f64::from(HEIGHT) / view.scale)],
-        [view.origin_x, view.origin_y + (f64::from(HEIGHT) / view.scale)],
+        [view.view_x, view.view_y],
+        [view.view_x + view.view_width, view.view_y],
+        [view.view_x + view.view_width, view.view_y + view.view_height],
+        [view.view_x, view.view_y + view.view_height],
     ];
     canvas.polygon(&view, &frame, 0.4, FRAME);
     for sheet in sheets {
@@ -207,10 +228,11 @@ pub(crate) fn render_png(sheets: &[&Sheet]) -> Vec<u8> {
                     canvas.polygon(
                         &view,
                         &[
+                            [label.x, label.y + 0.8],
+                            [label.x + 1.6, label.y - 1.3],
                             [label.x, label.y - 3.4],
                             [label.x + width + 1.2, label.y - 3.4],
                             [label.x + width + 1.2, label.y + 0.8],
-                            [label.x, label.y + 0.8],
                         ],
                         0.35,
                         HIERARCHICAL_LABEL,
@@ -220,18 +242,38 @@ pub(crate) fn render_png(sheets: &[&Sheet]) -> Vec<u8> {
         }
         for component in &sheet.components {
             let half_height = component_half_height(component);
-            let corners = [
-                [component.x - COMPONENT_HALF_WIDTH, component.y - half_height],
-                [component.x + COMPONENT_HALF_WIDTH, component.y - half_height],
-                [component.x + COMPONENT_HALF_WIDTH, component.y + half_height],
-                [component.x - COMPONENT_HALF_WIDTH, component.y + half_height],
-            ]
-            .map(|point| rotate_about(component, point));
-            canvas.fill_polygon(&view, &corners, SYMBOL_FILL);
-            canvas.polygon(&view, &corners, 0.5, SYMBOL);
+            let (artwork, keeps_box) = symbol_artwork(component);
+            let inside_box = keeps_box || artwork.is_empty();
+            if inside_box {
+                let corners = [
+                    [component.x - COMPONENT_HALF_WIDTH, component.y - half_height],
+                    [component.x + COMPONENT_HALF_WIDTH, component.y - half_height],
+                    [component.x + COMPONENT_HALF_WIDTH, component.y + half_height],
+                    [component.x - COMPONENT_HALF_WIDTH, component.y + half_height],
+                ]
+                .map(|point| rotate_about(component, point));
+                canvas.fill_polygon(&view, &corners, SYMBOL_FILL);
+                canvas.polygon(&view, &corners, 0.5, SYMBOL);
+            }
+            for primitive in &artwork {
+                let (source, closed) = match primitive {
+                    SymbolPrimitive::Stroke(points) => (points, false),
+                    SymbolPrimitive::Fill(points) => (points, true),
+                };
+                let points = source.iter().map(|point| rotate_about(component, *point)).collect::<Vec<_>>();
+                if closed {
+                    canvas.fill_polygon(&view, &points, SYMBOL);
+                    canvas.polygon(&view, &points, 0.5, SYMBOL);
+                }
+                else {
+                    canvas.polyline(&view, &points, 0.5, SYMBOL);
+                }
+            }
             for pin in component_pins(component) {
-                canvas.line(&view, pin.root, pin.end, 0.35, SYMBOL);
-                canvas.disc(&view, pin.end, 0.45, SYMBOL);
+                let root = rotate_about(component, pin.root);
+                let end = rotate_about(component, pin.end);
+                canvas.line(&view, root, end, 0.35, SYMBOL);
+                canvas.disc(&view, end, 0.45, SYMBOL);
             }
         }
     }

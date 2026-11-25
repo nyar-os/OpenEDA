@@ -151,3 +151,96 @@ fn an_empty_design_still_rasterizes() {
     assert_eq!(&bytes[..8], &[137, 80, 78, 71, 13, 10, 26, 10]);
     assert_eq!(chunks(&bytes).len(), 3, "IHDR, IDAT and IEND");
 }
+
+/// Rebuilds the raster and returns the colour of the pixel a design point maps to.
+fn pixel_of(design: &Design, point: [f64; 2]) -> Rgb {
+    let sheets = design.sheets.iter().collect::<Vec<_>>();
+    let parsed = chunks(&render_png(&sheets));
+    let idat = &parsed.iter().find(|(kind, _)| kind == "IDAT").expect("IDAT").1;
+    let mut raw = Vec::new();
+    let mut offset = 2;
+    while idat[offset] & 1 == 0 {
+        let length = u16::from_le_bytes(idat[offset + 1..offset + 3].try_into().expect("block length")) as usize;
+        raw.extend_from_slice(&idat[offset + 5..offset + 5 + length]);
+        offset += 5 + length;
+    }
+    let length = u16::from_le_bytes(idat[offset + 1..offset + 3].try_into().expect("block length")) as usize;
+    raw.extend_from_slice(&idat[offset + 5..offset + 5 + length]);
+    let stride = (WIDTH as usize) * 3 + 1;
+    let (min_x, min_y, max_x, max_y) = drawing_bounds(design.sheets.iter());
+    let view = View::new(min_x, min_y, max_x, max_y);
+    let (px, py) = view.project(point);
+    let start = (py as usize) * stride + 1 + (px as usize) * 3;
+    [raw[start], raw[start + 1], raw[start + 2]]
+}
+
+fn symbol_part(reference: &str, x: f64, y: f64, rotation: f64, pins: &[&str]) -> Component {
+    Component {
+        id: format!("component-{}", reference.to_lowercase()),
+        reference: reference.to_string(),
+        value: "V".to_string(),
+        footprint: String::new(),
+        x,
+        y,
+        rotation,
+        pins: pins.iter().map(|pin| (*pin).to_string()).collect(),
+        pin_types: BTreeMap::new(),
+        properties: BTreeMap::new(),
+    }
+}
+
+fn artwork_design(components: Vec<Component>) -> Design {
+    Design {
+        id: "artwork-design".to_string(),
+        title: None,
+        rev: String::new(),
+        company: String::new(),
+        date: String::new(),
+        revision: 1,
+        units: "mm".to_string(),
+        sheets: vec![Sheet {
+            id: "sheet-1".to_string(),
+            name: "Symbols".to_string(),
+            components,
+            nets: Vec::new(),
+            wires: Vec::new(),
+            junctions: Vec::new(),
+            no_connects: Vec::new(),
+            texts: Vec::new(),
+            labels: Vec::new(),
+        }],
+        buses: Vec::new(),
+        variants: Vec::new(),
+        hierarchy: Vec::new(),
+        rules: DesignRules::default(),
+        next_component: 2,
+        next_net: 1,
+        next_wire: 1,
+    }
+}
+
+#[test]
+fn raster_paints_symbol_artwork_instead_of_generic_boxes() {
+    let design = artwork_design(vec![
+        symbol_part("R1", 50.0, 30.0, 0.0, &["1", "2"]),
+        symbol_part("C1", 50.0, 60.0, 0.0, &["1", "2"]),
+        symbol_part("U1", 120.0, 45.0, 0.0, &["VCC", "GND", "IO1", "IO2"]),
+    ]);
+    // The resistor zigzag crosses its body centre, so that pixel is blue.
+    assert_eq!(pixel_of(&design, [50.0, 30.0]), SYMBOL, "the resistor centre must sit on the zigzag");
+    // The capacitor gap between the plates stays background white.
+    assert_eq!(pixel_of(&design, [50.0, 60.0]), BACKGROUND, "the capacitor centre must stay open");
+    assert_eq!(pixel_of(&design, [48.73, 60.0]), SYMBOL, "the first capacitor plate must be drawn");
+    // Generic parts keep the filled box.
+    assert_eq!(pixel_of(&design, [120.0, 45.0]), SYMBOL_FILL, "U1 keeps its box interior");
+    assert_eq!(pixel_of(&design, [120.0, 37.38]), SYMBOL, "U1 keeps its box edge");
+}
+
+#[test]
+fn raster_rotates_pin_stubs_with_the_component() {
+    let design = artwork_design(vec![symbol_part("R1", 50.0, 30.0, 90.0, &["1", "2"])]);
+    // A 90-degree resistor points its pins along the vertical axis.
+    assert_eq!(pixel_of(&design, [50.0, 14.76]), SYMBOL, "the rotated top pin stub must be vertical");
+    assert_eq!(pixel_of(&design, [50.0, 45.24]), SYMBOL, "the rotated bottom pin stub must be vertical");
+    assert_eq!(pixel_of(&design, [34.76, 30.0]), BACKGROUND, "no horizontal stub may survive a 90-degree rotation");
+}
