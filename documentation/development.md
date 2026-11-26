@@ -77,10 +77,13 @@ CI runs on `master` and `dev`:
 
 ## Release
 
-The application packages are `private`; the publishable set is the per-platform
-native packages produced by staging. `wae.config.ts` leaves `release` unset
-while that is true, and there is no CI release workflow yet. Do not commit
-generated addons, `dist/`, `dist-test/` or `<file>.history.json`.
+`@wae/open-eda`, `@wae/open-eda-skills` and the per-platform native packages
+produced by staging are publishable; `@wae/open-eda-ui` and the workspace roots
+stay `private`. `publish-npm.yml` publishes every non-private package on a `v*`
+tag through npm Trusted Publisher (OIDC), with the contract in `nifty.config.ts`.
+New package names are claimed with a local `nifty publish --placeholder` at
+`0.0.0` and bound with `nifty trust`. Do not commit generated addons, `dist/`,
+`dist-test/` or `<file>.history.json`.
 
 ## Adding a capability
 

@@ -119,9 +119,8 @@ export default defineConfig({
             },
         ],
     },
-    // `release` is intentionally unset while the app packages stay `private`;
-    // the platform packages are the only publishable set and have no CI release
-    // workflow yet.
+    // `release` stays unset: publishing is owned by `publish-npm.yml`, whose
+    // Trusted Publisher contract lives in `nifty.config.ts`.
     ci: {
         repo: 'nyar-os/OpenEDA',
         workflows: ['check-rust.yml', 'check-typescript.yml'],
