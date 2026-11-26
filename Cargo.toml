@@ -4,7 +4,7 @@ members = ["projects/crates/*"]
 default-members = ["projects/crates/eda-model", "projects/crates/eda-napi"]
 
 [workspace.package]
-version = "0.0.9"
+version = "0.0.10"
 edition = "2024"
 rust-version = "1.90"
 license = "MPL-2.0"

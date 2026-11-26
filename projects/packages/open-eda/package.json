@@ -1,6 +1,6 @@
 {
     "name": "@wae/open-eda",
-    "version": "0.0.9",
+    "version": "0.0.10",
     "description": "Schematic and PCB design documents: one editable model for capture, inspection, export and agent authoring",
     "license": "MPL-2.0",
     "type": "module",
